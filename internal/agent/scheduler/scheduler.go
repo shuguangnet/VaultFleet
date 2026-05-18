@@ -9,13 +9,16 @@ import (
 
 type Scheduler struct {
 	cron    *cron.Cron
+	parser  cron.Parser
 	mu      sync.Mutex
 	entryID map[string]cron.EntryID
 }
 
 func New() *Scheduler {
+	parser := cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 	return &Scheduler{
-		cron:    cron.New(cron.WithSeconds()),
+		cron:    cron.New(cron.WithParser(parser)),
+		parser:  parser,
 		entryID: make(map[string]cron.EntryID),
 	}
 }
@@ -30,8 +33,7 @@ func (s *Scheduler) Stop() {
 }
 
 func (s *Scheduler) AddJob(agentID string, schedule string, fn func()) error {
-	normalized := normalizeCron(schedule)
-	entryID, err := s.cron.AddFunc(normalized, fn)
+	parsedSchedule, err := s.parse(schedule)
 	if err != nil {
 		return err
 	}
@@ -41,6 +43,7 @@ func (s *Scheduler) AddJob(agentID string, schedule string, fn func()) error {
 	if existing, ok := s.entryID[agentID]; ok {
 		s.cron.Remove(existing)
 	}
+	entryID := s.cron.Schedule(parsedSchedule, cron.FuncJob(fn))
 	s.entryID[agentID] = entryID
 	return nil
 }
@@ -57,8 +60,7 @@ func (s *Scheduler) RemoveJob(agentID string) {
 }
 
 func (s *Scheduler) UpdateSchedule(agentID string, schedule string, fn func()) error {
-	normalized := normalizeCron(schedule)
-	entryID, err := s.cron.AddFunc(normalized, fn)
+	parsedSchedule, err := s.parse(schedule)
 	if err != nil {
 		return err
 	}
@@ -68,8 +70,18 @@ func (s *Scheduler) UpdateSchedule(agentID string, schedule string, fn func()) e
 	if existing, ok := s.entryID[agentID]; ok {
 		s.cron.Remove(existing)
 	}
+	entryID := s.cron.Schedule(parsedSchedule, cron.FuncJob(fn))
 	s.entryID[agentID] = entryID
 	return nil
+}
+
+func (s *Scheduler) Validate(schedule string) error {
+	_, err := s.parse(schedule)
+	return err
+}
+
+func (s *Scheduler) parse(schedule string) (cron.Schedule, error) {
+	return s.parser.Parse(normalizeCron(schedule))
 }
 
 func normalizeCron(schedule string) string {

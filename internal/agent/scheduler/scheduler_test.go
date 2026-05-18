@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -85,4 +86,60 @@ func TestSchedulerRejectsInvalidCron(t *testing.T) {
 	err := s.AddJob("agent-1", "not a cron", func() {})
 
 	require.Error(t, err)
+}
+
+func TestSchedulerValidateRejectsInvalidCronWithoutAddingJob(t *testing.T) {
+	s := New()
+
+	require.NoError(t, s.Validate("*/1 * * * *"))
+	require.Error(t, s.Validate("not a cron"))
+	assert.Empty(t, s.cron.Entries())
+}
+
+func TestSchedulerInvalidUpdateKeepsExistingJob(t *testing.T) {
+	s := New()
+
+	require.NoError(t, s.AddJob("agent-1", "@every 1s", func() {}))
+	entriesBefore := s.cron.Entries()
+	require.Len(t, entriesBefore, 1)
+
+	err := s.UpdateSchedule("agent-1", "not a cron", func() {})
+
+	require.Error(t, err)
+	entriesAfter := s.cron.Entries()
+	require.Len(t, entriesAfter, 1)
+	assert.Equal(t, entriesBefore[0].ID, entriesAfter[0].ID)
+	assert.Equal(t, entriesBefore[0].Schedule, entriesAfter[0].Schedule)
+}
+
+func TestSchedulerConcurrentUpdateAndRemoveDoesNotLeaveTrackedDuplicates(t *testing.T) {
+	s := New()
+	require.NoError(t, s.Start())
+	defer s.Stop()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = s.UpdateSchedule("agent-1", "@every 1s", func() {})
+		}()
+		go func() {
+			defer wg.Done()
+			s.RemoveJob("agent-1")
+		}()
+	}
+	wg.Wait()
+
+	s.mu.Lock()
+	trackedID, tracked := s.entryID["agent-1"]
+	require.LessOrEqual(t, len(s.entryID), 1)
+	s.mu.Unlock()
+	entries := s.cron.Entries()
+	if !tracked {
+		assert.Empty(t, entries)
+		return
+	}
+	require.Len(t, entries, 1)
+	assert.Equal(t, trackedID, entries[0].ID)
 }

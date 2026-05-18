@@ -17,6 +17,7 @@ import (
 
 	"vaultfleet/internal/agent/executor"
 	"vaultfleet/internal/agent/policy"
+	agentscheduler "vaultfleet/internal/agent/scheduler"
 	"vaultfleet/pkg/protocol"
 )
 
@@ -133,6 +134,9 @@ func TestHandlePolicyPushSendsFailureAckAndDoesNotScheduleWhenConfigWriteFails(t
 	assert.Equal(t, "agent-1", ack.AgentID)
 	assert.False(t, ack.Success)
 	assert.NotEmpty(t, ack.Error)
+	_, err = store.LoadPolicy()
+	require.Error(t, err)
+	assert.True(t, os.IsNotExist(err))
 }
 
 func TestHandlePolicyPushSendsFailureAckWhenScheduleUpdateFails(t *testing.T) {
@@ -166,6 +170,226 @@ func TestHandlePolicyPushSendsFailureAckWhenScheduleUpdateFails(t *testing.T) {
 	assert.Equal(t, "agent-1", ack.AgentID)
 	assert.False(t, ack.Success)
 	assert.Equal(t, "invalid cron", ack.Error)
+}
+
+func TestHandlePolicyPushScheduleUpdateFailureRestoresExistingPolicyAndConfig(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	configDir := t.TempDir()
+	oldPolicy := &protocol.PolicyPushPayload{
+		AgentID:        "agent-1",
+		Storage:        protocol.StorageConfig{RcloneType: "s3", RcloneConfig: map[string]string{"provider": "Old"}, RepoPath: "old-repo"},
+		ResticPassword: "old-secret",
+		BackupDirs:     []string{"/old"},
+		Schedule:       "0 1 * * *",
+	}
+	require.NoError(t, store.SavePolicy(oldPolicy))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "rclone.conf"), []byte("old rclone config"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ".restic-password"), []byte("old-secret"), 0o600))
+	scheduler := &recordingScheduler{updateErr: errors.New("schedule unavailable")}
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   configDir,
+		Scheduler:   scheduler,
+		SendFunc:    sent.send,
+	})
+	msg, err := protocol.NewMessage(protocol.TypePolicyPush, protocol.PolicyPushPayload{
+		AgentID:        "agent-1",
+		Storage:        protocol.StorageConfig{RcloneType: "s3", RcloneConfig: map[string]string{"provider": "New"}, RepoPath: "new-repo"},
+		ResticPassword: "new-secret",
+		BackupDirs:     []string{"/new"},
+		Schedule:       "0 4 * * *",
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	messages := sent.snapshot()
+	require.Len(t, messages, 1)
+	ack, err := protocol.ParsePayload[protocol.PolicyAckPayload](&messages[0])
+	require.NoError(t, err)
+	assert.Equal(t, "agent-1", ack.AgentID)
+	assert.False(t, ack.Success)
+	assert.Equal(t, "schedule unavailable", ack.Error)
+
+	stored, err := store.LoadPolicy()
+	require.NoError(t, err)
+	assert.Equal(t, oldPolicy, stored)
+	rcloneConf, err := os.ReadFile(filepath.Join(configDir, "rclone.conf"))
+	require.NoError(t, err)
+	assert.Equal(t, "old rclone config", string(rcloneConf))
+	password, err := os.ReadFile(filepath.Join(configDir, ".restic-password"))
+	require.NoError(t, err)
+	assert.Equal(t, "old-secret", string(password))
+}
+
+func TestHandlePolicyPushScheduleUpdateFailureRemovesNewPolicyAndConfig(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	configDir := t.TempDir()
+	scheduler := &recordingScheduler{updateErr: errors.New("schedule unavailable")}
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   configDir,
+		Scheduler:   scheduler,
+		SendFunc:    sent.send,
+	})
+	msg, err := protocol.NewMessage(protocol.TypePolicyPush, protocol.PolicyPushPayload{
+		AgentID:        "agent-1",
+		Storage:        protocol.StorageConfig{RcloneType: "s3", RcloneConfig: map[string]string{"provider": "New"}, RepoPath: "new-repo"},
+		ResticPassword: "new-secret",
+		Schedule:       "0 4 * * *",
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	messages := sent.snapshot()
+	require.Len(t, messages, 1)
+	ack, err := protocol.ParsePayload[protocol.PolicyAckPayload](&messages[0])
+	require.NoError(t, err)
+	assert.False(t, ack.Success)
+	assert.Equal(t, "schedule unavailable", ack.Error)
+
+	_, err = store.LoadPolicy()
+	require.Error(t, err)
+	assert.True(t, os.IsNotExist(err))
+	_, err = os.Stat(filepath.Join(configDir, "rclone.conf"))
+	require.Error(t, err)
+	assert.True(t, os.IsNotExist(err))
+	_, err = os.Stat(filepath.Join(configDir, ".restic-password"))
+	require.Error(t, err)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestHandlePolicyPushInvalidSchedulePreservesExistingPolicyAndConfig(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	configDir := t.TempDir()
+	oldPolicy := &protocol.PolicyPushPayload{
+		AgentID:        "agent-1",
+		Storage:        protocol.StorageConfig{RcloneType: "s3", RcloneConfig: map[string]string{"provider": "Old"}, RepoPath: "old-repo"},
+		ResticPassword: "old-secret",
+		BackupDirs:     []string{"/old"},
+		Schedule:       "0 1 * * *",
+	}
+	require.NoError(t, store.SavePolicy(oldPolicy))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "rclone.conf"), []byte("old rclone config"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ".restic-password"), []byte("old-secret"), 0o600))
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   configDir,
+		Scheduler:   agentscheduler.New(),
+		SendFunc:    sent.send,
+	})
+	msg, err := protocol.NewMessage(protocol.TypePolicyPush, protocol.PolicyPushPayload{
+		AgentID:        "agent-1",
+		Storage:        protocol.StorageConfig{RcloneType: "s3", RcloneConfig: map[string]string{"provider": "New"}, RepoPath: "new-repo"},
+		ResticPassword: "new-secret",
+		BackupDirs:     []string{"/new"},
+		Schedule:       "not a cron",
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	messages := sent.snapshot()
+	require.Len(t, messages, 1)
+	ack, err := protocol.ParsePayload[protocol.PolicyAckPayload](&messages[0])
+	require.NoError(t, err)
+	assert.Equal(t, "agent-1", ack.AgentID)
+	assert.False(t, ack.Success)
+	assert.NotEmpty(t, ack.Error)
+
+	stored, err := store.LoadPolicy()
+	require.NoError(t, err)
+	assert.Equal(t, oldPolicy, stored)
+	rcloneConf, err := os.ReadFile(filepath.Join(configDir, "rclone.conf"))
+	require.NoError(t, err)
+	assert.Equal(t, "old rclone config", string(rcloneConf))
+	password, err := os.ReadFile(filepath.Join(configDir, ".restic-password"))
+	require.NoError(t, err)
+	assert.Equal(t, "old-secret", string(password))
+}
+
+func TestHandlePolicyPushReplaceFailurePreservesExistingPolicyAndConfig(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	configDir := t.TempDir()
+	oldPolicy := &protocol.PolicyPushPayload{
+		AgentID:        "agent-1",
+		Storage:        protocol.StorageConfig{RcloneType: "s3", RcloneConfig: map[string]string{"provider": "Old"}, RepoPath: "old-repo"},
+		ResticPassword: "old-secret",
+		Schedule:       "0 1 * * *",
+	}
+	require.NoError(t, store.SavePolicy(oldPolicy))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "rclone.conf"), []byte("old rclone config"), 0o600))
+	require.NoError(t, os.Mkdir(filepath.Join(configDir, ".restic-password"), 0o700))
+	scheduler := &recordingScheduler{}
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   configDir,
+		Scheduler:   scheduler,
+		SendFunc:    sent.send,
+	})
+	msg, err := protocol.NewMessage(protocol.TypePolicyPush, protocol.PolicyPushPayload{
+		AgentID:        "agent-1",
+		Storage:        protocol.StorageConfig{RcloneType: "s3", RcloneConfig: map[string]string{"provider": "New"}, RepoPath: "new-repo"},
+		ResticPassword: "new-secret",
+		Schedule:       "0 4 * * *",
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	messages := sent.snapshot()
+	require.Len(t, messages, 1)
+	ack, err := protocol.ParsePayload[protocol.PolicyAckPayload](&messages[0])
+	require.NoError(t, err)
+	assert.False(t, ack.Success)
+	assert.NotEmpty(t, ack.Error)
+	assert.Empty(t, scheduler.updates)
+
+	stored, err := store.LoadPolicy()
+	require.NoError(t, err)
+	assert.Equal(t, oldPolicy, stored)
+	rcloneConf, err := os.ReadFile(filepath.Join(configDir, "rclone.conf"))
+	require.NoError(t, err)
+	assert.Equal(t, "old rclone config", string(rcloneConf))
+}
+
+func TestHandlePolicyPushReplacesLooseResticPasswordWithSecureFile(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	configDir := t.TempDir()
+	passwordPath := filepath.Join(configDir, ".restic-password")
+	require.NoError(t, os.WriteFile(passwordPath, []byte("old-secret"), 0o644))
+	oldInfo := fileInfo(t, passwordPath)
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   configDir,
+		Scheduler:   &recordingScheduler{},
+		SendFunc:    sent.send,
+	})
+	msg, err := protocol.NewMessage(protocol.TypePolicyPush, protocol.PolicyPushPayload{
+		AgentID:        "agent-1",
+		Storage:        protocol.StorageConfig{RcloneType: "s3", RcloneConfig: map[string]string{"provider": "Other"}},
+		ResticPassword: "new-secret",
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	messages := sent.snapshot()
+	require.Len(t, messages, 1)
+	ack, err := protocol.ParsePayload[protocol.PolicyAckPayload](&messages[0])
+	require.NoError(t, err)
+	require.True(t, ack.Success, ack.Error)
+	assert.False(t, os.SameFile(oldInfo, fileInfo(t, passwordPath)))
+	password, err := os.ReadFile(passwordPath)
+	require.NoError(t, err)
+	assert.Equal(t, "new-secret", string(password))
+	assertFileMode(t, passwordPath, 0o600)
 }
 
 func TestHandleBackupNowLoadsPolicyRunsBackupAndSendsTaskResult(t *testing.T) {
@@ -455,12 +679,24 @@ type scheduledUpdate struct {
 }
 
 type recordingScheduler struct {
-	updates []scheduledUpdate
-	removed []string
-	err     error
+	updates     []scheduledUpdate
+	removed     []string
+	err         error
+	validateErr error
+	updateErr   error
+}
+
+func (s *recordingScheduler) Validate(string) error {
+	if s.validateErr != nil {
+		return s.validateErr
+	}
+	return s.err
 }
 
 func (s *recordingScheduler) UpdateSchedule(agentID string, schedule string, fn func()) error {
+	if s.updateErr != nil {
+		return s.updateErr
+	}
 	if s.err != nil {
 		return s.err
 	}
@@ -495,4 +731,11 @@ func assertFileMode(t *testing.T, path string, want os.FileMode) {
 	info, err := os.Stat(path)
 	require.NoError(t, err)
 	assert.Equal(t, want, info.Mode().Perm())
+}
+
+func fileInfo(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	return info
 }

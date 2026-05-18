@@ -49,6 +49,13 @@ func (s *Store) LoadPolicy() (*protocol.PolicyPushPayload, error) {
 	return &policy, nil
 }
 
+func (s *Store) DeletePolicy() error {
+	if err := os.Remove(s.path(PolicyFileName)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func (s *Store) SavePendingResults(results []protocol.TaskResultPayload) error {
 	if err := s.ensureDir(); err != nil {
 		return err

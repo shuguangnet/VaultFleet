@@ -22,6 +22,7 @@ type BrowseFunc func(fsRoot string, scanPath string, maxDepth int) ([]protocol.D
 type BackupRunnerFunc func(context.Context, executor.ExecutorConfig) executor.TaskResult
 
 type policyScheduler interface {
+	Validate(schedule string) error
 	UpdateSchedule(agentID string, schedule string, fn func()) error
 	RemoveJob(agentID string)
 }
@@ -103,34 +104,45 @@ func (h *Handler) handlePolicyPush(msg protocol.Message) {
 		return
 	}
 
+	if h.scheduler != nil && pushedPolicy.Schedule != "" {
+		if err := h.scheduler.Validate(pushedPolicy.Schedule); err != nil {
+			log.Printf("validate backup schedule failed: %v", err)
+			h.sendPolicyAck(msg.ID, pushedPolicy.AgentID, false, err.Error())
+			return
+		}
+	}
+
+	rollbackState, err := h.snapshotPolicyState()
+	if err != nil {
+		log.Printf("snapshot policy state failed: %v", err)
+		h.sendPolicyAck(msg.ID, pushedPolicy.AgentID, false, err.Error())
+		return
+	}
+	defer rollbackState.cleanup()
+
+	stagedFiles, err := h.stagePolicyFiles(pushedPolicy)
+	if err != nil {
+		log.Printf("stage policy config failed: %v", err)
+		h.sendPolicyAck(msg.ID, pushedPolicy.AgentID, false, err.Error())
+		return
+	}
+	defer stagedFiles.cleanup()
+
+	if err := stagedFiles.commit(h.configDir); err != nil {
+		log.Printf("commit policy config failed: %v", err)
+		rollbackState.restoreConfig()
+		h.sendPolicyAck(msg.ID, pushedPolicy.AgentID, false, err.Error())
+		return
+	}
+
 	if err := h.policyStore.SavePolicy(pushedPolicy); err != nil {
 		log.Printf("save policy failed: %v", err)
+		rollbackState.restoreConfig()
+		rollbackState.restorePolicy()
 		h.sendPolicyAck(msg.ID, pushedPolicy.AgentID, false, err.Error())
 		return
 	}
-	if err := os.MkdirAll(h.configDir, 0o700); err != nil {
-		log.Printf("create config dir failed: %v", err)
-		h.sendPolicyAck(msg.ID, pushedPolicy.AgentID, false, err.Error())
-		return
-	}
-	if err := executor.WriteRcloneConf(filepath.Join(h.configDir, "rclone.conf"), executor.RcloneConfig{
-		Type:   pushedPolicy.Storage.RcloneType,
-		Params: pushedPolicy.Storage.RcloneConfig,
-	}); err != nil {
-		log.Printf("write rclone config failed: %v", err)
-		h.sendPolicyAck(msg.ID, pushedPolicy.AgentID, false, err.Error())
-		return
-	}
-	if err := os.WriteFile(filepath.Join(h.configDir, ".restic-password"), []byte(pushedPolicy.ResticPassword), 0o600); err != nil {
-		log.Printf("write restic password failed: %v", err)
-		h.sendPolicyAck(msg.ID, pushedPolicy.AgentID, false, err.Error())
-		return
-	}
-	if err := os.Chmod(filepath.Join(h.configDir, ".restic-password"), 0o600); err != nil {
-		log.Printf("chmod restic password failed: %v", err)
-		h.sendPolicyAck(msg.ID, pushedPolicy.AgentID, false, err.Error())
-		return
-	}
+
 	if h.scheduler != nil {
 		if pushedPolicy.Schedule == "" {
 			h.scheduler.RemoveJob(pushedPolicy.AgentID)
@@ -138,11 +150,256 @@ func (h *Handler) handlePolicyPush(msg protocol.Message) {
 			h.runBackupForPolicy(pushedPolicy.AgentID, pushedPolicy)
 		}); err != nil {
 			log.Printf("update backup schedule failed: %v", err)
+			rollbackState.restore()
 			h.sendPolicyAck(msg.ID, pushedPolicy.AgentID, false, err.Error())
 			return
 		}
 	}
 	h.sendPolicyAck(msg.ID, pushedPolicy.AgentID, true, "")
+}
+
+type stagedPolicyFiles struct {
+	rclonePath   string
+	passwordPath string
+}
+
+type policyRollbackState struct {
+	policyStore *policy.Store
+	oldPolicy   *protocol.PolicyPushPayload
+	rclone      fileSnapshot
+	password    fileSnapshot
+}
+
+type fileSnapshot struct {
+	target  string
+	backup  string
+	existed bool
+}
+
+func (h *Handler) snapshotPolicyState() (*policyRollbackState, error) {
+	state := &policyRollbackState{policyStore: h.policyStore}
+	oldPolicy, err := h.policyStore.LoadPolicy()
+	if err == nil {
+		state.oldPolicy = oldPolicy
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+
+	rcloneSnapshot, err := snapshotFile(filepath.Join(h.configDir, "rclone.conf"), h.configDir, ".rclone.conf.rollback.*")
+	if err != nil {
+		state.cleanup()
+		return nil, err
+	}
+	state.rclone = rcloneSnapshot
+
+	passwordSnapshot, err := snapshotFile(filepath.Join(h.configDir, ".restic-password"), h.configDir, ".restic-password.rollback.*")
+	if err != nil {
+		state.cleanup()
+		return nil, err
+	}
+	state.password = passwordSnapshot
+	return state, nil
+}
+
+func (h *Handler) stagePolicyFiles(pushedPolicy *protocol.PolicyPushPayload) (*stagedPolicyFiles, error) {
+	if err := os.MkdirAll(h.configDir, 0o700); err != nil {
+		return nil, err
+	}
+
+	rclonePath, err := createSecureTempPath(h.configDir, "rclone.conf.*")
+	if err != nil {
+		return nil, err
+	}
+	staged := &stagedPolicyFiles{rclonePath: rclonePath}
+	if err := executor.WriteRcloneConf(rclonePath, executor.RcloneConfig{
+		Type:   pushedPolicy.Storage.RcloneType,
+		Params: pushedPolicy.Storage.RcloneConfig,
+	}); err != nil {
+		staged.cleanup()
+		return nil, err
+	}
+
+	passwordPath, err := writeSecureTempFile(h.configDir, ".restic-password.*", []byte(pushedPolicy.ResticPassword))
+	if err != nil {
+		staged.cleanup()
+		return nil, err
+	}
+	staged.passwordPath = passwordPath
+	return staged, nil
+}
+
+func snapshotFile(target string, dir string, pattern string) (fileSnapshot, error) {
+	snapshot := fileSnapshot{target: target}
+	info, err := os.Stat(target)
+	if os.IsNotExist(err) {
+		return snapshot, nil
+	}
+	if err != nil {
+		return snapshot, err
+	}
+	if info.IsDir() {
+		return snapshot, &os.PathError{Op: "snapshot", Path: target, Err: os.ErrInvalid}
+	}
+
+	data, err := os.ReadFile(target)
+	if err != nil {
+		return snapshot, err
+	}
+	backupPath, err := writeSecureTempFile(dir, pattern, data)
+	if err != nil {
+		return snapshot, err
+	}
+	snapshot.backup = backupPath
+	snapshot.existed = true
+	return snapshot, nil
+}
+
+func (s *stagedPolicyFiles) commit(configDir string) error {
+	rcloneTarget := filepath.Join(configDir, "rclone.conf")
+	passwordTarget := filepath.Join(configDir, ".restic-password")
+	if err := validateReplaceTarget(rcloneTarget); err != nil {
+		return err
+	}
+	if err := validateReplaceTarget(passwordTarget); err != nil {
+		return err
+	}
+
+	if err := os.Rename(s.rclonePath, rcloneTarget); err != nil {
+		return err
+	}
+	s.rclonePath = ""
+	if err := os.Rename(s.passwordPath, passwordTarget); err != nil {
+		return err
+	}
+	s.passwordPath = ""
+	return nil
+}
+
+func (s *stagedPolicyFiles) cleanup() {
+	if s.rclonePath != "" {
+		if err := os.Remove(s.rclonePath); err != nil && !os.IsNotExist(err) {
+			log.Printf("remove staged rclone config failed: %v", err)
+		}
+	}
+	if s.passwordPath != "" {
+		if err := os.Remove(s.passwordPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("remove staged restic password failed: %v", err)
+		}
+	}
+}
+
+func (s *policyRollbackState) restore() {
+	s.restoreConfig()
+	s.restorePolicy()
+}
+
+func (s *policyRollbackState) restoreConfig() {
+	s.rclone.restore()
+	s.password.restore()
+}
+
+func (s *policyRollbackState) restorePolicy() {
+	if s.oldPolicy == nil {
+		if err := s.policyStore.DeletePolicy(); err != nil {
+			log.Printf("remove new policy failed: %v", err)
+		}
+		return
+	}
+	if err := s.policyStore.SavePolicy(s.oldPolicy); err != nil {
+		log.Printf("restore previous policy failed: %v", err)
+	}
+}
+
+func (s *policyRollbackState) cleanup() {
+	s.rclone.cleanup()
+	s.password.cleanup()
+}
+
+func (s *fileSnapshot) restore() {
+	if s.target == "" {
+		return
+	}
+	if !s.existed {
+		if err := os.Remove(s.target); err != nil && !os.IsNotExist(err) {
+			log.Printf("remove new policy config file failed: %v", err)
+		}
+		return
+	}
+	if s.backup == "" {
+		return
+	}
+	if err := os.Rename(s.backup, s.target); err != nil {
+		log.Printf("restore previous policy config file failed: %v", err)
+		return
+	}
+	s.backup = ""
+}
+
+func (s *fileSnapshot) cleanup() {
+	if s.backup == "" {
+		return
+	}
+	if err := os.Remove(s.backup); err != nil && !os.IsNotExist(err) {
+		log.Printf("remove policy config rollback file failed: %v", err)
+	}
+	s.backup = ""
+}
+
+func createSecureTempPath(dir string, pattern string) (string, error) {
+	file, err := os.CreateTemp(dir, pattern)
+	if err != nil {
+		return "", err
+	}
+	path := file.Name()
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return path, nil
+}
+
+func writeSecureTempFile(dir string, pattern string, data []byte) (string, error) {
+	file, err := os.CreateTemp(dir, pattern)
+	if err != nil {
+		return "", err
+	}
+	path := file.Name()
+	remove := true
+	defer func() {
+		if remove {
+			_ = os.Remove(path)
+		}
+	}()
+
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return "", err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	remove = false
+	return path, nil
+}
+
+func validateReplaceTarget(path string) error {
+	info, err := os.Stat(path)
+	if err == nil && info.IsDir() {
+		return &os.PathError{Op: "replace", Path: path, Err: os.ErrExist}
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func (h *Handler) handleBackupNow(msg protocol.Message) {

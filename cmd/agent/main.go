@@ -49,6 +49,7 @@ func main() {
 	var client *connect.Client
 	handler := agenthandler.NewHandler(agenthandler.HandlerConfig{
 		PolicyStore: store,
+		AgentID:     cfg.AgentID,
 		SendFunc: func(msg protocol.Message) error {
 			return client.Send(msg)
 		},
