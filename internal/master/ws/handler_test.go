@@ -139,6 +139,18 @@ func TestHandler_HeartbeatDispatchUpdatesLastSeen(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestHandler_HeartbeatDispatchMarksAgentOnline(t *testing.T) {
+	setup := setupHandlerTest(t, validTestAuth, noPolicy)
+	setup.hub.Add("agent-1", &SafeConn{})
+	setup.hub.MarkOffline("agent-1")
+	require.False(t, setup.hub.IsOnline("agent-1"))
+
+	handler := NewHandler(setup.hub, setup.bus, validTestAuth, noPolicy)
+	handler.dispatch("agent-1", protocol.Message{Type: protocol.TypeHeartbeat})
+
+	assert.True(t, setup.hub.IsOnline("agent-1"))
+}
+
 func TestHandler_HeartbeatRefreshesReadDeadline(t *testing.T) {
 	setup := setupHandlerTest(t, validTestAuth, noPolicy)
 	server := httptest.NewServer(setup.router)

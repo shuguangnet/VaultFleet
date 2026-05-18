@@ -114,7 +114,9 @@ func (h *Handler) readLoop(agentID string, conn *SafeConn) {
 func (h *Handler) dispatch(agentID string, msg protocol.Message) {
 	switch msg.Type {
 	case protocol.TypeHeartbeat:
-		h.hub.UpdateLastSeen(agentID, timeNow())
+		now := timeNow()
+		h.hub.UpdateLastSeen(agentID, now)
+		h.hub.MarkOnline(agentID)
 	case protocol.TypePolicyAck:
 		h.eventBus.Publish(events.Event{
 			Type: events.PolicyChanged,

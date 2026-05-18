@@ -107,6 +107,32 @@ func (h *Hub) UpdateLastSeen(agentID string, t time.Time) {
 	}
 }
 
+func (h *Hub) MarkOffline(agentID string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	status, ok := h.agents[agentID]
+	if !ok || status == nil || !status.Online {
+		return false
+	}
+
+	status.Online = false
+	return true
+}
+
+func (h *Hub) MarkOnline(agentID string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	status, ok := h.agents[agentID]
+	if !ok || status == nil || status.Online {
+		return false
+	}
+
+	status.Online = true
+	return true
+}
+
 func (h *Hub) GetAllAgents() map[string]*AgentStatus {
 	h.mu.RLock()
 	defer h.mu.RUnlock()

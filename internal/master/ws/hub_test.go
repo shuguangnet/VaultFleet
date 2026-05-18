@@ -54,6 +54,22 @@ func TestHub_UpdateLastSeen(t *testing.T) {
 	assert.Equal(t, updated, status.LastSeenAt)
 }
 
+func TestHub_MarkOnlineAndMarkOffline(t *testing.T) {
+	hub := NewHub()
+	hub.Add("agent-1", &SafeConn{})
+
+	assert.True(t, hub.MarkOffline("agent-1"))
+	assert.False(t, hub.IsOnline("agent-1"))
+
+	assert.False(t, hub.MarkOffline("agent-1"))
+	assert.True(t, hub.MarkOnline("agent-1"))
+	assert.True(t, hub.IsOnline("agent-1"))
+
+	assert.False(t, hub.MarkOnline("agent-1"))
+	assert.False(t, hub.MarkOffline("missing-agent"))
+	assert.False(t, hub.MarkOnline("missing-agent"))
+}
+
 func TestHub_GetAllAgents(t *testing.T) {
 	hub := NewHub()
 	firstConn := &SafeConn{}
