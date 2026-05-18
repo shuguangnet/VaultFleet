@@ -133,6 +133,7 @@ func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
 		return
 	}
 
+	h.publishPolicyChanged(policy.AgentID, "created")
 	h.writePolicyResponse(c, http.StatusCreated, policy, resticPassword)
 }
 
@@ -219,30 +220,23 @@ func (h *PolicyHandler) UpdatePolicy(c *gin.Context) {
 		return
 	}
 
-	if h.EventBus != nil {
-		h.EventBus.Publish(events.Event{
-			Type: events.PolicyChanged,
-			Payload: map[string]interface{}{
-				"agent_id": policy.AgentID,
-				"action":   "updated",
-			},
-		})
-	}
+	h.publishPolicyChanged(policy.AgentID, "updated")
 
 	h.writePolicyResponse(c, http.StatusOK, policy, "")
 }
 
 func (h *PolicyHandler) DeletePolicy(c *gin.Context) {
-	result := h.DB.DB.Delete(&db.BackupPolicy{}, "id = ?", c.Param("id"))
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
-		return
-	}
-	if result.RowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "policy not found"})
+	policy, ok := h.findPolicyByID(c, c.Param("id"))
+	if !ok {
 		return
 	}
 
+	if err := h.DB.DB.Delete(&policy).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
+		return
+	}
+
+	h.publishPolicyChanged(policy.AgentID, "deleted")
 	c.Status(http.StatusNoContent)
 }
 
@@ -297,6 +291,20 @@ func (h *PolicyHandler) writePolicyResponse(c *gin.Context, status int, policy d
 	}
 
 	c.JSON(status, response)
+}
+
+func (h *PolicyHandler) publishPolicyChanged(agentID string, action string) {
+	if h.EventBus == nil {
+		return
+	}
+
+	h.EventBus.Publish(events.Event{
+		Type: events.PolicyChanged,
+		Payload: map[string]interface{}{
+			"agent_id": agentID,
+			"action":   action,
+		},
+	})
 }
 
 func newPolicyResponse(policy db.BackupPolicy, plainPassword string) (policyResponse, error) {

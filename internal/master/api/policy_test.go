@@ -82,6 +82,31 @@ func TestCreatePolicy(t *testing.T) {
 	assert.NotEmpty(t, stored.ResticPassword)
 }
 
+func TestCreatePolicyPublishesEvent(t *testing.T) {
+	setup := setupTestPolicyAPI(t)
+	agent := createPolicyTestAgent(t, setup.database)
+	storage := createPolicyTestStorage(t, setup.database)
+
+	received := make(chan events.Event, 1)
+	setup.bus.Subscribe(events.PolicyChanged, func(event events.Event) {
+		received <- event
+	})
+
+	created := createPolicy(t, setup.router, agent.ID, storage.ID)
+
+	select {
+	case event := <-received:
+		assert.Equal(t, events.PolicyChanged, event.Type)
+		payload := requireMap(t, event.Payload)
+		assert.Equal(t, agent.ID, payload["agent_id"])
+		assert.Contains(t, []string{"create", "created"}, payload["action"])
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for policy changed event")
+	}
+
+	assert.NotEmpty(t, created["id"])
+}
+
 func TestCreatePolicyWithProvidedRepoPathAndPassword(t *testing.T) {
 	setup := setupTestPolicyAPI(t)
 	agent := createPolicyTestAgent(t, setup.database)
@@ -283,6 +308,33 @@ func TestDeletePolicy(t *testing.T) {
 
 	w = getJSON(t, setup.router, "/api/policies/"+id)
 	require.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestDeletePolicyPublishesEvent(t *testing.T) {
+	setup := setupTestPolicyAPI(t)
+	agent := createPolicyTestAgent(t, setup.database)
+	storage := createPolicyTestStorage(t, setup.database)
+	created := createPolicy(t, setup.router, agent.ID, storage.ID)
+	id := created["id"].(string)
+
+	received := make(chan events.Event, 1)
+	setup.bus.Subscribe(events.PolicyChanged, func(event events.Event) {
+		received <- event
+	})
+
+	w := deleteJSON(t, setup.router, "/api/policies/"+id)
+
+	require.Equal(t, http.StatusNoContent, w.Code)
+
+	select {
+	case event := <-received:
+		assert.Equal(t, events.PolicyChanged, event.Type)
+		payload := requireMap(t, event.Payload)
+		assert.Equal(t, agent.ID, payload["agent_id"])
+		assert.Contains(t, []string{"delete", "deleted"}, payload["action"])
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for policy changed event")
+	}
 }
 
 func TestDeletePolicyNotFound(t *testing.T) {
