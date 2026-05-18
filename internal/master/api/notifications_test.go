@@ -48,7 +48,7 @@ func TestCreateNotificationConfig(t *testing.T) {
 			"url": "https://hooks.example.test/notify",
 			"headers": map[string]any{
 				"Authorization": "Bearer secret",
-				"X-Nested":      map[string]any{"value": "kept"},
+				"X-Trace":       "trace-id",
 			},
 		},
 		"events": []string{"backup_failed", "agent_offline"},
@@ -62,13 +62,46 @@ func TestCreateNotificationConfig(t *testing.T) {
 	config := requireMap(t, body["config"])
 	assert.Equal(t, "https://hooks.example.test/notify", config["url"])
 	headers := requireMap(t, config["headers"])
-	assert.Equal(t, "Bearer secret", headers["Authorization"])
-	assert.Equal(t, map[string]any{"value": "kept"}, requireMap(t, headers["X-Nested"]))
+	assert.Equal(t, redactedSecretValue, headers["Authorization"])
+	assert.Equal(t, "trace-id", headers["X-Trace"])
 
 	var stored db.NotificationConfig
 	require.NoError(t, setup.database.DB.First(&stored, "id = ?", body["id"]).Error)
 	assert.JSONEq(t, `["backup_failed","agent_offline"]`, stored.Events)
-	assert.JSONEq(t, `{"url":"https://hooks.example.test/notify","headers":{"Authorization":"Bearer secret","X-Nested":{"value":"kept"}}}`, stored.Config)
+	assert.NotContains(t, stored.Config, "Bearer secret")
+	assert.NotContains(t, stored.Config, "hooks.example.test")
+
+	plaintext, err := db.Decrypt(stored.Config, setup.database.MasterKey)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"url":"https://hooks.example.test/notify","headers":{"Authorization":"Bearer secret","X-Trace":"trace-id"}}`, plaintext)
+}
+
+func TestTelegramNotificationConfigEncryptsAndRedactsBotToken(t *testing.T) {
+	setup := setupNotificationAPI(t)
+
+	w := postAnyJSON(t, setup.router, "/api/notifications", map[string]any{
+		"type": "telegram",
+		"config": map[string]any{
+			"bot_token": "telegram-secret-token",
+			"chat_id":   "chat-1",
+			"base_url":  "https://api.example.test",
+		},
+		"events": []string{"backup_failed"},
+	})
+
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	config := requireMap(t, body["config"])
+	assert.Equal(t, redactedSecretValue, config["bot_token"])
+	assert.Equal(t, "chat-1", config["chat_id"])
+	assert.Equal(t, "https://api.example.test", config["base_url"])
+
+	var stored db.NotificationConfig
+	require.NoError(t, setup.database.DB.First(&stored, "id = ?", body["id"]).Error)
+	assert.NotContains(t, stored.Config, "telegram-secret-token")
+	plaintext, err := db.Decrypt(stored.Config, setup.database.MasterKey)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"bot_token":"telegram-secret-token","chat_id":"chat-1","base_url":"https://api.example.test"}`, plaintext)
 }
 
 func TestCreateNotificationConfigValidatesTypeAndRequiredConfig(t *testing.T) {
@@ -103,10 +136,43 @@ func TestCreateNotificationConfigValidatesTypeAndRequiredConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "webhook invalid scheme",
+			body: map[string]any{
+				"type":   "webhook",
+				"config": map[string]any{"url": "ftp://hooks.example.test"},
+				"events": []string{"agent_offline"},
+			},
+		},
+		{
+			name: "webhook nested header",
+			body: map[string]any{
+				"type":   "webhook",
+				"config": map[string]any{"url": "https://hooks.example.test", "headers": map[string]any{"X-Nested": map[string]any{"value": "bad"}}},
+				"events": []string{"agent_offline"},
+			},
+		},
+		{
+			name: "webhook numeric header",
+			body: map[string]any{
+				"type":   "webhook",
+				"config": map[string]any{"url": "https://hooks.example.test", "headers": map[string]any{"X-Count": 3}},
+				"events": []string{"agent_offline"},
+			},
+		},
+		{
 			name: "events missing",
 			body: map[string]any{
 				"type":   "webhook",
 				"config": map[string]any{"url": "https://hooks.example.test"},
+			},
+		},
+		{
+			name: "unknown top-level field",
+			body: map[string]any{
+				"type":    "webhook",
+				"config":  map[string]any{"url": "https://hooks.example.test"},
+				"events":  []string{"agent_offline"},
+				"enabled": true,
 			},
 		},
 	}
@@ -136,6 +202,9 @@ func TestListAndGetNotificationConfigsReturnEventArrays(t *testing.T) {
 	}
 	assertJSONList(t, seen[first["id"].(string)]["events"], []string{"backup_failed"})
 	assertJSONList(t, seen[second["id"].(string)]["events"], []string{"agent_offline"})
+	secondConfig := requireMap(t, seen[second["id"].(string)]["config"])
+	assert.Equal(t, redactedSecretValue, secondConfig["bot_token"])
+	assert.Equal(t, "chat", secondConfig["chat_id"])
 
 	w = getJSON(t, setup.router, "/api/notifications/"+first["id"].(string))
 	require.Equal(t, http.StatusOK, w.Code)
@@ -143,6 +212,13 @@ func TestListAndGetNotificationConfigsReturnEventArrays(t *testing.T) {
 	assert.Equal(t, first["id"], body["id"])
 	assert.Equal(t, "webhook", body["type"])
 	assertJSONList(t, body["events"], []string{"backup_failed"})
+
+	w = getJSON(t, setup.router, "/api/notifications/"+second["id"].(string))
+	require.Equal(t, http.StatusOK, w.Code)
+	body = parseJSON(t, w)
+	config := requireMap(t, body["config"])
+	assert.Equal(t, redactedSecretValue, config["bot_token"])
+	assert.Equal(t, "chat", config["chat_id"])
 }
 
 func TestGetNotificationConfigNotFound(t *testing.T) {
@@ -173,19 +249,27 @@ func TestUpdateNotificationConfig(t *testing.T) {
 	assert.Equal(t, "telegram", body["type"])
 	assertJSONList(t, body["events"], []string{"agent_offline"})
 	config := requireMap(t, body["config"])
-	assert.Equal(t, "new-token", config["bot_token"])
+	assert.Equal(t, redactedSecretValue, config["bot_token"])
 	assert.Equal(t, "new-chat", config["chat_id"])
 
 	var stored db.NotificationConfig
 	require.NoError(t, setup.database.DB.First(&stored, "id = ?", id).Error)
 	assert.Equal(t, "telegram", stored.Type)
-	assert.JSONEq(t, `{"bot_token":"new-token","chat_id":"new-chat"}`, stored.Config)
+	plaintext, err := db.Decrypt(stored.Config, setup.database.MasterKey)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"bot_token":"new-token","chat_id":"new-chat"}`, plaintext)
 	assert.JSONEq(t, `["agent_offline"]`, stored.Events)
 }
 
 func TestUpdateNotificationConfigCanUpdateOnlyEvents(t *testing.T) {
 	setup := setupNotificationAPI(t)
-	created := createNotificationConfigViaAPI(t, setup.router, "webhook", map[string]any{"url": "https://hooks.example.test"}, []string{"backup_failed"})
+	created := createNotificationConfigViaAPI(t, setup.router, "webhook", map[string]any{
+		"url": "https://hooks.example.test",
+		"headers": map[string]any{
+			"Authorization": "Bearer old-secret",
+			"X-Trace":       "trace-id",
+		},
+	}, []string{"backup_failed"})
 	id := created["id"].(string)
 
 	w := putJSON(t, setup.router, "/api/notifications/"+id, map[string]any{
@@ -198,6 +282,43 @@ func TestUpdateNotificationConfigCanUpdateOnlyEvents(t *testing.T) {
 	assertJSONList(t, body["events"], []string{"backup_failed", "agent_offline"})
 	config := requireMap(t, body["config"])
 	assert.Equal(t, "https://hooks.example.test", config["url"])
+	headers := requireMap(t, config["headers"])
+	assert.Equal(t, redactedSecretValue, headers["Authorization"])
+	assert.Equal(t, "trace-id", headers["X-Trace"])
+
+	var stored db.NotificationConfig
+	require.NoError(t, setup.database.DB.First(&stored, "id = ?", id).Error)
+	plaintext, err := db.Decrypt(stored.Config, setup.database.MasterKey)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"url":"https://hooks.example.test","headers":{"Authorization":"Bearer old-secret","X-Trace":"trace-id"}}`, plaintext)
+}
+
+func TestUpdateNotificationConfigPreservesRedactedSecrets(t *testing.T) {
+	setup := setupNotificationAPI(t)
+	created := createNotificationConfigViaAPI(t, setup.router, "telegram", map[string]any{
+		"bot_token": "old-token",
+		"chat_id":   "chat-1",
+	}, []string{"backup_failed"})
+	id := created["id"].(string)
+
+	w := putJSON(t, setup.router, "/api/notifications/"+id, map[string]any{
+		"config": map[string]any{
+			"bot_token": redactedSecretValue,
+			"chat_id":   "chat-2",
+		},
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	config := requireMap(t, body["config"])
+	assert.Equal(t, redactedSecretValue, config["bot_token"])
+	assert.Equal(t, "chat-2", config["chat_id"])
+
+	var stored db.NotificationConfig
+	require.NoError(t, setup.database.DB.First(&stored, "id = ?", id).Error)
+	plaintext, err := db.Decrypt(stored.Config, setup.database.MasterKey)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"bot_token":"old-token","chat_id":"chat-2"}`, plaintext)
 }
 
 func TestUpdateNotificationConfigValidationAndNotFound(t *testing.T) {
@@ -207,6 +328,12 @@ func TestUpdateNotificationConfigValidationAndNotFound(t *testing.T) {
 	w := putJSON(t, setup.router, "/api/notifications/"+created["id"].(string), map[string]any{
 		"type":   "webhook",
 		"config": map[string]any{},
+	})
+	require.Equal(t, http.StatusBadRequest, w.Code)
+
+	w = putJSON(t, setup.router, "/api/notifications/"+created["id"].(string), map[string]any{
+		"events":  []string{"agent_offline"},
+		"enabled": true,
 	})
 	require.Equal(t, http.StatusBadRequest, w.Code)
 
@@ -236,11 +363,14 @@ func TestDeleteNotificationConfigNotFound(t *testing.T) {
 
 func TestTestNotificationConfigSendsSampleNotification(t *testing.T) {
 	setup := setupNotificationAPI(t)
-	created := createNotificationConfigViaAPI(t, setup.router, "webhook", map[string]any{"url": "https://hooks.example.test"}, []string{"backup_failed"})
+	created := createNotificationConfigViaAPI(t, setup.router, "webhook", map[string]any{
+		"url":     "https://hooks.example.test",
+		"headers": map[string]any{"Authorization": "Bearer secret"},
+	}, []string{"backup_failed"})
 	recorder := &apiRecordingNotifier{}
 	setup.handler.notifierFactory = func(notificationType string, raw json.RawMessage) (notify.Notifier, error) {
 		assert.Equal(t, "webhook", notificationType)
-		assert.JSONEq(t, `{"url":"https://hooks.example.test"}`, string(raw))
+		assert.JSONEq(t, `{"url":"https://hooks.example.test","headers":{"Authorization":"Bearer secret"}}`, string(raw))
 		return recorder, nil
 	}
 

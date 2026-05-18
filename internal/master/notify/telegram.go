@@ -37,7 +37,7 @@ func NewTelegramNotifier(config TelegramConfig) *TelegramNotifier {
 		botToken: config.BotToken,
 		chatID:   config.ChatID,
 		baseURL:  baseURL,
-		client:   http.DefaultClient,
+		client:   &http.Client{Timeout: defaultHTTPTimeout},
 	}
 }
 

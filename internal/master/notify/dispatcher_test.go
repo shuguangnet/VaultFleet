@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,6 +39,55 @@ func TestNewNotifierFromConfigRejectsUnknownOrInvalidConfig(t *testing.T) {
 	_, err = NewNotifierFromConfig("webhook", json.RawMessage(`{"headers":{"X-Test":"value"}}`))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "url")
+}
+
+func TestNewNotifierFromConfigRejectsUnknownFieldsInvalidHeadersAndWebhookURL(t *testing.T) {
+	tests := []struct {
+		name             string
+		notificationType string
+		config           json.RawMessage
+		want             string
+	}{
+		{
+			name:             "telegram unknown field",
+			notificationType: "telegram",
+			config:           json.RawMessage(`{"bot_token":"token","chat_id":"chat","extra":true}`),
+			want:             "unknown field",
+		},
+		{
+			name:             "webhook unknown field",
+			notificationType: "webhook",
+			config:           json.RawMessage(`{"url":"https://hooks.example.test","extra":true}`),
+			want:             "unknown field",
+		},
+		{
+			name:             "webhook non-string header",
+			notificationType: "webhook",
+			config:           json.RawMessage(`{"url":"https://hooks.example.test","headers":{"X-Count":3}}`),
+			want:             "header",
+		},
+		{
+			name:             "webhook nested header",
+			notificationType: "webhook",
+			config:           json.RawMessage(`{"url":"https://hooks.example.test","headers":{"X-Nested":{"value":"bad"}}}`),
+			want:             "header",
+		},
+		{
+			name:             "webhook invalid scheme",
+			notificationType: "webhook",
+			config:           json.RawMessage(`{"url":"ftp://hooks.example.test"}`),
+			want:             "http",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewNotifierFromConfig(tt.notificationType, tt.config)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
 }
 
 func TestDispatcherSendsAgentOfflineNotificationsForMatchingConfigs(t *testing.T) {
@@ -137,6 +187,28 @@ func TestDispatcherSkipsNonMatchingConfigsAndContinuesAfterSendError(t *testing.
 	assert.Equal(t, 2, calls)
 }
 
+func TestDispatcherDecryptsStoredNotificationConfigAndUsesTimeoutContext(t *testing.T) {
+	database := setupNotifyTestDB(t)
+	bus := events.NewBus()
+	notifier := &contextRecordingNotifier{}
+	dispatcher := NewDispatcher(database, bus, WithNotifierFactory(func(notificationType string, raw json.RawMessage) (Notifier, error) {
+		assert.Equal(t, "webhook", notificationType)
+		assert.JSONEq(t, `{"url":"https://hooks.example.test","headers":{"Authorization":"Bearer secret"}}`, string(raw))
+		return notifier, nil
+	}))
+
+	encryptedConfig, err := db.Encrypt(`{"url":"https://hooks.example.test","headers":{"Authorization":"Bearer secret"}}`, database.MasterKey)
+	require.NoError(t, err)
+	createNotifyConfig(t, database, "webhook", encryptedConfig, []string{"agent_offline"})
+
+	dispatcher.Start()
+	bus.Publish(events.Event{Type: events.AgentOffline, Payload: "agent-1"})
+
+	require.Len(t, notifier.sent, 1)
+	assert.True(t, notifier.hadDeadline, "dispatcher should bound external notification sends")
+	assert.LessOrEqual(t, time.Until(notifier.deadline), defaultSendTimeout)
+}
+
 func publishTaskResult(t *testing.T, bus *events.Bus, result protocol.TaskResultPayload) {
 	t.Helper()
 
@@ -185,5 +257,21 @@ func (n *recordingNotifier) Send(_ context.Context, msg NotifyMessage) error {
 }
 
 func (n *recordingNotifier) Type() string {
+	return "recording"
+}
+
+type contextRecordingNotifier struct {
+	sent        []NotifyMessage
+	hadDeadline bool
+	deadline    time.Time
+}
+
+func (n *contextRecordingNotifier) Send(ctx context.Context, msg NotifyMessage) error {
+	n.sent = append(n.sent, msg)
+	n.deadline, n.hadDeadline = ctx.Deadline()
+	return nil
+}
+
+func (n *contextRecordingNotifier) Type() string {
 	return "recording"
 }

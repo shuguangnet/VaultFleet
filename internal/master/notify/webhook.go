@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
 type WebhookConfig struct {
-	URL     string         `json:"url"`
-	Headers map[string]any `json:"headers,omitempty"`
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 type WebhookNotifier struct {
@@ -24,15 +25,13 @@ type WebhookNotifier struct {
 func NewWebhookNotifier(config WebhookConfig) *WebhookNotifier {
 	headers := make(map[string]string, len(config.Headers))
 	for key, value := range config.Headers {
-		if stringValue, ok := value.(string); ok {
-			headers[key] = stringValue
-		}
+		headers[key] = value
 	}
 
 	return &WebhookNotifier{
 		url:     config.URL,
 		headers: headers,
-		client:  http.DefaultClient,
+		client:  &http.Client{Timeout: defaultHTTPTimeout},
 	}
 }
 
@@ -67,4 +66,18 @@ func (n *WebhookNotifier) Send(ctx context.Context, msg NotifyMessage) error {
 
 func (n *WebhookNotifier) Type() string {
 	return "webhook"
+}
+
+func validateWebhookURL(rawURL string) error {
+	parsed, err := url.ParseRequestURI(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid webhook url: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("webhook url must use http or https")
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("webhook url host is required")
+	}
+	return nil
 }

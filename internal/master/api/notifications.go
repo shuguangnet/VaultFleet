@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -58,7 +60,7 @@ func RegisterNotificationRoutes(rg *gin.RouterGroup, h *NotificationHandler) {
 
 func (h *NotificationHandler) Create(c *gin.Context) {
 	var request notificationRequest
-	if err := c.ShouldBindJSON(&request); err != nil {
+	if err := bindStrictJSON(c, &request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
@@ -67,10 +69,14 @@ func (h *NotificationHandler) Create(c *gin.Context) {
 	if !ok {
 		return
 	}
+	encryptedConfig, ok := h.encryptNotificationConfig(c, configJSON)
+	if !ok {
+		return
+	}
 
 	config := db.NotificationConfig{
 		Type:   request.Type,
-		Config: configJSON,
+		Config: encryptedConfig,
 		Events: eventsJSON,
 	}
 	if err := h.DB.DB.Create(&config).Error; err != nil {
@@ -90,7 +96,7 @@ func (h *NotificationHandler) List(c *gin.Context) {
 
 	responses := make([]notificationResponse, 0, len(configs))
 	for _, config := range configs {
-		response, err := newNotificationResponse(config)
+		response, err := h.newNotificationResponse(config)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "decode notification config"})
 			return
@@ -117,7 +123,7 @@ func (h *NotificationHandler) Update(c *gin.Context) {
 	}
 
 	var request updateNotificationRequest
-	if err := c.ShouldBindJSON(&request); err != nil {
+	if err := bindStrictJSON(c, &request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
@@ -127,9 +133,22 @@ func (h *NotificationHandler) Update(c *gin.Context) {
 		nextType = *request.Type
 	}
 
-	nextConfig := config.Config
+	currentConfig, ok := h.decryptNotificationConfigForRequest(c, config.Config)
+	if !ok {
+		return
+	}
+
+	nextConfig := currentConfig
 	if request.Config != nil {
+		mergedConfig, err := preserveNotificationRedactedSecrets(config.Type, currentConfig, request.Config)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "decode notification config"})
+			return
+		}
 		configJSON, ok := marshalNotificationConfig(c, request.Config)
+		if mergedConfig != nil {
+			configJSON, ok = marshalNotificationConfig(c, mergedConfig)
+		}
 		if !ok {
 			return
 		}
@@ -151,9 +170,13 @@ func (h *NotificationHandler) Update(c *gin.Context) {
 	if ok := validateNotificationEvents(c, nextEvents); !ok {
 		return
 	}
+	encryptedConfig, ok := h.encryptNotificationConfig(c, nextConfig)
+	if !ok {
+		return
+	}
 
 	config.Type = nextType
-	config.Config = nextConfig
+	config.Config = encryptedConfig
 	config.Events = nextEvents
 	if err := h.DB.DB.Save(&config).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
@@ -187,7 +210,12 @@ func (h *NotificationHandler) TestSend(c *gin.Context) {
 	if factory == nil {
 		factory = notify.NewNotifierFromConfig
 	}
-	notifier, err := factory(config.Type, json.RawMessage(config.Config))
+	configJSON, ok := h.decryptNotificationConfigForRequest(c, config.Config)
+	if !ok {
+		return
+	}
+
+	notifier, err := factory(config.Type, json.RawMessage(configJSON))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid notification config"})
 		return
@@ -246,7 +274,7 @@ func (h *NotificationHandler) prepareNotificationInput(c *gin.Context, notificat
 }
 
 func (h *NotificationHandler) writeNotificationResponse(c *gin.Context, status int, config db.NotificationConfig) {
-	response, err := newNotificationResponse(config)
+	response, err := h.newNotificationResponse(config)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "decode notification config"})
 		return
@@ -255,13 +283,19 @@ func (h *NotificationHandler) writeNotificationResponse(c *gin.Context, status i
 	c.JSON(status, response)
 }
 
-func newNotificationResponse(config db.NotificationConfig) (notificationResponse, error) {
+func (h *NotificationHandler) newNotificationResponse(config db.NotificationConfig) (notificationResponse, error) {
+	configJSON, err := h.decryptNotificationConfig(config.Config)
+	if err != nil {
+		return notificationResponse{}, err
+	}
+
 	var rawConfig map[string]any
-	if config.Config != "" {
-		if err := json.Unmarshal([]byte(config.Config), &rawConfig); err != nil {
+	if configJSON != "" {
+		if err := json.Unmarshal([]byte(configJSON), &rawConfig); err != nil {
 			return notificationResponse{}, err
 		}
 	}
+	rawConfig = redactNotificationConfig(config.Type, rawConfig)
 
 	var eventNames []string
 	if config.Events != "" {
@@ -341,4 +375,129 @@ func validateNotificationEvents(c *gin.Context, rawEvents string) bool {
 		}
 	}
 	return true
+}
+
+func (h *NotificationHandler) encryptNotificationConfig(c *gin.Context, plaintext string) (string, bool) {
+	ciphertext, err := db.Encrypt(plaintext, h.DB.MasterKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "encryption failed"})
+		return "", false
+	}
+	return ciphertext, true
+}
+
+func (h *NotificationHandler) decryptNotificationConfigForRequest(c *gin.Context, ciphertext string) (string, bool) {
+	plaintext, err := h.decryptNotificationConfig(ciphertext)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "decrypt notification config"})
+		return "", false
+	}
+	return plaintext, true
+}
+
+func (h *NotificationHandler) decryptNotificationConfig(ciphertext string) (string, error) {
+	plaintext, err := db.Decrypt(ciphertext, h.DB.MasterKey)
+	if err == nil {
+		return plaintext, nil
+	}
+	if json.Valid([]byte(ciphertext)) {
+		return ciphertext, nil
+	}
+	return "", err
+}
+
+func redactNotificationConfig(notificationType string, config map[string]any) map[string]any {
+	if config == nil {
+		return nil
+	}
+
+	redacted := cloneJSONMap(config)
+	switch notificationType {
+	case "telegram":
+		if _, ok := redacted["bot_token"]; ok {
+			redacted["bot_token"] = redactedSecretValue
+		}
+	case "webhook":
+		headers, ok := redacted["headers"].(map[string]any)
+		if !ok {
+			return redacted
+		}
+		for key := range headers {
+			if isNotificationSecretHeader(key) {
+				headers[key] = redactedSecretValue
+			}
+		}
+	}
+	return redacted
+}
+
+func preserveNotificationRedactedSecrets(notificationType string, currentJSON string, nextConfig map[string]any) (map[string]any, error) {
+	if nextConfig == nil {
+		return nil, nil
+	}
+
+	var currentConfig map[string]any
+	if err := json.Unmarshal([]byte(currentJSON), &currentConfig); err != nil {
+		return nil, err
+	}
+
+	merged := cloneJSONMap(nextConfig)
+	switch notificationType {
+	case "telegram":
+		if merged["bot_token"] == redactedSecretValue {
+			if currentValue, ok := currentConfig["bot_token"]; ok {
+				merged["bot_token"] = currentValue
+			}
+		}
+	case "webhook":
+		currentHeaders, _ := currentConfig["headers"].(map[string]any)
+		nextHeaders, _ := merged["headers"].(map[string]any)
+		for key, value := range nextHeaders {
+			if value == redactedSecretValue && isNotificationSecretHeader(key) {
+				if currentValue, ok := currentHeaders[key]; ok {
+					nextHeaders[key] = currentValue
+				}
+			}
+		}
+	}
+	return merged, nil
+}
+
+func cloneJSONMap(value map[string]any) map[string]any {
+	clone := make(map[string]any, len(value))
+	for key, item := range value {
+		if nested, ok := item.(map[string]any); ok {
+			clone[key] = cloneJSONMap(nested)
+			continue
+		}
+		clone[key] = item
+	}
+	return clone
+}
+
+func isNotificationSecretHeader(name string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(name, "_", "-"))
+	switch normalized {
+	case "authorization", "proxy-authorization", "x-api-key", "x-auth-token", "x-access-token", "x-webhook-secret", "x-signature", "x-hub-signature", "x-hub-signature-256":
+		return true
+	default:
+		return strings.Contains(normalized, "token") || strings.Contains(normalized, "secret") || strings.Contains(normalized, "api-key")
+	}
+}
+
+func bindStrictJSON(c *gin.Context, target any) error {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return err
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("multiple JSON values")
+	}
+	return nil
 }

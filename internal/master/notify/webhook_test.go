@@ -31,7 +31,7 @@ func TestWebhookNotifierSendPostsNotifyMessage(t *testing.T) {
 
 	wh := NewWebhookNotifier(WebhookConfig{
 		URL: server.URL,
-		Headers: map[string]any{
+		Headers: map[string]string{
 			"Authorization": "Bearer secret",
 			"X-Custom":      "value",
 		},
@@ -88,4 +88,11 @@ func TestWebhookNotifierType(t *testing.T) {
 	wh := NewWebhookNotifier(WebhookConfig{URL: "https://example.com"})
 
 	assert.Equal(t, "webhook", wh.Type())
+}
+
+func TestWebhookNotifierHasBoundedHTTPClientTimeout(t *testing.T) {
+	wh := NewWebhookNotifier(WebhookConfig{URL: "https://example.com"})
+
+	require.NotNil(t, wh.client)
+	assert.Equal(t, defaultHTTPTimeout, wh.client.Timeout)
 }

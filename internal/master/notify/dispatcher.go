@@ -1,10 +1,12 @@
 package notify
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"time"
@@ -17,6 +19,9 @@ import (
 const (
 	EventBackupFailed = "backup_failed"
 	EventAgentOffline = "agent_offline"
+
+	defaultHTTPTimeout = 10 * time.Second
+	defaultSendTimeout = 10 * time.Second
 )
 
 type NotifierFactory func(notificationType string, raw json.RawMessage) (Notifier, error)
@@ -66,7 +71,10 @@ func (d *Dispatcher) handleEvent(event events.Event) {
 		return
 	}
 
-	if err := d.dispatch(context.Background(), eventName, msg); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultSendTimeout)
+	defer cancel()
+
+	if err := d.dispatch(ctx, eventName, msg); err != nil {
 		log.Printf("dispatch notification %s failed: %v", eventName, err)
 	}
 }
@@ -87,7 +95,13 @@ func (d *Dispatcher) dispatch(ctx context.Context, eventName string, msg NotifyM
 			continue
 		}
 
-		notifier, err := d.factory(config.Type, json.RawMessage(config.Config))
+		rawConfig, err := decryptNotificationConfig(config.Config, d.db.MasterKey)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("decrypt notification config %s: %w", config.ID, err))
+			continue
+		}
+
+		notifier, err := d.factory(config.Type, json.RawMessage(rawConfig))
 		if err != nil {
 			errs = append(errs, fmt.Errorf("create %s notifier %s: %w", config.Type, config.ID, err))
 			continue
@@ -156,7 +170,7 @@ func NewNotifierFromConfig(notificationType string, raw json.RawMessage) (Notifi
 	switch notificationType {
 	case "telegram":
 		var config TelegramConfig
-		if err := json.Unmarshal(raw, &config); err != nil {
+		if err := decodeStrictJSON(raw, &config); err != nil {
 			return nil, fmt.Errorf("decode telegram config: %w", err)
 		}
 		if strings.TrimSpace(config.BotToken) == "" {
@@ -168,16 +182,42 @@ func NewNotifierFromConfig(notificationType string, raw json.RawMessage) (Notifi
 		return NewTelegramNotifier(config), nil
 	case "webhook":
 		var config WebhookConfig
-		if err := json.Unmarshal(raw, &config); err != nil {
+		if err := decodeStrictJSON(raw, &config); err != nil {
 			return nil, fmt.Errorf("decode webhook config: %w", err)
 		}
 		if strings.TrimSpace(config.URL) == "" {
 			return nil, errors.New("webhook url is required")
 		}
+		if err := validateWebhookURL(config.URL); err != nil {
+			return nil, err
+		}
 		return NewWebhookNotifier(config), nil
 	default:
 		return nil, fmt.Errorf("unknown notification type %q", notificationType)
 	}
+}
+
+func decodeStrictJSON(raw json.RawMessage, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("multiple JSON values")
+	}
+	return nil
+}
+
+func decryptNotificationConfig(rawConfig string, key []byte) (string, error) {
+	plaintext, err := db.Decrypt(rawConfig, key)
+	if err == nil {
+		return plaintext, nil
+	}
+	if json.Valid([]byte(rawConfig)) {
+		return rawConfig, nil
+	}
+	return "", err
 }
 
 func configMatchesEvent(rawEvents string, eventName string) bool {

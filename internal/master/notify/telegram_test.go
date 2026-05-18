@@ -140,3 +140,13 @@ func TestTelegramNotifierTypeAndDefaultBaseURL(t *testing.T) {
 	assert.Equal(t, "telegram", tg.Type())
 	assert.Equal(t, "https://api.telegram.org", tg.baseURL)
 }
+
+func TestTelegramNotifierHasBoundedHTTPClientTimeout(t *testing.T) {
+	tg := NewTelegramNotifier(TelegramConfig{
+		BotToken: "token",
+		ChatID:   "chat",
+	})
+
+	require.NotNil(t, tg.client)
+	assert.Equal(t, defaultHTTPTimeout, tg.client.Timeout)
+}
