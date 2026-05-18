@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"vaultfleet/internal/master/db"
 	"vaultfleet/internal/master/events"
@@ -204,6 +205,38 @@ func TestUpdateStorageConfig(t *testing.T) {
 	assert.NotContains(t, stored.RcloneConfig, "backup.example.com")
 }
 
+func TestUpdateStorageConfigRoundTripPreservesRedactedSecrets(t *testing.T) {
+	setup := setupTestConfigAPI(t)
+	created := createStorageConfig(t, setup.router, "Cloudflare R2", map[string]any{
+		"provider":          "Cloudflare",
+		"access_key_id":     "AKID123",
+		"secret_access_key": "SECRET456",
+		"endpoint":          "https://old.example.com",
+	})
+	id := created["id"].(string)
+
+	w := getJSON(t, setup.router, "/api/storage/"+id)
+	require.Equal(t, http.StatusOK, w.Code)
+	body := parseJSON(t, w)
+	roundTrippedConfig := requireMap(t, body["rclone_config"])
+	roundTrippedConfig["endpoint"] = "https://new.example.com"
+
+	w = putJSON(t, setup.router, "/api/storage/"+id, map[string]any{
+		"rclone_config": roundTrippedConfig,
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var stored db.StorageConfig
+	require.NoError(t, setup.database.DB.First(&stored, "id = ?", id).Error)
+	plaintext, err := db.Decrypt(stored.RcloneConfig, setup.database.MasterKey)
+	require.NoError(t, err)
+	assert.Contains(t, plaintext, "AKID123")
+	assert.Contains(t, plaintext, "SECRET456")
+	assert.Contains(t, plaintext, "https://new.example.com")
+	assert.NotContains(t, plaintext, redactedSecretValue)
+}
+
 func TestUpdateStorageConfigCredentialsMarkReferencedPoliciesUnsyncedAndPublishEvents(t *testing.T) {
 	setup := setupTestConfigAPI(t)
 	agentA := createStorageTestAgent(t, setup.database, "Tokyo-1")
@@ -237,6 +270,44 @@ func TestUpdateStorageConfigCredentialsMarkReferencedPoliciesUnsyncedAndPublishE
 	assertPolicyChangedEvent(t, received, agentA.ID, "storage_updated")
 	assertPolicyChangedEvent(t, received, agentB.ID, "storage_updated")
 	assertNoPolicyChangedEvent(t, received)
+}
+
+func TestUpdateStorageConfigRollsBackWhenPolicyUnsyncFails(t *testing.T) {
+	setup := setupTestConfigAPI(t)
+	agent := createStorageTestAgent(t, setup.database, "Tokyo-1")
+	created := createStorageConfig(t, setup.router, "Shared Storage", map[string]any{
+		"secret":   "old",
+		"endpoint": "old.example.com",
+	})
+	storageID := created["id"].(string)
+	policy := createStorageTestPolicy(t, setup.database, agent.ID, storageID, true)
+	handler := NewConfigHandler(setup.database)
+	handler.markReferencedPoliciesUnsyncedFunc = func(*gorm.DB, string) ([]string, error) {
+		return nil, assert.AnError
+	}
+
+	var storage db.StorageConfig
+	require.NoError(t, setup.database.DB.First(&storage, "id = ?", storageID).Error)
+	storage.RcloneConfig = mustEncryptMap(t, setup.database, map[string]any{
+		"secret":   "new",
+		"endpoint": "new.example.com",
+	})
+
+	_, err := handler.saveStorageUpdate(storage, true)
+
+	require.ErrorIs(t, err, assert.AnError)
+
+	var stored db.StorageConfig
+	require.NoError(t, setup.database.DB.First(&stored, "id = ?", storageID).Error)
+	plaintext, err := db.Decrypt(stored.RcloneConfig, setup.database.MasterKey)
+	require.NoError(t, err)
+	assert.Contains(t, plaintext, "old.example.com")
+	assert.Contains(t, plaintext, "old")
+	assert.NotContains(t, plaintext, "new.example.com")
+
+	var storedPolicy db.BackupPolicy
+	require.NoError(t, setup.database.DB.First(&storedPolicy, "id = ?", policy.ID).Error)
+	assert.True(t, storedPolicy.Synced)
 }
 
 func TestUpdateStorageConfigNameOnlyDoesNotMarkPoliciesUnsyncedOrPublishEvents(t *testing.T) {
@@ -389,6 +460,16 @@ func createStorageTestPolicy(t *testing.T, database *db.Database, agentID string
 	}
 	require.NoError(t, database.DB.Create(&policy).Error)
 	return policy
+}
+
+func mustEncryptMap(t *testing.T, database *db.Database, value map[string]any) string {
+	t.Helper()
+
+	plaintext, err := json.Marshal(value)
+	require.NoError(t, err)
+	ciphertext, err := db.Encrypt(string(plaintext), database.MasterKey)
+	require.NoError(t, err)
+	return ciphertext
 }
 
 func assertPolicyChangedEvent(t *testing.T, received <-chan events.Event, agentID string, action string) {

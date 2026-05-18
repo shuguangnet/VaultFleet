@@ -18,6 +18,8 @@ type ConfigHandler struct {
 	DB        *db.Database
 	EventBus  *events.Bus
 	MasterKey []byte
+
+	markReferencedPoliciesUnsyncedFunc func(*gorm.DB, string) ([]string, error)
 }
 
 func NewConfigHandler(database *db.Database) *ConfigHandler {
@@ -130,7 +132,13 @@ func (h *ConfigHandler) UpdateStorage(c *gin.Context) {
 		configChanged = true
 	}
 	if request.RcloneConfig != nil {
-		encryptedConfig, ok := h.encryptMap(c, request.RcloneConfig)
+		nextConfig, err := h.preserveRedactedSecrets(storage.RcloneConfig, request.RcloneConfig)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "decrypt storage config"})
+			return
+		}
+
+		encryptedConfig, ok := h.encryptMap(c, nextConfig)
 		if !ok {
 			return
 		}
@@ -138,14 +146,13 @@ func (h *ConfigHandler) UpdateStorage(c *gin.Context) {
 		configChanged = true
 	}
 
-	if err := h.DB.DB.Save(&storage).Error; err != nil {
+	agentIDs, err := h.saveStorageUpdate(storage, configChanged)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
 		return
 	}
 
-	if configChanged && !h.markReferencedPoliciesUnsynced(c, storage.ID) {
-		return
-	}
+	h.publishStorageChanged(agentIDs)
 
 	h.writeStorageResponse(c, http.StatusOK, storage)
 }
@@ -183,39 +190,76 @@ func (h *ConfigHandler) storageHasPolicies(c *gin.Context, storageID string) (bo
 	return count > 0, true
 }
 
-func (h *ConfigHandler) markReferencedPoliciesUnsynced(c *gin.Context, storageID string) bool {
+func (h *ConfigHandler) saveStorageUpdate(storage db.StorageConfig, configChanged bool) ([]string, error) {
+	var agentIDs []string
+
+	err := h.DB.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&storage).Error; err != nil {
+			return err
+		}
+		if !configChanged {
+			return nil
+		}
+
+		mark := h.markReferencedPoliciesUnsynced
+		if h.markReferencedPoliciesUnsyncedFunc != nil {
+			mark = h.markReferencedPoliciesUnsyncedFunc
+		}
+
+		affectedAgentIDs, err := mark(tx, storage.ID)
+		if err != nil {
+			return err
+		}
+		agentIDs = affectedAgentIDs
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return agentIDs, nil
+}
+
+func (h *ConfigHandler) markReferencedPoliciesUnsynced(tx *gorm.DB, storageID string) ([]string, error) {
 	var policies []db.BackupPolicy
-	if err := h.DB.DB.Where("storage_id = ?", storageID).Find(&policies).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
-		return false
+	if err := tx.Where("storage_id = ?", storageID).Find(&policies).Error; err != nil {
+		return nil, err
 	}
 	if len(policies) == 0 {
-		return true
+		return nil, nil
 	}
 
-	if err := h.DB.DB.Model(&db.BackupPolicy{}).Where("storage_id = ?", storageID).Update("synced", false).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
-		return false
+	if err := tx.Model(&db.BackupPolicy{}).Where("storage_id = ?", storageID).Update("synced", false).Error; err != nil {
+		return nil, err
 	}
 
-	if h.EventBus != nil {
-		seenAgents := make(map[string]bool, len(policies))
-		for _, policy := range policies {
-			if seenAgents[policy.AgentID] {
-				continue
-			}
-			seenAgents[policy.AgentID] = true
-			h.EventBus.Publish(events.Event{
-				Type: events.PolicyChanged,
-				Payload: map[string]interface{}{
-					"agent_id": policy.AgentID,
-					"action":   "storage_updated",
-				},
-			})
+	seenAgents := make(map[string]bool, len(policies))
+	agentIDs := make([]string, 0, len(policies))
+	for _, policy := range policies {
+		if seenAgents[policy.AgentID] {
+			continue
 		}
+		seenAgents[policy.AgentID] = true
+		agentIDs = append(agentIDs, policy.AgentID)
 	}
 
-	return true
+	return agentIDs, nil
+}
+
+func (h *ConfigHandler) publishStorageChanged(agentIDs []string) {
+	if h.EventBus == nil {
+		return
+	}
+
+	for _, agentID := range agentIDs {
+		h.EventBus.Publish(events.Event{
+			Type: events.PolicyChanged,
+			Payload: map[string]interface{}{
+				"agent_id": agentID,
+				"action":   "storage_updated",
+			},
+		})
+	}
 }
 
 func (h *ConfigHandler) findStorageByID(c *gin.Context, id string) (db.StorageConfig, bool) {
@@ -288,6 +332,26 @@ func (h *ConfigHandler) decryptMap(ciphertext string) (map[string]any, error) {
 	return result, nil
 }
 
+func (h *ConfigHandler) preserveRedactedSecrets(currentCiphertext string, nextConfig map[string]any) (map[string]any, error) {
+	currentConfig, err := h.decryptMap(currentCiphertext)
+	if err != nil {
+		return nil, err
+	}
+
+	merged := make(map[string]any, len(nextConfig))
+	for key, value := range nextConfig {
+		if isRcloneSecretKey(key) && value == redactedSecretValue {
+			if currentValue, ok := currentConfig[key]; ok {
+				merged[key] = currentValue
+				continue
+			}
+		}
+		merged[key] = value
+	}
+
+	return merged, nil
+}
+
 const redactedSecretValue = "[redacted]"
 
 var rcloneSecretKeys = map[string]bool{
@@ -303,7 +367,7 @@ var rcloneSecretKeys = map[string]bool{
 func redactRcloneConfig(config map[string]any) map[string]any {
 	redacted := make(map[string]any, len(config))
 	for key, value := range config {
-		if rcloneSecretKeys[strings.ToLower(key)] {
+		if isRcloneSecretKey(key) {
 			redacted[key] = redactedSecretValue
 			continue
 		}
@@ -311,4 +375,8 @@ func redactRcloneConfig(config map[string]any) map[string]any {
 	}
 
 	return redacted
+}
+
+func isRcloneSecretKey(key string) bool {
+	return rcloneSecretKeys[strings.ToLower(key)]
 }
