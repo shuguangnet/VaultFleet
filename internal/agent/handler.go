@@ -501,10 +501,17 @@ func (h *Handler) sendPolicyAck(messageID string, agentID string, success bool, 
 }
 
 func (h *Handler) sendTaskResult(payload protocol.TaskResultPayload) {
+	h.sendTaskResultWithID("", payload)
+}
+
+func (h *Handler) sendTaskResultWithID(messageID string, payload protocol.TaskResultPayload) {
 	msg, err := protocol.NewMessage(protocol.TypeTaskResult, payload)
 	if err != nil {
 		log.Printf("create task result failed: %v", err)
 		return
+	}
+	if messageID != "" {
+		msg.ID = messageID
 	}
 	if err := h.sendMessage(*msg); err != nil {
 		log.Printf("send task result failed: %v", err)
@@ -594,18 +601,18 @@ func (h *Handler) handleRestoreReq(msg protocol.Message) {
 	startedAt := time.Now()
 	if err != nil {
 		log.Printf("parse restore request failed: %v", err)
-		h.sendTaskResult(h.failedTypedTaskResult(h.agentID, "restore", "", "parse restore: "+err.Error(), startedAt))
+		h.sendTaskResultWithID(msg.ID, h.failedTypedTaskResult(h.agentID, "restore", "", "parse restore: "+err.Error(), startedAt))
 		return
 	}
 	if h.policyStore == nil {
-		h.sendTaskResult(h.failedTypedTaskResult(h.agentID, "restore", req.SnapshotID, "policy store not configured", startedAt))
+		h.sendTaskResultWithID(msg.ID, h.failedTypedTaskResult(h.agentID, "restore", req.SnapshotID, "policy store not configured", startedAt))
 		return
 	}
 
 	policyPayload, err := h.policyStore.LoadPolicy()
 	if err != nil {
 		log.Printf("load policy failed: %v", err)
-		h.sendTaskResult(h.failedTypedTaskResult(h.agentID, "restore", req.SnapshotID, "load policy: "+err.Error(), startedAt))
+		h.sendTaskResultWithID(msg.ID, h.failedTypedTaskResult(h.agentID, "restore", req.SnapshotID, "load policy: "+err.Error(), startedAt))
 		return
 	}
 	agentID := policyPayload.AgentID
@@ -629,7 +636,7 @@ func (h *Handler) handleRestoreReq(msg protocol.Message) {
 		result.Status = "failed"
 		result.ErrorLog = err.Error()
 	}
-	h.sendTaskResult(result)
+	h.sendTaskResultWithID(msg.ID, result)
 }
 
 func (h *Handler) sendRestoreProgress(messageID string, agentID string, snapshotID string) {

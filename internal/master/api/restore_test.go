@@ -83,6 +83,7 @@ func TestRestoreSendsMessageAndRecordsRunningTask(t *testing.T) {
 	require.NoError(t, setup.database.DB.First(&history, "agent_id = ? AND snapshot_id = ?", agent.ID, "snap-1").Error)
 	assert.Equal(t, "restore", history.Type)
 	assert.Equal(t, "running", history.Status)
+	assert.Equal(t, messageID, history.MessageID)
 	assert.NotNil(t, history.StartedAt)
 	assert.Nil(t, history.FinishedAt)
 }

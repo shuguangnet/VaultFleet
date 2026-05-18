@@ -23,7 +23,7 @@ func TestUpsertSnapshotsFromTaskResult(t *testing.T) {
 	firstSeen := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
 	updatedSeen := firstSeen.Add(time.Hour)
 
-	require.NoError(t, recordTaskResult(database, agent.ID, protocol.TaskResultPayload{
+	require.NoError(t, recordTaskResult(database, agent.ID, "", protocol.TaskResultPayload{
 		AgentID:    agent.ID,
 		TaskType:   "backup",
 		Status:     "success",
@@ -36,7 +36,7 @@ func TestUpsertSnapshotsFromTaskResult(t *testing.T) {
 			{ID: "snap-1", Time: firstSeen, Paths: []string{"/etc"}, Size: 4096},
 		},
 	}))
-	require.NoError(t, recordTaskResult(database, agent.ID, protocol.TaskResultPayload{
+	require.NoError(t, recordTaskResult(database, agent.ID, "", protocol.TaskResultPayload{
 		AgentID:    agent.ID,
 		TaskType:   "backup",
 		Status:     "success",
@@ -112,6 +112,7 @@ func TestTaskResultProcessorCompletesRunningRestoreHistory(t *testing.T) {
 		Type:       "restore",
 		Status:     "running",
 		SnapshotID: "snap-restore",
+		MessageID:  "restore-msg-1",
 		StartedAt:  &masterStartedAt,
 	}
 	require.NoError(t, database.DB.Create(&running).Error)
@@ -125,6 +126,7 @@ func TestTaskResultProcessorCompletesRunningRestoreHistory(t *testing.T) {
 		FinishedAt: finishedAt,
 	})
 	require.NoError(t, err)
+	msg.ID = "restore-msg-1"
 
 	processor := NewTaskResultProcessor(database)
 	require.NoError(t, processor(agent.ID, *msg))
@@ -137,6 +139,59 @@ func TestTaskResultProcessorCompletesRunningRestoreHistory(t *testing.T) {
 	assert.Equal(t, int64(45000), histories[0].DurationMs)
 	require.NotNil(t, histories[0].FinishedAt)
 	assert.True(t, histories[0].FinishedAt.Equal(finishedAt))
+}
+
+func TestTaskResultProcessorCompletesRestoreHistoryByMessageID(t *testing.T) {
+	database, err := db.New(t.TempDir())
+	require.NoError(t, err)
+	agent := createSnapshotTestAgent(t, database, "online")
+	startedAt := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	first := db.TaskHistory{
+		AgentID:    agent.ID,
+		Type:       "restore",
+		Status:     "running",
+		SnapshotID: "same-snapshot",
+		MessageID:  "restore-msg-1",
+		StartedAt:  &startedAt,
+	}
+	second := db.TaskHistory{
+		AgentID:    agent.ID,
+		Type:       "restore",
+		Status:     "running",
+		SnapshotID: "same-snapshot",
+		MessageID:  "restore-msg-2",
+		StartedAt:  &startedAt,
+	}
+	require.NoError(t, database.DB.Create(&first).Error)
+	require.NoError(t, database.DB.Create(&second).Error)
+	finishedAt := startedAt.Add(time.Minute)
+	msg, err := protocol.NewMessage(protocol.TypeTaskResult, protocol.TaskResultPayload{
+		AgentID:    agent.ID,
+		TaskType:   "restore",
+		Status:     "success",
+		SnapshotID: "same-snapshot",
+		DurationMs: 60000,
+		StartedAt:  startedAt,
+		FinishedAt: finishedAt,
+	})
+	require.NoError(t, err)
+	msg.ID = "restore-msg-1"
+
+	processor := NewTaskResultProcessor(database)
+	require.NoError(t, processor(agent.ID, *msg))
+
+	var firstAfter db.TaskHistory
+	require.NoError(t, database.DB.First(&firstAfter, "id = ?", first.ID).Error)
+	assert.Equal(t, "success", firstAfter.Status)
+	assert.Equal(t, int64(60000), firstAfter.DurationMs)
+	require.NotNil(t, firstAfter.FinishedAt)
+	assert.True(t, firstAfter.FinishedAt.Equal(finishedAt))
+
+	var secondAfter db.TaskHistory
+	require.NoError(t, database.DB.First(&secondAfter, "id = ?", second.ID).Error)
+	assert.Equal(t, "running", secondAfter.Status)
+	assert.Nil(t, secondAfter.FinishedAt)
+	assert.Equal(t, int64(0), secondAfter.DurationMs)
 }
 
 func TestUpsertSnapshotsConcurrentSameSnapshotDoesNotDuplicate(t *testing.T) {

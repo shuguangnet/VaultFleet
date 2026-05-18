@@ -639,6 +639,7 @@ func TestHandleRestoreInvokesRunnerAndSendsSuccessTaskResult(t *testing.T) {
 	assert.Equal(t, float64(0), progress.Percent)
 
 	assert.Equal(t, protocol.TypeTaskResult, messages[1].Type)
+	assert.Equal(t, msg.ID, messages[1].ID)
 	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&messages[1])
 	require.NoError(t, err)
 	assert.Equal(t, "agent-1", result.AgentID)
@@ -686,6 +687,7 @@ func TestHandleRestoreRunnerFailureSendsFailedTaskResult(t *testing.T) {
 	assert.Equal(t, float64(0), progress.Percent)
 
 	assert.Equal(t, protocol.TypeTaskResult, messages[1].Type)
+	assert.Equal(t, msg.ID, messages[1].ID)
 	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&messages[1])
 	require.NoError(t, err)
 	assert.Equal(t, "restore", result.TaskType)
@@ -713,6 +715,7 @@ func TestHandleRestoreMissingPolicySendsFailedTaskResult(t *testing.T) {
 
 	messages := sent.snapshot()
 	require.Len(t, messages, 1)
+	assert.Equal(t, msg.ID, messages[0].ID)
 	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&messages[0])
 	require.NoError(t, err)
 	assert.Equal(t, "agent-1", result.AgentID)

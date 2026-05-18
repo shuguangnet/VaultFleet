@@ -84,6 +84,7 @@ type TaskHistory struct {
 	Type       string     `gorm:"type:text;not null" json:"type"`
 	Status     string     `gorm:"type:text;not null" json:"status"`
 	SnapshotID string     `gorm:"type:text" json:"snapshot_id"`
+	MessageID  string     `gorm:"type:text;index" json:"message_id,omitempty"`
 	StartedAt  *time.Time `json:"started_at"`
 	FinishedAt *time.Time `json:"finished_at"`
 	DurationMs int64      `json:"duration_ms"`

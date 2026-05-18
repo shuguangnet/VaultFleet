@@ -177,11 +177,11 @@ func NewTaskResultProcessor(database *db.Database) func(agentID string, msg prot
 		if err != nil {
 			return err
 		}
-		return recordTaskResult(database, agentID, *result)
+		return recordTaskResult(database, agentID, msg.ID, *result)
 	}
 }
 
-func recordTaskResult(database *db.Database, agentID string, result protocol.TaskResultPayload) error {
+func recordTaskResult(database *db.Database, agentID string, messageID string, result protocol.TaskResultPayload) error {
 	if database == nil || database.DB == nil {
 		return errors.New("database not configured")
 	}
@@ -189,7 +189,7 @@ func recordTaskResult(database *db.Database, agentID string, result protocol.Tas
 		agentID = result.AgentID
 	}
 	if result.TaskType == "restore" {
-		return completeRestoreTaskResult(database, agentID, result)
+		return completeRestoreTaskResult(database, agentID, messageID, result)
 	}
 	startedAt := result.StartedAt
 	finishedAt := result.FinishedAt
@@ -219,30 +219,33 @@ func recordTaskResult(database *db.Database, agentID string, result protocol.Tas
 	return nil
 }
 
-func completeRestoreTaskResult(database *db.Database, agentID string, result protocol.TaskResultPayload) error {
+func completeRestoreTaskResult(database *db.Database, agentID string, messageID string, result protocol.TaskResultPayload) error {
 	startedAt := result.StartedAt
 	finishedAt := result.FinishedAt
-	updates := map[string]interface{}{
-		"status":      result.Status,
-		"duration_ms": result.DurationMs,
-		"repo_size":   result.RepoSize,
-		"error_log":   result.ErrorLog,
-	}
-	if !result.StartedAt.IsZero() {
-		updates["started_at"] = &startedAt
-	}
-	if !result.FinishedAt.IsZero() {
-		updates["finished_at"] = &finishedAt
-	}
-
-	query := database.DB.Model(&db.TaskHistory{}).
-		Where("agent_id = ? AND type = ? AND status = ? AND snapshot_id = ?", agentID, "restore", "running", result.SnapshotID)
-	update := query.Order("created_at DESC").Limit(1).Updates(updates)
-	if update.Error != nil {
-		return update.Error
-	}
-	if update.RowsAffected > 0 {
-		return nil
+	if messageID != "" {
+		var history db.TaskHistory
+		err := database.DB.
+			Where("agent_id = ? AND type = ? AND status = ? AND message_id = ?", agentID, "restore", "running", messageID).
+			First(&history).Error
+		if err == nil {
+			history.Status = result.Status
+			history.DurationMs = result.DurationMs
+			history.RepoSize = result.RepoSize
+			history.ErrorLog = result.ErrorLog
+			if result.SnapshotID != "" {
+				history.SnapshotID = result.SnapshotID
+			}
+			if !result.StartedAt.IsZero() {
+				history.StartedAt = &startedAt
+			}
+			if !result.FinishedAt.IsZero() {
+				history.FinishedAt = &finishedAt
+			}
+			return database.DB.Save(&history).Error
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
 	}
 
 	history := db.TaskHistory{
@@ -250,6 +253,7 @@ func completeRestoreTaskResult(database *db.Database, agentID string, result pro
 		Type:       result.TaskType,
 		Status:     result.Status,
 		SnapshotID: result.SnapshotID,
+		MessageID:  messageID,
 		StartedAt:  &startedAt,
 		FinishedAt: &finishedAt,
 		DurationMs: result.DurationMs,

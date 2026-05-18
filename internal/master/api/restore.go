@@ -64,6 +64,7 @@ func (h *RestoreHandler) Restore(c *gin.Context) {
 		Type:       "restore",
 		Status:     "running",
 		SnapshotID: request.SnapshotID,
+		MessageID:  msg.ID,
 		StartedAt:  &startedAt,
 	}
 	if err := h.DB.DB.Create(&history).Error; err != nil {
