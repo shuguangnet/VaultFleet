@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,7 +23,7 @@ func TestMessageMarshalUnmarshal(t *testing.T) {
 	msg, err := NewMessage(TypeHeartbeat, hb)
 	require.NoError(t, err)
 	assert.Equal(t, TypeHeartbeat, msg.Type)
-	assert.NotEmpty(t, msg.ID)
+	assertHexMessageID(t, msg.ID)
 
 	data, err := json.Marshal(msg)
 	require.NoError(t, err)
@@ -37,6 +38,19 @@ func TestMessageMarshalUnmarshal(t *testing.T) {
 	require.NoError(t, err)
 	assert.InDelta(t, 45.5, parsed.CPUPercent, 0.01)
 	assert.Equal(t, "0.16.0", parsed.ResticVersion)
+}
+
+func TestNewMessage_GeneratesUniqueHexIDs(t *testing.T) {
+	const count = 16
+	seen := make(map[string]bool, count)
+
+	for i := 0; i < count; i++ {
+		msg, err := NewMessage(TypeHeartbeat, HeartbeatPayload{})
+		require.NoError(t, err)
+		assertHexMessageID(t, msg.ID)
+		assert.False(t, seen[msg.ID], "duplicate message ID: %s", msg.ID)
+		seen[msg.ID] = true
+	}
 }
 
 func TestPolicyPushPayload(t *testing.T) {
@@ -82,6 +96,26 @@ func TestPolicyPushPayload(t *testing.T) {
 	assert.Equal(t, 7, parsed.Retention.KeepDaily)
 	assert.Equal(t, 4, parsed.Retention.KeepWeekly)
 	assert.Equal(t, 6, parsed.Retention.KeepMonthly)
+}
+
+func TestPolicyAckPayload(t *testing.T) {
+	ack := PolicyAckPayload{
+		AgentID: "agent-001",
+		Success: false,
+		Error:   "invalid schedule",
+	}
+
+	_, parsed := roundTripPayload[PolicyAckPayload](t, TypePolicyAck, ack)
+	assert.Equal(t, "agent-001", parsed.AgentID)
+	assert.False(t, parsed.Success)
+	assert.Equal(t, "invalid schedule", parsed.Error)
+}
+
+func TestBackupNowPayload(t *testing.T) {
+	backupNow := BackupNowPayload{AgentID: "agent-002"}
+
+	_, parsed := roundTripPayload[BackupNowPayload](t, TypeBackupNow, backupNow)
+	assert.Equal(t, "agent-002", parsed.AgentID)
 }
 
 func TestTaskResultPayload(t *testing.T) {
@@ -157,6 +191,13 @@ func TestSnapshotListRoundTrip(t *testing.T) {
 	assert.True(t, parsed.Snapshots[1].Time.Equal(secondSnapshotAt))
 	assert.Equal(t, []string{"/etc"}, parsed.Snapshots[1].Paths)
 	assert.Equal(t, int64(300000), parsed.Snapshots[1].Size)
+}
+
+func TestSnapshotListReqPayload(t *testing.T) {
+	req := SnapshotListReqPayload{AgentID: "agent-003"}
+
+	_, parsed := roundTripPayload[SnapshotListReqPayload](t, TypeSnapshotListReq, req)
+	assert.Equal(t, "agent-003", parsed.AgentID)
 }
 
 func TestRestorePayloads(t *testing.T) {
@@ -249,9 +290,19 @@ func roundTripPayload[T any](t *testing.T, msgType string, payload interface{}) 
 	require.NoError(t, err)
 	require.Equal(t, msgType, decoded.Type)
 	require.Equal(t, msg.ID, decoded.ID)
+	assertHexMessageID(t, decoded.ID)
 
 	parsed, err := ParsePayload[T](&decoded)
 	require.NoError(t, err)
 
 	return &decoded, parsed
+}
+
+func assertHexMessageID(t *testing.T, id string) {
+	t.Helper()
+
+	require.Len(t, id, 32)
+	for _, r := range id {
+		assert.Truef(t, unicode.Is(unicode.ASCII_Hex_Digit, r), "message ID contains non-hex character: %q", r)
+	}
 }
