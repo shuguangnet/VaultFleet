@@ -10,6 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	agenthandler "vaultfleet/internal/agent"
 	"vaultfleet/internal/agent/connect"
 	enrollpkg "vaultfleet/internal/agent/enroll"
 	"vaultfleet/internal/agent/policy"
@@ -45,26 +46,17 @@ func main() {
 	defer stop()
 
 	store := policy.NewStore("")
-	client := connect.NewClient(cfg.Server, cfg.AgentToken, handleMessage(store))
+	var client *connect.Client
+	handler := agenthandler.NewHandler(agenthandler.HandlerConfig{
+		PolicyStore: store,
+		SendFunc: func(msg protocol.Message) error {
+			return client.Send(msg)
+		},
+	})
+	client = connect.NewClient(cfg.Server, cfg.AgentToken, handler.Handle)
 
 	go connect.RunHeartbeat(ctx, client, connect.DefaultSystemInfoCollector, 0)
 	client.Run(ctx)
-}
-
-func handleMessage(store *policy.Store) connect.MessageHandler {
-	return func(msg protocol.Message) {
-		switch msg.Type {
-		case protocol.TypePolicyPush:
-			pushedPolicy, err := protocol.ParsePayload[protocol.PolicyPushPayload](&msg)
-			if err != nil {
-				log.Printf("parse policy push failed: %v", err)
-				return
-			}
-			if err := store.SavePolicy(pushedPolicy); err != nil {
-				log.Printf("save policy failed: %v", err)
-			}
-		}
-	}
 }
 
 func loadConfig(path string) (*AgentConfig, error) {

@@ -133,5 +133,7 @@ func (h *Handler) dispatch(agentID string, msg protocol.Message) {
 				"payload":  msg.Payload,
 			},
 		})
+	case protocol.TypeDirBrowseResp:
+		h.hub.HandleResponse(agentID, msg)
 	}
 }

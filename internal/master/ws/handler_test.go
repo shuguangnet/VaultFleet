@@ -226,6 +226,34 @@ func TestHandler_TaskResultDispatchPublishesRawPayload(t *testing.T) {
 	}
 }
 
+func TestHandler_DirBrowseRespDispatchesToWaiter(t *testing.T) {
+	setup := setupHandlerTest(t, validTestAuth, noPolicy)
+	clientConn := addTestWebSocketAgent(t, setup.hub, "agent-1")
+	respCh, err := setup.hub.SendAndWait("agent-1", protocol.Message{
+		Type:    protocol.TypeDirBrowseReq,
+		ID:      "browse-1",
+		Payload: json.RawMessage(`{"path":"/etc","depth":2}`),
+	}, time.Second)
+	require.NoError(t, err)
+	var sent protocol.Message
+	require.NoError(t, clientConn.ReadJSON(&sent))
+	handler := NewHandler(setup.hub, setup.bus, validTestAuth, noPolicy)
+	response := protocol.Message{
+		Type:    protocol.TypeDirBrowseResp,
+		ID:      "browse-1",
+		Payload: json.RawMessage(`{"path":"/etc","entries":[]}`),
+	}
+
+	handler.dispatch("agent-1", response)
+
+	select {
+	case got := <-respCh:
+		assert.Equal(t, response, got)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for browse response")
+	}
+}
+
 func TestHandler_OldConnectionCleanupDoesNotRemoveReplacementConnection(t *testing.T) {
 	setup := setupHandlerTest(t, validTestAuth, noPolicy)
 	offlineEvents := make(chan events.Event, 1)

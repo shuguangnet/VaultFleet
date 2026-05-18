@@ -1,12 +1,18 @@
 package ws
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"vaultfleet/pkg/protocol"
 )
 
 func TestHub_AddAndRemove(t *testing.T) {
@@ -187,4 +193,111 @@ func TestHub_SendConcurrentWithRemoveIsRaceFree(t *testing.T) {
 
 	close(start)
 	wg.Wait()
+}
+
+func TestHub_SendAndWaitReturnsMatchingBrowseResponse(t *testing.T) {
+	hub := NewHub()
+	clientConn := addTestWebSocketAgent(t, hub, "agent-1")
+	request := protocol.Message{
+		Type:    protocol.TypeDirBrowseReq,
+		ID:      "browse-1",
+		Payload: json.RawMessage(`{"path":"/etc","depth":2}`),
+	}
+	response := protocol.Message{
+		Type:    protocol.TypeDirBrowseResp,
+		ID:      "browse-1",
+		Payload: json.RawMessage(`{"path":"/etc","entries":[]}`),
+	}
+
+	respCh, err := hub.SendAndWait("agent-1", request, 500*time.Millisecond)
+	require.NoError(t, err)
+	require.True(t, hub.HasWaiter("agent-1", "browse-1"))
+	var sent protocol.Message
+	require.NoError(t, clientConn.ReadJSON(&sent))
+	assert.Equal(t, request, sent)
+
+	assert.True(t, hub.HandleResponse("agent-1", response))
+
+	select {
+	case got := <-respCh:
+		assert.Equal(t, response, got)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for response")
+	}
+	assert.False(t, hub.HasWaiter("agent-1", "browse-1"))
+}
+
+func TestHub_SendAndWaitCleansWaiterOnTimeout(t *testing.T) {
+	hub := NewHub()
+	clientConn := addTestWebSocketAgent(t, hub, "agent-1")
+
+	respCh, err := hub.SendAndWait("agent-1", protocol.Message{
+		Type:    protocol.TypeDirBrowseReq,
+		ID:      "browse-timeout",
+		Payload: json.RawMessage(`{"path":"/","depth":2}`),
+	}, 10*time.Millisecond)
+
+	require.NoError(t, err)
+	var sent protocol.Message
+	require.NoError(t, clientConn.ReadJSON(&sent))
+	_, ok := <-respCh
+	assert.False(t, ok)
+	assert.False(t, hub.HasWaiter("agent-1", "browse-timeout"))
+}
+
+func TestHub_HandleResponseDoesNotSatisfyWrongWaiter(t *testing.T) {
+	hub := NewHub()
+	clientConn := addTestWebSocketAgent(t, hub, "agent-1")
+	respCh, err := hub.SendAndWait("agent-1", protocol.Message{
+		Type:    protocol.TypeDirBrowseReq,
+		ID:      "browse-1",
+		Payload: json.RawMessage(`{"path":"/","depth":2}`),
+	}, 50*time.Millisecond)
+	require.NoError(t, err)
+	var sent protocol.Message
+	require.NoError(t, clientConn.ReadJSON(&sent))
+
+	matched := hub.HandleResponse("agent-1", protocol.Message{
+		Type: protocol.TypeDirBrowseResp,
+		ID:   "browse-2",
+	})
+
+	assert.False(t, matched)
+	assert.True(t, hub.HasWaiter("agent-1", "browse-1"))
+	select {
+	case resp, ok := <-respCh:
+		t.Fatalf("wrong waiter was satisfied: %#v ok=%v", resp, ok)
+	default:
+	}
+
+	<-respCh
+	assert.False(t, hub.HasWaiter("agent-1", "browse-1"))
+}
+
+func addTestWebSocketAgent(t *testing.T, hub *Hub, agentID string) *websocket.Conn {
+	t.Helper()
+
+	upgrader := websocket.Upgrader{}
+	serverConnCh := make(chan *websocket.Conn, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		serverConnCh <- conn
+	}))
+	t.Cleanup(server.Close)
+
+	u := "ws" + server.URL[len("http"):]
+	clientConn, _, err := websocket.DefaultDialer.Dial(u, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = clientConn.Close()
+	})
+
+	select {
+	case serverConn := <-serverConnCh:
+		hub.Add(agentID, NewSafeConn(serverConn))
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for websocket upgrade")
+	}
+	return clientConn
 }
