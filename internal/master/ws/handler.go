@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"log"
 	"net/http"
 	"net/url"
 	"time"
@@ -130,7 +131,10 @@ func (h *Handler) dispatch(agentID string, msg protocol.Message) {
 		})
 	case protocol.TypeTaskResult:
 		if h.taskResultProcess != nil {
-			_ = h.taskResultProcess(agentID, msg)
+			if err := h.taskResultProcess(agentID, msg); err != nil {
+				log.Printf("process task result failed for agent %s: %v", agentID, err)
+				return
+			}
 		}
 		h.eventBus.Publish(events.Event{
 			Type: events.TaskResult,

@@ -225,6 +225,38 @@ func TestSnapshotCRUD(t *testing.T) {
 	assert.Error(t, result.Error)
 }
 
+func TestSnapshotUniqueAgentSnapshotID(t *testing.T) {
+	database := setupTestDB(t)
+
+	first := Snapshot{
+		AgentID:    "agent-001",
+		SnapshotID: "restic-snap-123",
+		Timestamp:  time.Now(),
+		Paths:      `["/etc"]`,
+		Size:       100,
+	}
+	require.NoError(t, database.DB.Create(&first).Error)
+
+	duplicate := Snapshot{
+		AgentID:    "agent-001",
+		SnapshotID: "restic-snap-123",
+		Timestamp:  time.Now(),
+		Paths:      `["/home"]`,
+		Size:       200,
+	}
+	err := database.DB.Create(&duplicate).Error
+	require.Error(t, err)
+
+	otherAgent := Snapshot{
+		AgentID:    "agent-002",
+		SnapshotID: "restic-snap-123",
+		Timestamp:  time.Now(),
+		Paths:      `["/srv"]`,
+		Size:       300,
+	}
+	require.NoError(t, database.DB.Create(&otherAgent).Error)
+}
+
 func TestNotificationConfigCRUD(t *testing.T) {
 	database := setupTestDB(t)
 

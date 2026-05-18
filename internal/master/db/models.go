@@ -101,8 +101,8 @@ func (th *TaskHistory) BeforeCreate(tx *gorm.DB) error {
 
 type Snapshot struct {
 	ID         string    `gorm:"type:text;primaryKey" json:"id"`
-	AgentID    string    `gorm:"type:text;index;not null" json:"agent_id"`
-	SnapshotID string    `gorm:"type:text;not null" json:"snapshot_id"`
+	AgentID    string    `gorm:"type:text;uniqueIndex:idx_snapshots_agent_snapshot;not null" json:"agent_id"`
+	SnapshotID string    `gorm:"type:text;uniqueIndex:idx_snapshots_agent_snapshot;not null" json:"snapshot_id"`
 	Timestamp  time.Time `json:"timestamp"`
 	Paths      string    `gorm:"type:text" json:"paths"`
 	Size       int64     `json:"size"`

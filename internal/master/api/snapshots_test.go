@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -97,6 +98,74 @@ func TestTaskResultProcessorRecordsHistoryAndSnapshots(t *testing.T) {
 	require.NoError(t, database.DB.First(&snapshot, "agent_id = ? AND snapshot_id = ?", agent.ID, "snap-processor").Error)
 	assert.True(t, snapshot.Timestamp.Equal(finishedAt))
 	assert.JSONEq(t, `["/srv"]`, snapshot.Paths)
+}
+
+func TestTaskResultProcessorCompletesRunningRestoreHistory(t *testing.T) {
+	database, err := db.New(t.TempDir())
+	require.NoError(t, err)
+	agent := createSnapshotTestAgent(t, database, "online")
+	masterStartedAt := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	agentStartedAt := masterStartedAt.Add(2 * time.Second)
+	finishedAt := agentStartedAt.Add(45 * time.Second)
+	running := db.TaskHistory{
+		AgentID:    agent.ID,
+		Type:       "restore",
+		Status:     "running",
+		SnapshotID: "snap-restore",
+		StartedAt:  &masterStartedAt,
+	}
+	require.NoError(t, database.DB.Create(&running).Error)
+	msg, err := protocol.NewMessage(protocol.TypeTaskResult, protocol.TaskResultPayload{
+		AgentID:    agent.ID,
+		TaskType:   "restore",
+		Status:     "success",
+		SnapshotID: "snap-restore",
+		DurationMs: 45000,
+		StartedAt:  agentStartedAt,
+		FinishedAt: finishedAt,
+	})
+	require.NoError(t, err)
+
+	processor := NewTaskResultProcessor(database)
+	require.NoError(t, processor(agent.ID, *msg))
+
+	var histories []db.TaskHistory
+	require.NoError(t, database.DB.Find(&histories, "agent_id = ? AND snapshot_id = ?", agent.ID, "snap-restore").Error)
+	require.Len(t, histories, 1)
+	assert.Equal(t, running.ID, histories[0].ID)
+	assert.Equal(t, "success", histories[0].Status)
+	assert.Equal(t, int64(45000), histories[0].DurationMs)
+	require.NotNil(t, histories[0].FinishedAt)
+	assert.True(t, histories[0].FinishedAt.Equal(finishedAt))
+}
+
+func TestUpsertSnapshotsConcurrentSameSnapshotDoesNotDuplicate(t *testing.T) {
+	database, err := db.New(t.TempDir())
+	require.NoError(t, err)
+	agent := createSnapshotTestAgent(t, database, "online")
+	snapshotTime := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	snapshots := []protocol.SnapshotInfo{
+		{ID: "snap-race", Time: snapshotTime, Paths: []string{"/srv"}, Size: 512},
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- upsertSnapshots(database, agent.ID, snapshots)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	var count int64
+	require.NoError(t, database.DB.Model(&db.Snapshot{}).Where("agent_id = ? AND snapshot_id = ?", agent.ID, "snap-race").Count(&count).Error)
+	assert.Equal(t, int64(1), count)
 }
 
 func TestListSnapshots(t *testing.T) {

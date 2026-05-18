@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"vaultfleet/internal/master/db"
 	"vaultfleet/pkg/protocol"
@@ -181,11 +182,14 @@ func NewTaskResultProcessor(database *db.Database) func(agentID string, msg prot
 }
 
 func recordTaskResult(database *db.Database, agentID string, result protocol.TaskResultPayload) error {
-	if database == nil {
+	if database == nil || database.DB == nil {
 		return errors.New("database not configured")
 	}
 	if agentID == "" {
 		agentID = result.AgentID
+	}
+	if result.TaskType == "restore" {
+		return completeRestoreTaskResult(database, agentID, result)
 	}
 	startedAt := result.StartedAt
 	finishedAt := result.FinishedAt
@@ -215,7 +219,56 @@ func recordTaskResult(database *db.Database, agentID string, result protocol.Tas
 	return nil
 }
 
+func completeRestoreTaskResult(database *db.Database, agentID string, result protocol.TaskResultPayload) error {
+	startedAt := result.StartedAt
+	finishedAt := result.FinishedAt
+	updates := map[string]interface{}{
+		"status":      result.Status,
+		"duration_ms": result.DurationMs,
+		"repo_size":   result.RepoSize,
+		"error_log":   result.ErrorLog,
+	}
+	if !result.StartedAt.IsZero() {
+		updates["started_at"] = &startedAt
+	}
+	if !result.FinishedAt.IsZero() {
+		updates["finished_at"] = &finishedAt
+	}
+
+	query := database.DB.Model(&db.TaskHistory{}).
+		Where("agent_id = ? AND type = ? AND status = ? AND snapshot_id = ?", agentID, "restore", "running", result.SnapshotID)
+	update := query.Order("created_at DESC").Limit(1).Updates(updates)
+	if update.Error != nil {
+		return update.Error
+	}
+	if update.RowsAffected > 0 {
+		return nil
+	}
+
+	history := db.TaskHistory{
+		AgentID:    agentID,
+		Type:       result.TaskType,
+		Status:     result.Status,
+		SnapshotID: result.SnapshotID,
+		StartedAt:  &startedAt,
+		FinishedAt: &finishedAt,
+		DurationMs: result.DurationMs,
+		RepoSize:   result.RepoSize,
+		ErrorLog:   result.ErrorLog,
+	}
+	if result.StartedAt.IsZero() {
+		history.StartedAt = nil
+	}
+	if result.FinishedAt.IsZero() {
+		history.FinishedAt = nil
+	}
+	return database.DB.Create(&history).Error
+}
+
 func upsertSnapshots(database *db.Database, agentID string, snapshots []protocol.SnapshotInfo) error {
+	if database == nil || database.DB == nil {
+		return errors.New("database not configured")
+	}
 	for _, snapshotInfo := range snapshots {
 		if snapshotInfo.ID == "" {
 			continue
@@ -225,29 +278,21 @@ func upsertSnapshots(database *db.Database, agentID string, snapshots []protocol
 			return err
 		}
 
-		var snapshot db.Snapshot
-		err = database.DB.First(&snapshot, "agent_id = ? AND snapshot_id = ?", agentID, snapshotInfo.ID).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			snapshot = db.Snapshot{
-				AgentID:    agentID,
-				SnapshotID: snapshotInfo.ID,
-				Timestamp:  snapshotInfo.Time,
-				Paths:      string(paths),
-				Size:       snapshotInfo.Size,
-			}
-			if err := database.DB.Create(&snapshot).Error; err != nil {
-				return err
-			}
-			continue
+		snapshot := db.Snapshot{
+			AgentID:    agentID,
+			SnapshotID: snapshotInfo.ID,
+			Timestamp:  snapshotInfo.Time,
+			Paths:      string(paths),
+			Size:       snapshotInfo.Size,
 		}
+		err = database.DB.Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "agent_id"},
+				{Name: "snapshot_id"},
+			},
+			DoUpdates: clause.AssignmentColumns([]string{"timestamp", "paths", "size"}),
+		}).Create(&snapshot).Error
 		if err != nil {
-			return err
-		}
-
-		snapshot.Timestamp = snapshotInfo.Time
-		snapshot.Paths = string(paths)
-		snapshot.Size = snapshotInfo.Size
-		if err := database.DB.Save(&snapshot).Error; err != nil {
 			return err
 		}
 	}

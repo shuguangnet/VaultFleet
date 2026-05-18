@@ -87,6 +87,47 @@ func TestRestoreSendsMessageAndRecordsRunningTask(t *testing.T) {
 	assert.Nil(t, history.FinishedAt)
 }
 
+func TestRestoreRecordsRunningTaskBeforeSendingMessage(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	agent := createRestoreTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+	setup.hub.beforeSend = func() {
+		var history db.TaskHistory
+		require.NoError(t, setup.database.DB.First(&history, "agent_id = ? AND snapshot_id = ?", agent.ID, "snap-1").Error)
+		assert.Equal(t, "restore", history.Type)
+		assert.Equal(t, "running", history.Status)
+	}
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore", map[string]any{
+		"snapshot_id": "snap-1",
+		"target_path": "/restore/target",
+	})
+
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	require.True(t, setup.hub.beforeSendCalled)
+}
+
+func TestRestoreSendFailureMarksTaskFailed(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	agent := createRestoreTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+	setup.hub.sendErr = errors.New("websocket write failed")
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore", map[string]any{
+		"snapshot_id": "snap-1",
+		"target_path": "/restore/target",
+	})
+
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	var history db.TaskHistory
+	require.NoError(t, setup.database.DB.First(&history, "agent_id = ? AND snapshot_id = ?", agent.ID, "snap-1").Error)
+	assert.Equal(t, "restore", history.Type)
+	assert.Equal(t, "failed", history.Status)
+	assert.NotNil(t, history.StartedAt)
+	assert.NotNil(t, history.FinishedAt)
+	assert.Contains(t, history.ErrorLog, "websocket write failed")
+}
+
 type restoreAPISetup struct {
 	database *db.Database
 	hub      *fakeRestoreHub
@@ -115,9 +156,11 @@ type sentRestoreMessage struct {
 }
 
 type fakeRestoreHub struct {
-	online  map[string]bool
-	sendErr error
-	sent    []sentRestoreMessage
+	online           map[string]bool
+	sendErr          error
+	beforeSend       func()
+	beforeSendCalled bool
+	sent             []sentRestoreMessage
 }
 
 func (h *fakeRestoreHub) IsOnline(agentID string) bool {
@@ -125,6 +168,10 @@ func (h *fakeRestoreHub) IsOnline(agentID string) bool {
 }
 
 func (h *fakeRestoreHub) Send(agentID string, msg interface{}) error {
+	if h.beforeSend != nil {
+		h.beforeSendCalled = true
+		h.beforeSend()
+	}
 	if h.sendErr != nil {
 		return h.sendErr
 	}

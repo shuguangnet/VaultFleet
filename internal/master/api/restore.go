@@ -58,11 +58,6 @@ func (h *RestoreHandler) Restore(c *gin.Context) {
 		return
 	}
 
-	if err := h.Hub.Send(agentID, *msg); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent offline"})
-		return
-	}
-
 	startedAt := time.Now()
 	history := db.TaskHistory{
 		AgentID:    agentID,
@@ -73,6 +68,22 @@ func (h *RestoreHandler) Restore(c *gin.Context) {
 	}
 	if err := h.DB.DB.Create(&history).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
+		return
+	}
+
+	if err := h.Hub.Send(agentID, *msg); err != nil {
+		finishedAt := time.Now()
+		updates := map[string]interface{}{
+			"status":      "failed",
+			"finished_at": &finishedAt,
+			"duration_ms": finishedAt.Sub(startedAt).Milliseconds(),
+			"error_log":   err.Error(),
+		}
+		if updateErr := h.DB.DB.Model(&history).Updates(updates).Error; updateErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
+			return
+		}
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent offline"})
 		return
 	}
 

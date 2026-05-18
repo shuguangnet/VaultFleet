@@ -263,6 +263,29 @@ func TestHandler_TaskResultProcessorFromConstructorRecordsHistoryAndSnapshots(t 
 	assert.Equal(t, int64(2048), snapshot.Size)
 }
 
+func TestHandler_TaskResultProcessorErrorDoesNotPublishTaskResultEvent(t *testing.T) {
+	hub := NewHub()
+	bus := events.NewBus()
+	eventsCh := make(chan events.Event, 1)
+	bus.Subscribe(events.TaskResult, func(event events.Event) {
+		eventsCh <- event
+	})
+	handler := NewHandler(hub, bus, validTestAuth, noPolicy, func(string, protocol.Message) error {
+		return errors.New("database unavailable")
+	})
+
+	handler.dispatch("agent-1", protocol.Message{
+		Type:    protocol.TypeTaskResult,
+		Payload: json.RawMessage(`{"task_type":"backup","status":"success"}`),
+	})
+
+	select {
+	case event := <-eventsCh:
+		t.Fatalf("task result event published after persistence failure: %#v", event)
+	default:
+	}
+}
+
 func TestHandler_DirBrowseRespDispatchesToWaiter(t *testing.T) {
 	setup := setupHandlerTest(t, validTestAuth, noPolicy)
 	clientConn := addTestWebSocketAgent(t, setup.hub, "agent-1")
