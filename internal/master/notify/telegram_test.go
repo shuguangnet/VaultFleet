@@ -106,8 +106,45 @@ func TestTelegramNotifierSendReturnsAPIError(t *testing.T) {
 	err := tg.Send(context.Background(), NotifyMessage{Title: "Test", Timestamp: time.Now()})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "telegram API error")
-	assert.Contains(t, err.Error(), "chat not found")
+	assert.Contains(t, err.Error(), "telegram API returned status 400")
+	assert.NotContains(t, err.Error(), "chat not found")
+}
+
+func TestTelegramNotifierSendAPIErrorDoesNotLeakEchoedTokenOrPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"ok":false,"description":"failed at ` + r.URL.Path + ` with token secret-telegram-token"}`))
+	}))
+	defer server.Close()
+
+	tg := NewTelegramNotifier(TelegramConfig{
+		BotToken: "secret-telegram-token",
+		ChatID:   "chat",
+		BaseURL:  server.URL,
+	})
+
+	err := tg.Send(context.Background(), NotifyMessage{Title: "Test", Timestamp: time.Now()})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "telegram API returned status 400")
+	assert.NotContains(t, err.Error(), "secret-telegram-token")
+	assert.NotContains(t, err.Error(), "/botsecret-telegram-token/sendMessage")
+	assert.NotContains(t, err.Error(), "failed at")
+}
+
+func TestTelegramNotifierRequestCreationErrorDoesNotLeakBotToken(t *testing.T) {
+	tg := NewTelegramNotifier(TelegramConfig{
+		BotToken: "secret-token\nbad",
+		ChatID:   "chat",
+		BaseURL:  "https://api.example.test",
+	})
+
+	err := tg.Send(context.Background(), NotifyMessage{Title: "Test", Timestamp: time.Now()})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create telegram request")
+	assert.NotContains(t, err.Error(), "secret-token")
+	assert.NotContains(t, err.Error(), "/botsecret-token")
 }
 
 func TestTelegramNotifierSendReturnsNetworkOrContextError(t *testing.T) {

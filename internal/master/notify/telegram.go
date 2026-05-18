@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -56,7 +55,7 @@ func (n *TelegramNotifier) Send(ctx context.Context, msg NotifyMessage) error {
 	url := fmt.Sprintf("%s/bot%s/sendMessage", n.baseURL, n.botToken)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("create telegram request: %w", err)
+		return sanitizedSendError{op: "create telegram request", err: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -67,8 +66,7 @@ func (n *TelegramNotifier) Send(ctx context.Context, msg NotifyMessage) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("telegram API error: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("telegram API returned status %d", resp.StatusCode)
 	}
 
 	return nil

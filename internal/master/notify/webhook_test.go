@@ -70,7 +70,31 @@ func TestWebhookNotifierSendReturnsNon2xxErrorWithResponseText(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "webhook returned status 418")
-	assert.Contains(t, err.Error(), "cannot brew notification")
+	assert.NotContains(t, err.Error(), "cannot brew notification")
+}
+
+func TestWebhookNotifierNon2xxErrorDoesNotLeakEchoedSecrets(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("failed for " + r.URL.String() + " auth " + r.Header.Get("Authorization")))
+	}))
+	defer server.Close()
+
+	wh := NewWebhookNotifier(WebhookConfig{
+		URL: server.URL + "/secret-path?token=abc123",
+		Headers: map[string]string{
+			"Authorization": "Bearer header-secret",
+		},
+	})
+
+	err := wh.Send(context.Background(), NotifyMessage{Title: "Test", Timestamp: time.Now()})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "webhook returned status 500")
+	assert.NotContains(t, err.Error(), "secret-path")
+	assert.NotContains(t, err.Error(), "token=abc123")
+	assert.NotContains(t, err.Error(), "header-secret")
+	assert.NotContains(t, err.Error(), "failed for")
 }
 
 func TestWebhookNotifierSendReturnsContextError(t *testing.T) {
