@@ -7,13 +7,13 @@ import (
 )
 
 type TaskResult struct {
-	Type       string
-	Status     string
-	DurationMs int64
-	SnapshotID string
-	RepoSize   int64
-	Snapshots  []SnapshotInfo
-	ErrorLog   string
+	Type       string         `json:"type"`
+	Status     string         `json:"status"`
+	DurationMs int64          `json:"duration_ms"`
+	SnapshotID string         `json:"snapshot_id,omitempty"`
+	RepoSize   int64          `json:"repo_size,omitempty"`
+	Snapshots  []SnapshotInfo `json:"snapshots,omitempty"`
+	ErrorLog   string         `json:"error_log,omitempty"`
 }
 
 type ExecutorConfig struct {

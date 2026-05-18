@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -108,7 +109,7 @@ func TestRunBackupJobFailureStopsAtStageAndReturnsErrorLog(t *testing.T) {
 	assertRunnerCalls(t, runner.calls, []string{"init", "backup"})
 }
 
-func TestTaskResultStructureAllowsSnapshotMetadata(t *testing.T) {
+func TestTaskResultJSONUsesSnakeCaseProtocolKeys(t *testing.T) {
 	result := TaskResult{
 		Type:       "backup",
 		Status:     "success",
@@ -121,11 +122,61 @@ func TestTaskResultStructureAllowsSnapshotMetadata(t *testing.T) {
 		ErrorLog: "",
 	}
 
-	if result.Type != "backup" || result.Status != "success" || result.SnapshotID != "abc123" {
-		t.Fatalf("TaskResult basic fields = %+v", result)
+	payload, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal(TaskResult) error = %v", err)
 	}
-	if result.RepoSize != 4096 || len(result.Snapshots) != 1 {
-		t.Fatalf("TaskResult metadata fields = %+v", result)
+
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &got); err != nil {
+		t.Fatalf("Unmarshal(TaskResult JSON) error = %v", err)
+	}
+
+	wantKeys := []string{"type", "status", "duration_ms", "snapshot_id", "repo_size", "snapshots"}
+	for _, key := range wantKeys {
+		if _, ok := got[key]; !ok {
+			t.Fatalf("TaskResult JSON missing key %q: %s", key, payload)
+		}
+	}
+	disallowedKeys := []string{"Type", "Status", "DurationMs", "SnapshotID", "RepoSize", "Snapshots", "ErrorLog"}
+	for _, key := range disallowedKeys {
+		if _, ok := got[key]; ok {
+			t.Fatalf("TaskResult JSON uses Go field key %q: %s", key, payload)
+		}
+	}
+	if _, ok := got["error_log"]; ok {
+		t.Fatalf("TaskResult JSON included empty error_log despite omitempty: %s", payload)
+	}
+}
+
+func TestTaskResultJSONOmitsEmptyOptionalFields(t *testing.T) {
+	result := TaskResult{
+		Type:       "backup",
+		Status:     "failed",
+		DurationMs: 123,
+	}
+
+	payload, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal(TaskResult) error = %v", err)
+	}
+
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &got); err != nil {
+		t.Fatalf("Unmarshal(TaskResult JSON) error = %v", err)
+	}
+
+	requiredKeys := []string{"type", "status", "duration_ms"}
+	for _, key := range requiredKeys {
+		if _, ok := got[key]; !ok {
+			t.Fatalf("TaskResult JSON missing required key %q: %s", key, payload)
+		}
+	}
+	optionalKeys := []string{"snapshot_id", "repo_size", "snapshots", "error_log"}
+	for _, key := range optionalKeys {
+		if _, ok := got[key]; ok {
+			t.Fatalf("TaskResult JSON included empty optional key %q: %s", key, payload)
+		}
 	}
 }
 
