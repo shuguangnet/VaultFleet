@@ -100,6 +100,40 @@ func TestTaskResultProcessorRecordsHistoryAndSnapshots(t *testing.T) {
 	assert.JSONEq(t, `["/srv"]`, snapshot.Paths)
 }
 
+func TestTaskResultProcessorRollsBackBackupHistoryWhenSnapshotPersistenceFails(t *testing.T) {
+	database, err := db.New(t.TempDir())
+	require.NoError(t, err)
+	agent := createSnapshotTestAgent(t, database, "online")
+	require.NoError(t, database.DB.Exec(`
+		CREATE TRIGGER fail_snapshot_insert
+		BEFORE INSERT ON snapshots
+		BEGIN
+			SELECT RAISE(FAIL, 'forced snapshot failure');
+		END;
+	`).Error)
+	finishedAt := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	msg, err := protocol.NewMessage(protocol.TypeTaskResult, protocol.TaskResultPayload{
+		AgentID:    agent.ID,
+		TaskType:   "backup",
+		Status:     "success",
+		SnapshotID: "snap-fail",
+		DurationMs: 1500,
+		StartedAt:  finishedAt.Add(-1500 * time.Millisecond),
+		FinishedAt: finishedAt,
+		Snapshots: []protocol.SnapshotInfo{
+			{ID: "snap-fail", Time: finishedAt, Paths: []string{"/srv"}, Size: 1024},
+		},
+	})
+	require.NoError(t, err)
+
+	processor := NewTaskResultProcessor(database)
+	require.Error(t, processor(agent.ID, *msg))
+
+	var historyCount int64
+	require.NoError(t, database.DB.Model(&db.TaskHistory{}).Where("agent_id = ? AND snapshot_id = ?", agent.ID, "snap-fail").Count(&historyCount).Error)
+	assert.Equal(t, int64(0), historyCount)
+}
+
 func TestTaskResultProcessorCompletesRunningRestoreHistory(t *testing.T) {
 	database, err := db.New(t.TempDir())
 	require.NoError(t, err)

@@ -29,6 +29,10 @@ func New(dataDir string) (*Database, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
+	if err := dedupeLegacySnapshots(gormDB); err != nil {
+		return nil, fmt.Errorf("dedupe snapshots: %w", err)
+	}
+
 	if err := gormDB.AutoMigrate(
 		&User{},
 		&Agent{},
@@ -51,4 +55,27 @@ func New(dataDir string) (*Database, error) {
 		DataDir:   dataDir,
 		MasterKey: masterKey,
 	}, nil
+}
+
+func dedupeLegacySnapshots(gormDB *gorm.DB) error {
+	if !gormDB.Migrator().HasTable(&Snapshot{}) {
+		return nil
+	}
+
+	return gormDB.Exec(`
+		DELETE FROM snapshots
+		WHERE rowid NOT IN (
+			SELECT rowid
+			FROM (
+				SELECT
+					rowid,
+					ROW_NUMBER() OVER (
+						PARTITION BY agent_id, snapshot_id
+						ORDER BY datetime(timestamp) DESC, datetime(created_at) DESC, rowid DESC
+					) AS rn
+				FROM snapshots
+			)
+			WHERE rn = 1
+		)
+	`).Error
 }

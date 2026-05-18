@@ -515,7 +515,7 @@ func (h *Handler) sendTaskResultWithID(messageID string, payload protocol.TaskRe
 	}
 	if err := h.sendMessage(*msg); err != nil {
 		log.Printf("send task result failed: %v", err)
-		h.persistPendingResult(payload)
+		h.persistPendingResult(messageID, payload)
 	}
 }
 
@@ -526,7 +526,7 @@ func (h *Handler) sendMessage(msg protocol.Message) error {
 	return h.send(msg)
 }
 
-func (h *Handler) persistPendingResult(result protocol.TaskResultPayload) {
+func (h *Handler) persistPendingResult(messageID string, result protocol.TaskResultPayload) {
 	if h.policyStore == nil {
 		return
 	}
@@ -535,7 +535,7 @@ func (h *Handler) persistPendingResult(result protocol.TaskResultPayload) {
 		log.Printf("load pending results failed: %v", err)
 		results = nil
 	}
-	results = append(results, result)
+	results = append(results, policy.PendingTaskResult{MessageID: messageID, Payload: result})
 	if err := h.policyStore.SavePendingResults(results); err != nil {
 		log.Printf("save pending result failed: %v", err)
 	}

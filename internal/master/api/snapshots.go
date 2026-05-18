@@ -191,6 +191,18 @@ func recordTaskResult(database *db.Database, agentID string, messageID string, r
 	if result.TaskType == "restore" {
 		return completeRestoreTaskResult(database, agentID, messageID, result)
 	}
+	if result.TaskType == "backup" && result.Status == "success" && len(result.Snapshots) > 0 {
+		return database.DB.Transaction(func(tx *gorm.DB) error {
+			if err := createTaskHistory(tx, agentID, messageID, result); err != nil {
+				return err
+			}
+			return upsertSnapshotsDB(tx, agentID, result.Snapshots)
+		})
+	}
+	return createTaskHistory(database.DB, agentID, messageID, result)
+}
+
+func createTaskHistory(gormDB *gorm.DB, agentID string, messageID string, result protocol.TaskResultPayload) error {
 	startedAt := result.StartedAt
 	finishedAt := result.FinishedAt
 	history := db.TaskHistory{
@@ -198,6 +210,7 @@ func recordTaskResult(database *db.Database, agentID string, messageID string, r
 		Type:       result.TaskType,
 		Status:     result.Status,
 		SnapshotID: result.SnapshotID,
+		MessageID:  messageID,
 		StartedAt:  &startedAt,
 		FinishedAt: &finishedAt,
 		DurationMs: result.DurationMs,
@@ -210,13 +223,7 @@ func recordTaskResult(database *db.Database, agentID string, messageID string, r
 	if result.FinishedAt.IsZero() {
 		history.FinishedAt = nil
 	}
-	if err := database.DB.Create(&history).Error; err != nil {
-		return err
-	}
-	if result.TaskType == "backup" && result.Status == "success" && len(result.Snapshots) > 0 {
-		return upsertSnapshots(database, agentID, result.Snapshots)
-	}
-	return nil
+	return gormDB.Create(&history).Error
 }
 
 func completeRestoreTaskResult(database *db.Database, agentID string, messageID string, result protocol.TaskResultPayload) error {
@@ -273,6 +280,10 @@ func upsertSnapshots(database *db.Database, agentID string, snapshots []protocol
 	if database == nil || database.DB == nil {
 		return errors.New("database not configured")
 	}
+	return upsertSnapshotsDB(database.DB, agentID, snapshots)
+}
+
+func upsertSnapshotsDB(gormDB *gorm.DB, agentID string, snapshots []protocol.SnapshotInfo) error {
 	for _, snapshotInfo := range snapshots {
 		if snapshotInfo.ID == "" {
 			continue
@@ -289,7 +300,7 @@ func upsertSnapshots(database *db.Database, agentID string, snapshots []protocol
 			Paths:      string(paths),
 			Size:       snapshotInfo.Size,
 		}
-		err = database.DB.Clauses(clause.OnConflict{
+		err = gormDB.Clauses(clause.OnConflict{
 			Columns: []clause.Column{
 				{Name: "agent_id"},
 				{Name: "snapshot_id"},

@@ -86,25 +86,30 @@ func TestStore_SavePolicyTightensExistingFilePermissions(t *testing.T) {
 func TestStore_SaveAndLoadPendingResults(t *testing.T) {
 	store := NewStore(t.TempDir())
 	startedAt := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
-	results := []protocol.TaskResultPayload{
+	results := []PendingTaskResult{
 		{
-			AgentID:    "agent-001",
-			TaskType:   "backup",
-			Status:     "success",
-			SnapshotID: "snap-001",
-			DurationMs: 1234,
-			RepoSize:   4096,
-			StartedAt:  startedAt,
-			FinishedAt: startedAt.Add(1234 * time.Millisecond),
+			Payload: protocol.TaskResultPayload{
+				AgentID:    "agent-001",
+				TaskType:   "backup",
+				Status:     "success",
+				SnapshotID: "snap-001",
+				DurationMs: 1234,
+				RepoSize:   4096,
+				StartedAt:  startedAt,
+				FinishedAt: startedAt.Add(1234 * time.Millisecond),
+			},
 		},
 		{
-			AgentID:    "agent-001",
-			TaskType:   "restore",
-			Status:     "failed",
-			DurationMs: 5678,
-			ErrorLog:   "restore failed",
-			StartedAt:  startedAt.Add(time.Hour),
-			FinishedAt: startedAt.Add(time.Hour + 5678*time.Millisecond),
+			MessageID: "restore-message-1",
+			Payload: protocol.TaskResultPayload{
+				AgentID:    "agent-001",
+				TaskType:   "restore",
+				Status:     "failed",
+				DurationMs: 5678,
+				ErrorLog:   "restore failed",
+				StartedAt:  startedAt.Add(time.Hour),
+				FinishedAt: startedAt.Add(time.Hour + 5678*time.Millisecond),
+			},
 		},
 	}
 
@@ -119,6 +124,22 @@ func TestStore_SaveAndLoadPendingResults(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o600), fileInfo.Mode().Perm())
 }
 
+func TestStore_LoadPendingResultsAcceptsLegacyPayloadArray(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, PendingResultsFile), []byte(`[
+		{"agent_id":"agent-001","task_type":"backup","status":"success","duration_ms":10,"repo_size":0,"started_at":"2026-05-18T10:00:00Z","finished_at":"2026-05-18T10:00:01Z"}
+	]`), 0o600))
+
+	got, err := store.LoadPendingResults()
+
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Empty(t, got[0].MessageID)
+	assert.Equal(t, "agent-001", got[0].Payload.AgentID)
+	assert.Equal(t, "backup", got[0].Payload.TaskType)
+}
+
 func TestStore_SavePendingResultsTightensExistingFilePermissions(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "vaultfleet")
 	store := NewStore(dir)
@@ -127,8 +148,8 @@ func TestStore_SavePendingResultsTightensExistingFilePermissions(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(`[]`), 0o644))
 	require.NoError(t, os.Chmod(path, 0o644))
 
-	require.NoError(t, store.SavePendingResults([]protocol.TaskResultPayload{
-		{AgentID: "agent-001", TaskType: "backup", Status: "success"},
+	require.NoError(t, store.SavePendingResults([]PendingTaskResult{
+		{Payload: protocol.TaskResultPayload{AgentID: "agent-001", TaskType: "backup", Status: "success"}},
 	}))
 
 	fileInfo, err := os.Stat(path)
@@ -147,8 +168,8 @@ func TestStore_LoadPendingResultsMissingReturnsNil(t *testing.T) {
 
 func TestStore_ClearPendingResults(t *testing.T) {
 	store := NewStore(t.TempDir())
-	require.NoError(t, store.SavePendingResults([]protocol.TaskResultPayload{
-		{AgentID: "agent-001", TaskType: "backup", Status: "success", DurationMs: 10},
+	require.NoError(t, store.SavePendingResults([]PendingTaskResult{
+		{Payload: protocol.TaskResultPayload{AgentID: "agent-001", TaskType: "backup", Status: "success", DurationMs: 10}},
 	}))
 
 	require.NoError(t, store.ClearPendingResults())

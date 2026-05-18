@@ -562,10 +562,50 @@ func TestHandleBackupNowPersistsPendingResultWhenSendFails(t *testing.T) {
 	pending, err := store.LoadPendingResults()
 	require.NoError(t, err)
 	require.Len(t, pending, 1)
-	assert.Equal(t, "agent-1", pending[0].AgentID)
-	assert.Equal(t, "backup", pending[0].TaskType)
-	assert.Equal(t, "success", pending[0].Status)
-	assert.Equal(t, "snap-1", pending[0].SnapshotID)
+	assert.Empty(t, pending[0].MessageID)
+	assert.Equal(t, "agent-1", pending[0].Payload.AgentID)
+	assert.Equal(t, "backup", pending[0].Payload.TaskType)
+	assert.Equal(t, "success", pending[0].Payload.Status)
+	assert.Equal(t, "snap-1", pending[0].Payload.SnapshotID)
+}
+
+func TestHandleRestorePersistsPendingResultWithRequestMessageIDWhenSendFails(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{
+		AgentID: "agent-1",
+		Storage: protocol.StorageConfig{
+			RepoPath: "repo/agent-1",
+		},
+	}))
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   t.TempDir(),
+		SendFunc: func(msg protocol.Message) error {
+			if msg.Type == protocol.TypeTaskResult {
+				return errors.New("offline")
+			}
+			return nil
+		},
+		RestoreRunner: func(context.Context, executor.ExecutorConfig, string, string) error {
+			return nil
+		},
+	})
+	msg, err := protocol.NewMessage(protocol.TypeRestoreReq, protocol.RestoreReqPayload{
+		SnapshotID: "snap-restore",
+		Target:     "/restore/target",
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	pending, err := store.LoadPendingResults()
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.Equal(t, msg.ID, pending[0].MessageID)
+	assert.Equal(t, "agent-1", pending[0].Payload.AgentID)
+	assert.Equal(t, "restore", pending[0].Payload.TaskType)
+	assert.Equal(t, "success", pending[0].Payload.Status)
+	assert.Equal(t, "snap-restore", pending[0].Payload.SnapshotID)
 }
 
 func TestHandleBackupNowMissingPolicySendsFailureResult(t *testing.T) {

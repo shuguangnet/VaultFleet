@@ -18,6 +18,11 @@ type Store struct {
 	dir string
 }
 
+type PendingTaskResult struct {
+	MessageID string                     `json:"message_id,omitempty"`
+	Payload   protocol.TaskResultPayload `json:"payload"`
+}
+
 func NewStore(dir string) *Store {
 	if dir == "" {
 		dir = DefaultDir
@@ -56,7 +61,7 @@ func (s *Store) DeletePolicy() error {
 	return nil
 }
 
-func (s *Store) SavePendingResults(results []protocol.TaskResultPayload) error {
+func (s *Store) SavePendingResults(results []PendingTaskResult) error {
 	if err := s.ensureDir(); err != nil {
 		return err
 	}
@@ -67,7 +72,7 @@ func (s *Store) SavePendingResults(results []protocol.TaskResultPayload) error {
 	return writeFile0600(s.path(PendingResultsFile), data)
 }
 
-func (s *Store) LoadPendingResults() ([]protocol.TaskResultPayload, error) {
+func (s *Store) LoadPendingResults() ([]PendingTaskResult, error) {
 	data, err := os.ReadFile(s.path(PendingResultsFile))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -76,9 +81,32 @@ func (s *Store) LoadPendingResults() ([]protocol.TaskResultPayload, error) {
 		return nil, err
 	}
 
-	var results []protocol.TaskResultPayload
-	if err := json.Unmarshal(data, &results); err != nil {
+	var rawResults []json.RawMessage
+	if err := json.Unmarshal(data, &rawResults); err != nil {
 		return nil, err
+	}
+
+	results := make([]PendingTaskResult, 0, len(rawResults))
+	for _, raw := range rawResults {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return nil, err
+		}
+
+		if _, ok := fields["payload"]; ok {
+			var result PendingTaskResult
+			if err := json.Unmarshal(raw, &result); err != nil {
+				return nil, err
+			}
+			results = append(results, result)
+			continue
+		}
+
+		var payload protocol.TaskResultPayload
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil, err
+		}
+		results = append(results, PendingTaskResult{Payload: payload})
 	}
 	return results, nil
 }

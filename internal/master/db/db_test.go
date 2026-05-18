@@ -1,11 +1,13 @@
 package db
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,6 +39,43 @@ func TestDatabaseInit_CreatesDataDir(t *testing.T) {
 	info, err := os.Stat(dir)
 	require.NoError(t, err)
 	assert.True(t, info.IsDir())
+}
+
+func TestDatabaseInit_DeduplicatesLegacySnapshotsBeforeUniqueIndex(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	sqlDB, err := sql.Open("sqlite3", filepath.Join(dir, "vaultfleet.db"))
+	require.NoError(t, err)
+	_, err = sqlDB.Exec(`
+		CREATE TABLE snapshots (
+			id text primary key,
+			agent_id text not null,
+			snapshot_id text not null,
+			timestamp datetime,
+			paths text,
+			size integer,
+			created_at datetime
+		);
+		INSERT INTO snapshots (id, agent_id, snapshot_id, timestamp, paths, size, created_at)
+		VALUES
+			('old', 'agent-1', 'snap-1', '2026-05-18T10:00:00Z', '["/old"]', 100, '2026-05-18T10:01:00Z'),
+			('new', 'agent-1', 'snap-1', '2026-05-18T11:00:00Z', '["/new"]', 200, '2026-05-18T11:01:00Z'),
+			('other', 'agent-2', 'snap-1', '2026-05-18T09:00:00Z', '["/other"]', 50, '2026-05-18T09:01:00Z');
+	`)
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	database, err := New(dir)
+	require.NoError(t, err)
+
+	var snapshots []Snapshot
+	require.NoError(t, database.DB.Order("agent_id ASC").Find(&snapshots).Error)
+	require.Len(t, snapshots, 2)
+	assert.Equal(t, "agent-1", snapshots[0].AgentID)
+	assert.Equal(t, "snap-1", snapshots[0].SnapshotID)
+	assert.Equal(t, `["/new"]`, snapshots[0].Paths)
+	assert.Equal(t, int64(200), snapshots[0].Size)
+	assert.Equal(t, "agent-2", snapshots[1].AgentID)
 }
 
 func TestUserCRUD(t *testing.T) {
