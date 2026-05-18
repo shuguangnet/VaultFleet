@@ -12,10 +12,9 @@ import (
 	"vaultfleet/pkg/protocol"
 )
 
-const (
-	maxMessageBytes = 1 << 20
-	pongWait        = 60 * time.Second
-)
+const maxMessageBytes = 1 << 20
+
+var pongWait = 60 * time.Second
 
 type AgentAuthFunc func(token string) (agentID string, err error)
 type PolicyLookupFunc func(agentID string) (*protocol.Message, bool)
@@ -107,6 +106,7 @@ func (h *Handler) readLoop(agentID string, conn *SafeConn) {
 		if err := conn.ReadJSON(&msg); err != nil {
 			return
 		}
+		_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 		h.dispatch(agentID, msg)
 	}
 }

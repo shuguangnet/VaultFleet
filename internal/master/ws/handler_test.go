@@ -135,6 +135,32 @@ func TestHandler_HeartbeatDispatchUpdatesLastSeen(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestHandler_HeartbeatRefreshesReadDeadline(t *testing.T) {
+	setup := setupHandlerTest(t, validTestAuth, noPolicy)
+	server := httptest.NewServer(setup.router)
+	t.Cleanup(server.Close)
+
+	originalPongWait := pongWait
+	pongWait = 120 * time.Millisecond
+	t.Cleanup(func() {
+		pongWait = originalPongWait
+	})
+
+	conn, _, err := websocket.DefaultDialer.Dial(websocketURL(server.URL, "/ws", url.Values{"token": []string{"valid-token"}}), nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	require.Eventually(t, func() bool {
+		return setup.hub.IsOnline("agent-1")
+	}, time.Second, 10*time.Millisecond)
+
+	time.Sleep(70 * time.Millisecond)
+	require.NoError(t, conn.WriteJSON(protocol.Message{Type: protocol.TypeHeartbeat}))
+	time.Sleep(80 * time.Millisecond)
+
+	assert.True(t, setup.hub.IsOnline("agent-1"))
+}
+
 func TestHandler_PolicyAckDispatchPublishesPolicyChanged(t *testing.T) {
 	setup := setupHandlerTest(t, validTestAuth, noPolicy)
 	eventsCh := make(chan events.Event, 1)
