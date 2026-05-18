@@ -161,6 +161,97 @@ func TestClientSendReturnsErrNotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
+func TestReadLoopClosesConnectionOnReadError(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	serverConnCh := make(chan *websocket.Conn, 1)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		serverConnCh <- conn
+	}))
+	defer server.Close()
+
+	client := NewClient(httpToWSURL(t, server.URL), "test-token", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, client.connect(ctx))
+
+	clientConn := client.currentConn()
+	require.NotNil(t, clientConn)
+
+	serverConn := <-serverConnCh
+	defer serverConn.Close()
+
+	readLoopDone := make(chan struct{})
+	go func() {
+		client.readLoop(ctx)
+		close(readLoopDone)
+	}()
+
+	require.NoError(t, serverConn.WriteMessage(websocket.TextMessage, []byte("not-json")))
+	select {
+	case <-readLoopDone:
+	case <-time.After(time.Second):
+		t.Fatal("readLoop did not exit after invalid JSON")
+	}
+
+	assert.Nil(t, client.currentConn())
+	assert.Error(t, clientConn.WriteJSON(protocol.Message{Type: protocol.TypeHeartbeat}))
+}
+
+func TestRunBacksOffAfterShortLivedSuccessfulConnections(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	connections := make(chan time.Time, 4)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		connections <- time.Now()
+		require.NoError(t, conn.Close())
+	}))
+	defer server.Close()
+
+	client := NewClient(httpToWSURL(t, server.URL), "test-token", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runDone := make(chan struct{})
+	go func() {
+		client.Run(ctx)
+		close(runDone)
+	}()
+
+	waitForConnection(t, connections, 2*time.Second)
+	waitForConnection(t, connections, 2*time.Second)
+
+	select {
+	case at := <-connections:
+		t.Fatalf("unexpected third short-lived reconnect before exponential backoff delay: %v", at)
+	case <-time.After(1500 * time.Millisecond):
+	}
+
+	cancel()
+	client.Close()
+	select {
+	case <-runDone:
+	case <-time.After(time.Second):
+		t.Fatal("client Run did not stop")
+	}
+}
+
+func waitForConnection(t *testing.T, connections <-chan time.Time, timeout time.Duration) time.Time {
+	t.Helper()
+
+	select {
+	case at := <-connections:
+		return at
+	case <-time.After(timeout):
+		t.Fatal("timed out waiting for websocket connection")
+		return time.Time{}
+	}
+}
+
 func httpToWSURL(t *testing.T, rawURL string) string {
 	t.Helper()
 

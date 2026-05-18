@@ -68,6 +68,21 @@ func TestStore_SavePolicyFileAndDirectoryPermissions(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o600), fileInfo.Mode().Perm())
 }
 
+func TestStore_SavePolicyTightensExistingFilePermissions(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "vaultfleet")
+	store := NewStore(dir)
+	path := filepath.Join(dir, PolicyFileName)
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(path, []byte(`{"agent_id":"old"}`), 0o644))
+	require.NoError(t, os.Chmod(path, 0o644))
+
+	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{AgentID: "agent-001"}))
+
+	fileInfo, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), fileInfo.Mode().Perm())
+}
+
 func TestStore_SaveAndLoadPendingResults(t *testing.T) {
 	store := NewStore(t.TempDir())
 	startedAt := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
@@ -100,6 +115,23 @@ func TestStore_SaveAndLoadPendingResults(t *testing.T) {
 	assert.Equal(t, results, got)
 
 	fileInfo, err := os.Stat(filepath.Join(store.dir, PendingResultsFile))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), fileInfo.Mode().Perm())
+}
+
+func TestStore_SavePendingResultsTightensExistingFilePermissions(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "vaultfleet")
+	store := NewStore(dir)
+	path := filepath.Join(dir, PendingResultsFile)
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(path, []byte(`[]`), 0o644))
+	require.NoError(t, os.Chmod(path, 0o644))
+
+	require.NoError(t, store.SavePendingResults([]protocol.TaskResultPayload{
+		{AgentID: "agent-001", TaskType: "backup", Status: "success"},
+	}))
+
+	fileInfo, err := os.Stat(path)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), fileInfo.Mode().Perm())
 }

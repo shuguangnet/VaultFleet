@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	InitialBackoff = time.Second
-	MaxBackoff     = 5 * time.Minute
-	BackoffFactor  = 2.0
+	InitialBackoff            = time.Second
+	MaxBackoff                = 5 * time.Minute
+	BackoffFactor             = 2.0
+	stableConnectionThreshold = 5 * time.Second
 )
 
 var ErrNotConnected = errors.New("not connected")
@@ -60,16 +61,24 @@ func (c *Client) Run(ctx context.Context) {
 			continue
 		}
 
-		backoff = InitialBackoff
+		connectedAt := time.Now()
 		c.readLoop(ctx)
 
 		if ctx.Err() != nil {
 			c.Close()
 			return
 		}
+
+		shortLived := time.Since(connectedAt) < stableConnectionThreshold
+		if !shortLived {
+			backoff = InitialBackoff
+		}
 		if !sleepWithContext(ctx, backoff) {
 			c.Close()
 			return
+		}
+		if shortLived {
+			backoff = nextBackoff(backoff)
 		}
 	}
 }
@@ -104,7 +113,10 @@ func (c *Client) readLoop(ctx context.Context) {
 		}
 	}()
 	defer close(closeOnCancelDone)
-	defer c.clearConn(conn)
+	defer func() {
+		_ = conn.Close()
+		c.clearConn(conn)
+	}()
 
 	for {
 		var msg protocol.Message

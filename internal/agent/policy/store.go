@@ -33,7 +33,7 @@ func (s *Store) SavePolicy(policy *protocol.PolicyPushPayload) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path(PolicyFileName), data, 0o600)
+	return writeFile0600(s.path(PolicyFileName), data)
 }
 
 func (s *Store) LoadPolicy() (*protocol.PolicyPushPayload, error) {
@@ -57,7 +57,7 @@ func (s *Store) SavePendingResults(results []protocol.TaskResultPayload) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path(PendingResultsFile), data, 0o600)
+	return writeFile0600(s.path(PendingResultsFile), data)
 }
 
 func (s *Store) LoadPendingResults() ([]protocol.TaskResultPayload, error) {
@@ -89,4 +89,11 @@ func (s *Store) ensureDir() error {
 
 func (s *Store) path(name string) string {
 	return filepath.Join(s.dir, name)
+}
+
+func writeFile0600(path string, data []byte) error {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }
