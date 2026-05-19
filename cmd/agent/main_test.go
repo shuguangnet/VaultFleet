@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -31,4 +33,49 @@ func TestEnrollReturnsCmdAgentConfig(t *testing.T) {
 		AgentID:    "agent-1",
 		AgentToken: "ak_test",
 	}, cfg)
+}
+
+func TestRunAgentEnrollOnlyEnrollsAndExits(t *testing.T) {
+	var enrolled bool
+	var clientStarted bool
+	configPath := filepath.Join(t.TempDir(), "agent.yaml")
+
+	err := runAgent(context.Background(), []string{
+		"--enroll-only",
+		"--server", "https://master.example.com",
+		"--token", "ek_test",
+		"--config", configPath,
+	}, agentRuntime{
+		loadConfig: func(string) (*AgentConfig, error) {
+			return nil, errors.New("config should not be loaded for enroll-only")
+		},
+		enroll: func(server, token, path string) (*AgentConfig, error) {
+			enrolled = true
+			assert.Equal(t, "https://master.example.com", server)
+			assert.Equal(t, "ek_test", token)
+			assert.Equal(t, configPath, path)
+			return &AgentConfig{Server: server, AgentID: "agent-1", AgentToken: "ak_test"}, nil
+		},
+		runClient: func(context.Context, *AgentConfig) error {
+			clientStarted = true
+			return nil
+		},
+	})
+
+	require.NoError(t, err)
+	assert.True(t, enrolled)
+	assert.False(t, clientStarted)
+}
+
+func TestRunAgentEnrollOnlyRequiresServerAndToken(t *testing.T) {
+	err := runAgent(context.Background(), []string{"--enroll-only"}, agentRuntime{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--server and --token")
+}
+
+func TestRunAgentHelpReturnsNil(t *testing.T) {
+	err := runAgent(context.Background(), []string{"--help"}, agentRuntime{})
+
+	require.NoError(t, err)
 }

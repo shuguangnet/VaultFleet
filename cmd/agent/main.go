@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -26,25 +27,64 @@ type AgentConfig struct {
 }
 
 func main() {
-	configPath := flag.String("config", defaultConfigPath, "path to agent config file")
-	server := flag.String("server", "", "master server URL for enrollment")
-	token := flag.String("token", "", "enrollment token for first-time registration")
-	flag.Parse()
-
-	cfg, err := loadConfig(*configPath)
-	if err != nil {
-		if *server == "" || *token == "" {
-			log.Fatalf("load config: %v", err)
-		}
-		cfg, err = enroll(*server, *token, *configPath)
-		if err != nil {
-			log.Fatalf("enrollment failed: %v", err)
-		}
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if err := runAgent(ctx, os.Args[1:], defaultAgentRuntime()); err != nil {
+		log.Fatal(err)
+	}
+}
+
+type agentRuntime struct {
+	loadConfig func(path string) (*AgentConfig, error)
+	enroll     func(server, token, configPath string) (*AgentConfig, error)
+	runClient  func(ctx context.Context, cfg *AgentConfig) error
+}
+
+func defaultAgentRuntime() agentRuntime {
+	return agentRuntime{
+		loadConfig: loadConfig,
+		enroll:     enroll,
+		runClient:  runClient,
+	}
+}
+
+func runAgent(ctx context.Context, args []string, runtime agentRuntime) error {
+	flags := flag.NewFlagSet("vaultfleet-agent", flag.ContinueOnError)
+	configPath := flags.String("config", defaultConfigPath, "path to agent config file")
+	server := flags.String("server", "", "master server URL for enrollment")
+	token := flags.String("token", "", "enrollment token for first-time registration")
+	enrollOnly := flags.Bool("enroll-only", false, "enroll agent and exit")
+	if err := flags.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return nil
+		}
+		return err
+	}
+
+	if *enrollOnly {
+		if *server == "" || *token == "" {
+			return fmt.Errorf("--server and --token are required with --enroll-only")
+		}
+		_, err := runtime.enroll(*server, *token, *configPath)
+		return err
+	}
+
+	cfg, err := runtime.loadConfig(*configPath)
+	if err != nil {
+		if *server == "" || *token == "" {
+			return fmt.Errorf("load config: %w", err)
+		}
+		cfg, err = runtime.enroll(*server, *token, *configPath)
+		if err != nil {
+			return fmt.Errorf("enrollment failed: %w", err)
+		}
+	}
+
+	return runtime.runClient(ctx, cfg)
+}
+
+func runClient(ctx context.Context, cfg *AgentConfig) error {
 	store := policy.NewStore("")
 	var client *connect.Client
 	handler := agenthandler.NewHandler(agenthandler.HandlerConfig{
@@ -58,6 +98,7 @@ func main() {
 
 	go connect.RunHeartbeat(ctx, client, connect.DefaultSystemInfoCollector, 0)
 	client.Run(ctx)
+	return nil
 }
 
 func loadConfig(path string) (*AgentConfig, error) {

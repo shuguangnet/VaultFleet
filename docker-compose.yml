@@ -1,0 +1,12 @@
+# docker-compose.yml
+services:
+  vaultfleet:
+    image: vaultfleet/master:latest
+    build:
+      context: .
+      dockerfile: build/Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
