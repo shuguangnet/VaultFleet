@@ -33,6 +33,20 @@ func TestFrontendPlaceholderPaths(t *testing.T) {
 	}
 }
 
+func TestFrontendPlaceholderDoesNotServeBackendRoutes(t *testing.T) {
+	router := newFrontendPlaceholderTestRouter()
+
+	for _, path := range []string{"/api/missing", "/ws/missing"} {
+		t.Run(path, func(t *testing.T) {
+			w := getFrontendPlaceholder(t, router, path)
+
+			require.Equal(t, http.StatusNotFound, w.Code)
+			assert.NotContains(t, w.Header().Get("Content-Type"), "text/html")
+			assert.NotContains(t, w.Body.String(), "VaultFleet")
+		})
+	}
+}
+
 func newFrontendPlaceholderTestRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 

@@ -20,14 +20,16 @@ var pongWait = 60 * time.Second
 type AgentAuthFunc func(token string) (agentID string, err error)
 type PolicyLookupFunc func(agentID string) (*protocol.Message, bool)
 type TaskResultProcessorFunc func(agentID string, msg protocol.Message) error
+type PolicyAckProcessorFunc func(agentID string, msg protocol.Message) error
 
 type Handler struct {
-	hub               *Hub
-	eventBus          *events.Bus
-	authAgent         AgentAuthFunc
-	policyLookup      PolicyLookupFunc
-	taskResultProcess TaskResultProcessorFunc
-	upgrader          websocket.Upgrader
+	hub                *Hub
+	eventBus           *events.Bus
+	authAgent          AgentAuthFunc
+	policyLookup       PolicyLookupFunc
+	taskResultProcess  TaskResultProcessorFunc
+	PolicyAckProcessor PolicyAckProcessorFunc
+	upgrader           websocket.Upgrader
 }
 
 var timeNow = time.Now
@@ -122,6 +124,11 @@ func (h *Handler) dispatch(agentID string, msg protocol.Message) {
 		h.hub.UpdateLastSeen(agentID, now)
 		h.hub.MarkOnline(agentID)
 	case protocol.TypePolicyAck:
+		if h.PolicyAckProcessor != nil {
+			if err := h.PolicyAckProcessor(agentID, msg); err != nil {
+				log.Printf("process policy ack failed for agent %s: %v", agentID, err)
+			}
+		}
 		h.eventBus.Publish(events.Event{
 			Type: events.PolicyChanged,
 			Payload: map[string]interface{}{

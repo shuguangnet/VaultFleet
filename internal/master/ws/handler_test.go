@@ -200,6 +200,40 @@ func TestHandler_PolicyAckDispatchPublishesPolicyChanged(t *testing.T) {
 	}
 }
 
+func TestHandler_PolicyAckProcessorRunsBeforeEventPublish(t *testing.T) {
+	setup := setupHandlerTest(t, validTestAuth, noPolicy)
+	processed := make(chan string, 1)
+	eventsCh := make(chan events.Event, 1)
+	setup.bus.Subscribe(events.PolicyChanged, func(event events.Event) {
+		eventsCh <- event
+	})
+	handler := NewHandler(setup.hub, setup.bus, validTestAuth, noPolicy, nil)
+	handler.PolicyAckProcessor = func(agentID string, msg protocol.Message) error {
+		assert.Equal(t, protocol.TypePolicyAck, msg.Type)
+		processed <- agentID
+		return nil
+	}
+
+	handler.dispatch("agent-1", protocol.Message{
+		Type:    protocol.TypePolicyAck,
+		Payload: json.RawMessage(`{"agent_id":"agent-1","success":true}`),
+	})
+
+	select {
+	case agentID := <-processed:
+		assert.Equal(t, "agent-1", agentID)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for policy ack processor")
+	}
+
+	select {
+	case event := <-eventsCh:
+		assert.Equal(t, events.PolicyChanged, event.Type)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for policy changed event")
+	}
+}
+
 func TestHandler_TaskResultDispatchPublishesRawPayload(t *testing.T) {
 	setup := setupHandlerTest(t, validTestAuth, noPolicy)
 	eventsCh := make(chan events.Event, 1)

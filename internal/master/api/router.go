@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -25,6 +26,10 @@ type RouterConfig struct {
 }
 
 func NewRouter(cfg RouterConfig) *gin.Engine {
+	if cfg.Database == nil || cfg.Database.DB == nil {
+		panic("router database is required")
+	}
+
 	r := gin.New()
 	r.Use(gin.Recovery())
 
@@ -85,7 +90,7 @@ func CurrentPolicyLookup(database *db.Database) func(agentID string) (*protocol.
 	return func(agentID string) (*protocol.Message, bool) {
 		var policy db.BackupPolicy
 		if err := database.DB.
-			Where("agent_id = ?", agentID).
+			Where("agent_id = ? AND synced = ?", agentID, false).
 			Order("updated_at DESC").
 			First(&policy).Error; err != nil {
 			return nil, false
@@ -106,6 +111,28 @@ func CurrentPolicyLookup(database *db.Database) func(agentID string) (*protocol.
 			return nil, false
 		}
 		return msg, true
+	}
+}
+
+func NewPolicyAckProcessor(database *db.Database) func(agentID string, msg protocol.Message) error {
+	return func(agentID string, msg protocol.Message) error {
+		ack, err := protocol.ParsePayload[protocol.PolicyAckPayload](&msg)
+		if err != nil {
+			return err
+		}
+		if !ack.Success {
+			return nil
+		}
+
+		var policy db.BackupPolicy
+		if err := database.DB.
+			Where("agent_id = ? AND synced = ?", agentID, false).
+			Order("updated_at DESC").
+			First(&policy).Error; err != nil {
+			return nil
+		}
+
+		return database.DB.Model(&policy).Update("synced", true).Error
 	}
 }
 
@@ -189,7 +216,9 @@ func decryptPolicyRcloneConfig(database *db.Database, rawConfig string) (map[str
 	for key, value := range anyValues {
 		if stringValue, ok := value.(string); ok {
 			values[key] = stringValue
+			continue
 		}
+		return nil, fmt.Errorf("rclone config %q must be a string", key)
 	}
 	return values, nil
 }

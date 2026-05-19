@@ -50,6 +50,7 @@ func main() {
 		api.CurrentPolicyLookup(database),
 		api.NewTaskResultProcessor(database),
 	)
+	wsHandler.PolicyAckProcessor = api.NewPolicyAckProcessor(database)
 	router := api.NewRouter(api.RouterConfig{
 		Database:       database,
 		Hub:            hub,
