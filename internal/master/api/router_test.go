@@ -193,6 +193,26 @@ func TestCurrentPolicyLookupRejectsNonStringRcloneConfigValues(t *testing.T) {
 	assert.Nil(t, msg)
 }
 
+func TestCurrentPolicyLookupRejectsNullRcloneConfigValues(t *testing.T) {
+	database := newRouterAssemblyDatabase(t)
+	agent := createStorageTestAgent(t, database, "Tokyo-1")
+	storage := db.StorageConfig{
+		Name:       "Cloudflare R2",
+		RcloneType: "s3",
+		RcloneConfig: mustEncryptMap(t, database, map[string]any{
+			"provider": "Cloudflare",
+			"region":   nil,
+		}),
+	}
+	require.NoError(t, database.DB.Create(&storage).Error)
+	createStorageTestPolicy(t, database, agent.ID, storage.ID, false)
+
+	msg, ok := CurrentPolicyLookup(database)(agent.ID)
+
+	assert.False(t, ok)
+	assert.Nil(t, msg)
+}
+
 func TestPolicyAckProcessorSuccessfulAckMarksNewestUnsyncedPolicySynced(t *testing.T) {
 	database := newRouterAssemblyDatabase(t)
 	agent, storage := createRouterAssemblyPolicyFixtures(t, database)

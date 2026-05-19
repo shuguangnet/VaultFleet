@@ -202,17 +202,12 @@ func decryptPolicyRcloneConfig(database *db.Database, rawConfig string) (map[str
 		return nil, err
 	}
 
-	var values map[string]string
-	if err := json.Unmarshal([]byte(plaintext), &values); err == nil {
-		return values, nil
-	}
-
 	var anyValues map[string]any
 	if err := json.Unmarshal([]byte(plaintext), &anyValues); err != nil {
 		return nil, err
 	}
 
-	values = make(map[string]string, len(anyValues))
+	values := make(map[string]string, len(anyValues))
 	for key, value := range anyValues {
 		if stringValue, ok := value.(string); ok {
 			values[key] = stringValue
