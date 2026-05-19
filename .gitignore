@@ -8,3 +8,12 @@ data/
 
 # Test specs with credentials
 docs/superpowers/specs/2026-05-19-vaultfleet-e2e-acceptance-test.md
+
+# Frontend
+web/node_modules/
+web/dist/
+web/tsconfig.tsbuildinfo
+
+# Frontend build output embedded by Go
+internal/master/api/frontend_dist/*
+!internal/master/api/frontend_dist/index.html
