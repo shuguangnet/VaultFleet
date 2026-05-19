@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { format } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DirectoryBrowser } from "@/components/directory-browser";
 
 export function NodeDetailPage() {
   const { agentId } = useParams<{ agentId: string }>();
@@ -178,9 +179,20 @@ export function NodeDetailPage() {
               <CardDescription>实时浏览 Agent 上的目录</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="h-64 flex items-center justify-center text-muted-foreground border-2 border-dashed rounded-lg">
-                Directory Browser 正在开发中...
-              </div>
+              {agent.status === "online" ? (
+                <DirectoryBrowser 
+                  agentId={agent.id} 
+                  onSelect={(path) => {
+                    navigator.clipboard.writeText(path);
+                    alert(`路径已复制: ${path}`);
+                  }} 
+                />
+              ) : (
+                <div className="h-64 flex flex-col items-center justify-center text-muted-foreground border-2 border-dashed rounded-lg space-y-2">
+                  <div className="h-2 w-2 rounded-full bg-red-500" />
+                  <p>节点离线，无法使用文件浏览器</p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
