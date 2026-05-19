@@ -1,189 +1,171 @@
-# VaultFleet Issue Reporting Design
+# VaultFleet 问题反馈流程设计
 
-> Date: 2026-05-19
-> Status: Approved for implementation planning
+> 日期：2026-05-19
+> 状态：已批准进入实施计划
 
-## Goal
+## 目标
 
-Make it straightforward for users to report VaultFleet problems through GitHub
-without giving VaultFleet access to their GitHub account. The first version
-uses GitHub's own logged-in browser session, issue templates, and clear support
-documentation. It does not implement GitHub OAuth, GitHub Apps, automatic issue
-creation, or diagnostic ZIP upload.
+让用户可以通过 GitHub 清晰提交 VaultFleet 问题，同时不让 VaultFleet 接触用户的
+GitHub 账号或 token。第一版只使用 GitHub 浏览器登录态、Issue 模板和支持文档；
+不实现 GitHub OAuth、GitHub App、自动创建 issue 或诊断 zip 上传。
 
-## Context
+## 当前上下文
 
-VaultFleet already records useful troubleshooting information in several places:
+VaultFleet 现在已经有几类可用于排障的信息：
 
-- Master process logs, usually available through Docker or the hosting process.
-- Agent process logs, usually available through systemd, OpenRC, or the fallback
-  `/var/log/vaultfleet-agent.log`.
-- Task history in the Master database, exposed by `GET /api/tasks`, including
-  `error_log` for failed backup and restore work.
-- Agent status and system information exposed by the existing Agent API and UI.
+- Master 进程日志，通常来自 Docker、Docker Compose 或宿主进程管理方式。
+- Agent 进程日志，通常来自 systemd、OpenRC，或 fallback 模式下的
+  `/var/log/vaultfleet-agent.log`。
+- Master 数据库中的任务历史，并通过 `GET /api/tasks` 暴露；失败的备份和恢复任务
+  会带有 `error_log`。
+- 现有 Agent API 和 UI 中的 Agent 状态、最后在线时间和系统信息。
 
-The missing piece is a public, consistent reporting path that tells users what
-to include, how to collect it, and what must be redacted.
+缺口是：项目还没有公开、稳定、可复制的问题反馈路径，用户不知道应该提交什么、
+怎么收集日志，以及哪些内容必须脱敏。
 
-## User Flow
+## 用户流程
 
-1. A user encounters a bug or needs support.
-2. The user opens the README "Report an issue" link or the support document.
-3. The user chooses either "Bug report" or "Support request" in GitHub's issue
-   chooser.
-4. GitHub uses the user's existing browser login. VaultFleet never sees or stores
-   a GitHub token.
-5. The selected issue form asks for environment details, reproduction steps,
-   logs, task `error_log`, and a redaction confirmation.
-6. The maintainer receives a structured issue with enough context to start
-   triage without first asking for the basic deployment and log information.
+1. 用户遇到 bug 或需要排障支持。
+2. 用户从 README 的“反馈问题 / Report an issue”入口，或从支持文档进入 GitHub。
+3. 用户在 GitHub issue chooser 中选择“Bug report”或“Support request”。
+4. GitHub 使用用户浏览器里已有的登录态；VaultFleet 不读取、不保存 GitHub token。
+5. 对应 Issue 表单要求用户填写环境信息、复现步骤、日志、任务 `error_log` 和脱敏确认。
+6. 维护者收到结构化 issue 后，可以直接开始判断问题，而不是先反复追问部署方式和日志。
 
-## Approach
+## 方案
 
-Use GitHub Issue Forms instead of plain Markdown issue templates.
+使用 GitHub Issue Forms，而不是普通 Markdown issue 模板。
 
-Issue Forms provide required fields, dropdowns, text areas, default hints, and
-labels while remaining simple repository metadata. They fit this feature because
-the goal is structured troubleshooting intake, not custom automation.
+Issue Forms 可以提供必填字段、下拉选项、文本区域、默认提示和标签，同时仍然只是仓库
+元数据，不需要任何运行时集成。这个需求的目标是让排障信息更结构化，不是做自定义自动化，
+所以 Issue Forms 更合适。
 
-Add these files:
+新增文件：
 
 - `.github/ISSUE_TEMPLATE/bug_report.yml`
 - `.github/ISSUE_TEMPLATE/support_request.yml`
 - `.github/ISSUE_TEMPLATE/config.yml`
 - `docs/support.md`
 
-Update:
+更新文件：
 
 - `README.md`
 
-## Issue Templates
+## Issue 模板
 
 ### Bug Report
 
-The bug report form is bilingual, with Chinese and English in labels and
-descriptions. It collects:
+Bug 表单使用完整中英双语文案，字段 label 和 description 都同时包含中文与英文。
+它收集：
 
-- A short summary.
-- VaultFleet version, image tag, or commit.
-- Deployment type: Docker Compose, Docker, source build, or other.
-- Master environment: OS, architecture, reverse proxy if any, browser if UI
-  related.
-- Agent environment: OS, architecture, init system, installation method.
-- Reproduction steps.
-- Expected behavior.
-- Actual behavior.
-- Relevant Master logs.
-- Relevant Agent logs.
-- Task history `error_log` if the issue involves backup, restore, snapshots, or
-  policy sync.
-- Screenshots or extra context.
-- Confirmation that secrets were redacted.
+- 简短问题摘要。
+- VaultFleet 版本、镜像 tag 或 commit。
+- 部署方式：Docker Compose、Docker、源码运行或其他。
+- Master 环境：系统、架构、是否使用反向代理；如果是 UI 问题，还包括浏览器。
+- Agent 环境：系统、架构、init system、安装方式。
+- 复现步骤。
+- 预期行为。
+- 实际行为。
+- 相关 Master 日志。
+- 相关 Agent 日志。
+- 如果问题涉及备份、恢复、快照或策略同步，要求提供任务历史中的 `error_log`。
+- 截图或其他补充信息。
+- 确认已经脱敏。
 
-The form should apply labels such as `bug` and `needs-triage`.
+表单应自动打上 `bug` 和 `needs-triage` 这类标签。
 
 ### Support Request
 
-The support request form is also bilingual. It handles setup problems,
-configuration questions, storage backend trouble, restore questions, and other
-usage problems that are not clearly product defects.
+支持请求表单同样使用完整中英双语文案。它用于安装问题、配置问题、存储后端排障、
+恢复操作疑问，以及其他不确定是否属于产品缺陷的使用问题。
 
-It collects:
+它收集：
 
-- What the user is trying to do.
-- Current deployment state.
-- Storage backend type, without secrets.
-- Master and Agent environment summaries.
-- Commands or UI actions already tried.
-- Logs and task `error_log` where relevant.
-- The same redaction confirmation.
+- 用户正在尝试完成什么。
+- 当前部署状态。
+- 存储后端类型，但不包含密钥。
+- Master 和 Agent 环境摘要。
+- 已尝试的命令或 UI 操作。
+- 相关日志和任务 `error_log`。
+- 同样的脱敏确认。
 
-The form should apply labels such as `support` and `needs-triage`.
+表单应自动打上 `support` 和 `needs-triage` 这类标签。
 
 ### Issue Chooser
 
-The issue chooser should:
+Issue chooser 应该：
 
-- Show the two issue forms.
-- Disable or discourage blank issues.
-- Link to `docs/support.md` as the troubleshooting and log collection guide.
+- 展示两个 Issue Forms。
+- 禁用或不鼓励空白 issue。
+- 链接到 `docs/support.md`，作为排障和日志收集指南。
 
-## Support Document
+## 支持文档
 
-`docs/support.md` should be bilingual and concise. It should include:
+`docs/support.md` 应使用中英双语，但可以保持简洁。它需要包含：
 
-- When to open a bug report versus a support request.
-- A reminder that the GitHub account is determined by the user's GitHub browser
-  session.
-- Direct links:
+- 什么时候提交 bug report，什么时候提交 support request。
+- 提醒用户：GitHub 提交账号由浏览器里的 GitHub 登录态决定。
+- 直接链接：
   - `https://github.com/momo-z/VaultFleet/issues/new/choose`
-  - A direct bug report template URL.
-  - A direct support request template URL.
-- Log collection commands:
+  - 直接打开 bug report 模板的 URL。
+  - 直接打开 support request 模板的 URL。
+- 日志收集命令：
   - `docker compose logs --tail=300 vaultfleet`
   - `docker logs --tail=300 vaultfleet`
   - `journalctl -u vaultfleet-agent --since "24 hours ago" --no-pager`
   - `rc-service vaultfleet-agent status`
   - `tail -n 300 /var/log/vaultfleet-agent.log`
-- How to include task history:
-  - Use the Web UI task history if available.
-  - Or call `GET /api/tasks` from an authenticated browser/session and copy the
-    relevant failed task `error_log`.
-- Redaction rules:
-  - Do not upload `master.key`.
-  - Do not upload the full `vaultfleet.db`.
-  - Do not paste full `/etc/vaultfleet/agent.yaml`.
-  - Redact enrollment tokens, agent tokens, cookies, restic passwords, rclone
-    access keys, secret keys, WebDAV credentials, SFTP credentials, and private
-    endpoints if sensitive.
+- 如何提供任务历史：
+  - 如果 Web UI 可用，优先复制任务历史中的失败记录。
+  - 或者在已有认证会话中调用 `GET /api/tasks`，复制相关失败任务的 `error_log`。
+- 脱敏规则：
+  - 不要上传 `master.key`。
+  - 不要上传完整 `vaultfleet.db`。
+  - 不要粘贴完整 `/etc/vaultfleet/agent.yaml`。
+  - 必须脱敏 enrollment token、agent token、cookie、restic password、rclone access key、
+    secret key、WebDAV 凭据、SFTP 凭据，以及敏感的私有 endpoint。
 
-## README Update
+## README 更新
 
-Add a short "反馈问题 / Report an issue" section near the development status or
-reference sections. It should point to:
+在 README 的“开发状态”或“参考”附近增加一个简短的“反馈问题 / Report an issue”
+章节，指向：
 
 - `docs/support.md`
 - `https://github.com/momo-z/VaultFleet/issues/new/choose`
 
-The README should not duplicate the full troubleshooting guide.
+README 不重复完整排障指南，避免后续两处文档漂移。
 
-## Non-Goals
+## 非目标
 
-This design intentionally excludes:
+本设计明确不做：
 
-- GitHub OAuth or GitHub App authorization.
-- Creating issues from inside VaultFleet.
-- Uploading diagnostic ZIP files to GitHub.
-- Collecting Agent logs through the Master-Agent protocol.
-- Adding a Web UI diagnostics page.
-- Changing runtime logging behavior.
+- GitHub OAuth 或 GitHub App 授权。
+- 从 VaultFleet 内部创建 GitHub issue。
+- 上传诊断 zip 到 GitHub。
+- 通过 Master-Agent 协议收集 Agent 日志。
+- 新增 Web UI 诊断页面。
+- 改变运行时日志行为。
 
-These can be added later if support volume justifies the extra security and
-maintenance cost.
+这些能力以后可以根据用户量和支持成本再做；第一版先保持安全、简单、可维护。
 
-## Error Handling
+## 错误处理
 
-Because the feature is static repository metadata and documentation, runtime
-error handling is limited:
+这个改动只涉及仓库元数据和文档，没有运行时错误处理。需要注意：
 
-- Invalid issue form YAML would be caught by review and GitHub's issue template
-  rendering.
-- Broken support links should be avoided by using repository-relative links in
-  README where possible and canonical GitHub URLs in support docs where needed.
-- Commands in docs should include alternatives because users may run Master in
-  Docker Compose, Docker, or a custom process, and Agents may run under systemd,
-  OpenRC, or fallback `nohup`.
+- Issue form YAML 如果写错，会影响 GitHub issue 模板渲染，需要通过 review 和 GitHub
+  页面验证发现。
+- README 尽量使用仓库相对链接；支持文档中需要跳转 GitHub 新建 issue 的地方使用规范 URL。
+- 文档里的命令必须覆盖不同部署方式，因为 Master 可能运行在 Docker Compose、Docker 或
+  自定义进程里，Agent 也可能运行在 systemd、OpenRC 或 fallback `nohup` 模式下。
 
-## Testing And Verification
+## 测试与验证
 
-Verification should include:
+验证范围：
 
-- Review the YAML syntax for both issue forms.
-- Confirm `.github/ISSUE_TEMPLATE/config.yml` points to the support guide.
-- Confirm README links are correct.
-- Confirm all log commands match current deployment behavior in
-  `docker-compose.yml` and `build/install.sh`.
-- Confirm the templates do not ask users to paste known secret files or
-  credentials.
+- 检查两个 Issue Forms 的 YAML 语法。
+- 确认 `.github/ISSUE_TEMPLATE/config.yml` 指向支持文档。
+- 确认 README 链接正确。
+- 确认日志命令符合当前 `docker-compose.yml` 和 `build/install.sh` 的部署行为。
+- 确认模板不会要求用户粘贴已知敏感文件或凭据。
 
-No Go tests are required because this change does not affect runtime code.
+该改动不影响 Go 运行时代码，因此不需要新增或运行 Go 测试。
