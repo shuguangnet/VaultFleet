@@ -27,6 +27,11 @@ func RegisterSystemRoutes(rg *gin.RouterGroup, h *SystemHandler) {
 }
 
 func (h *SystemHandler) Export(c *gin.Context) {
+	if err := h.DB.DB.Exec("PRAGMA wal_checkpoint(TRUNCATE)").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "checkpoint database"})
+		return
+	}
+
 	buf, err := backup.ExportDataDir(h.DB.DataDir)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "export data"})
@@ -51,9 +56,9 @@ func (h *SystemHandler) ChangePassword(c *gin.Context) {
 	}
 
 	var user db.User
-	if err := h.DB.DB.First(&user).Error; err != nil {
+	if err := h.DB.DB.First(&user, "username = ?", "admin").Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "admin user not found"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
