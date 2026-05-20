@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -34,9 +35,10 @@ type Hub interface {
 }
 
 type Service struct {
-	DB  *db.Database
-	Hub Hub
-	Now func() time.Time
+	DB         *db.Database
+	Hub        Hub
+	Now        func() time.Time
+	dispatchMu sync.Mutex
 }
 
 type CreateCommandInput struct {
@@ -138,6 +140,9 @@ func (s *Service) DispatchPendingForAgent(ctx context.Context, agentID string, l
 		limit = 100
 	}
 
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+
 	now := s.now()
 	var commands []db.AgentCommand
 	err := s.DB.DB.WithContext(ctx).
@@ -181,44 +186,26 @@ func (s *Service) dispatch(ctx context.Context, command db.AgentCommand) error {
 	if err != nil {
 		return err
 	}
-	claimed, err := s.claimForDispatch(ctx, command)
-	if err != nil {
-		return err
-	}
-	if !claimed {
-		return nil
-	}
 	if err := s.Hub.Send(command.AgentID, message); err != nil {
 		return s.recordDispatchFailure(ctx, command, err)
 	}
 
-	return nil
-}
-
-func (s *Service) claimForDispatch(ctx context.Context, command db.AgentCommand) (bool, error) {
 	now := s.now()
 	status := CommandStatusDispatched
 	if isLongRunning(command.Type) {
 		status = CommandStatusRunning
 	}
 
-	var rowsAffected int64
-	err := s.DB.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&db.AgentCommand{}).
+	return s.DB.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&db.AgentCommand{}).
 			Where("id = ?", command.ID).
-			Where("status = ?", CommandStatusPending).
 			Updates(map[string]any{
 				"attempts":      gorm.Expr("attempts + ?", 1),
 				"dispatched_at": &now,
 				"error_message": "",
 				"status":        status,
-			})
-		if result.Error != nil {
-			return result.Error
-		}
-		rowsAffected = result.RowsAffected
-		if rowsAffected == 0 {
-			return nil
+			}).Error; err != nil {
+			return err
 		}
 		if !isLongRunning(command.Type) {
 			return nil
@@ -227,10 +214,6 @@ func (s *Service) claimForDispatch(ctx context.Context, command db.AgentCommand)
 			Where("command_id = ? AND status = ?", command.ID, TaskStatusPending).
 			Update("status", TaskStatusRunning).Error
 	})
-	if err != nil {
-		return false, err
-	}
-	return rowsAffected > 0, nil
 }
 
 func (s *Service) recordDispatchFailure(ctx context.Context, command db.AgentCommand, dispatchErr error) error {
@@ -241,6 +224,8 @@ func (s *Service) recordDispatchFailure(ctx context.Context, command db.AgentCom
 		if err := tx.Model(&db.AgentCommand{}).
 			Where("id = ?", command.ID).
 			Updates(map[string]any{
+				"attempts":      gorm.Expr("attempts + ?", 1),
+				"dispatched_at": nil,
 				"error_message": dispatchErr.Error(),
 				"status":        CommandStatusPending,
 			}).Error; err != nil {

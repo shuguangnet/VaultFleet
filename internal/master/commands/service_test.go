@@ -104,28 +104,43 @@ func TestDispatchPendingForAgentConcurrentDispatchSendsLongCommandAtMostOnce(t *
 
 	hub.waitForSend(t)
 
+	var duringSend db.AgentCommand
+	if assert.NoError(t, database.DB.First(&duringSend, "id = ?", command.ID).Error) {
+		assert.Equal(t, CommandStatusPending, duringSend.Status)
+		assert.Equal(t, 0, duringSend.Attempts)
+		assert.Nil(t, duringSend.DispatchedAt)
+	}
+	var historyDuringSend db.TaskHistory
+	if assert.NoError(t, database.DB.First(&historyDuringSend, "command_id = ?", command.ID).Error) {
+		assert.Equal(t, TaskStatusPending, historyDuringSend.Status)
+	}
+
 	secondErr := make(chan error, 1)
 	go func() {
 		secondErr <- service.DispatchPendingForAgent(context.Background(), "agent-1", 10)
 	}()
 
-	duplicateSend := false
+	secondReturnedEarly := false
 	select {
 	case <-hub.entered:
-		duplicateSend = true
+		t.Error("second dispatch attempted to send while first dispatch was still in progress")
 	case err := <-secondErr:
 		require.NoError(t, err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("second dispatch neither returned nor attempted send")
+		secondReturnedEarly = true
+	case <-time.After(50 * time.Millisecond):
 	}
 
 	hub.releaseSends()
 	require.NoError(t, <-firstErr)
-	if duplicateSend {
-		require.NoError(t, <-secondErr)
+	if !secondReturnedEarly {
+		select {
+		case err := <-secondErr:
+			require.NoError(t, err)
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for second dispatch")
+		}
 	}
 
-	assert.False(t, duplicateSend)
 	assert.Equal(t, 1, hub.sendCount())
 
 	var found db.AgentCommand
@@ -161,6 +176,7 @@ func TestDispatchPendingRecordsSendFailure(t *testing.T) {
 	require.NoError(t, database.DB.First(&found, "id = ?", command.ID).Error)
 	assert.Equal(t, CommandStatusPending, found.Status)
 	assert.Equal(t, 1, found.Attempts)
+	assert.Nil(t, found.DispatchedAt)
 	assert.Contains(t, found.ErrorMessage, "write failed")
 }
 
