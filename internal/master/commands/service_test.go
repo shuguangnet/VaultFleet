@@ -67,6 +67,73 @@ func TestDispatchPendingForAgentSendsOldestPendingCommand(t *testing.T) {
 	assert.NotNil(t, updated.DispatchedAt)
 }
 
+func TestDispatchPendingForAgentDoesNotRedispatchShortCommand(t *testing.T) {
+	database := setupCommandTestDB(t)
+	hub := &recordingHub{online: map[string]bool{"agent-1": true}}
+	service := NewService(database, hub)
+
+	command := createPolicyPushCommandForTest(t, service, "agent-1")
+
+	require.NoError(t, service.DispatchPendingForAgent(context.Background(), "agent-1", 10))
+	require.Len(t, hub.sent, 1)
+
+	var dispatched db.AgentCommand
+	require.NoError(t, database.DB.First(&dispatched, "id = ?", command.ID).Error)
+	assert.Equal(t, CommandStatusDispatched, dispatched.Status)
+	assert.Equal(t, 1, dispatched.Attempts)
+
+	require.NoError(t, service.DispatchPendingForAgent(context.Background(), "agent-1", 10))
+
+	assert.Len(t, hub.sent, 1)
+	var afterSecondDispatch db.AgentCommand
+	require.NoError(t, database.DB.First(&afterSecondDispatch, "id = ?", command.ID).Error)
+	assert.Equal(t, CommandStatusDispatched, afterSecondDispatch.Status)
+	assert.Equal(t, 1, afterSecondDispatch.Attempts)
+}
+
+func TestDispatchPendingForAgentConcurrentDispatchSendsLongCommandAtMostOnce(t *testing.T) {
+	database := setupCommandTestDB(t)
+	hub := newBlockingHub("agent-1")
+	service := NewService(database, hub)
+	command := createCommandForTest(t, service, "agent-1", protocol.TypeBackupNow)
+
+	firstErr := make(chan error, 1)
+	go func() {
+		firstErr <- service.DispatchPendingForAgent(context.Background(), "agent-1", 10)
+	}()
+
+	hub.waitForSend(t)
+
+	secondErr := make(chan error, 1)
+	go func() {
+		secondErr <- service.DispatchPendingForAgent(context.Background(), "agent-1", 10)
+	}()
+
+	duplicateSend := false
+	select {
+	case <-hub.entered:
+		duplicateSend = true
+	case err := <-secondErr:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("second dispatch neither returned nor attempted send")
+	}
+
+	hub.releaseSends()
+	require.NoError(t, <-firstErr)
+	if duplicateSend {
+		require.NoError(t, <-secondErr)
+	}
+
+	assert.False(t, duplicateSend)
+	assert.Equal(t, 1, hub.sendCount())
+
+	var found db.AgentCommand
+	require.NoError(t, database.DB.First(&found, "id = ?", command.ID).Error)
+	assert.Equal(t, CommandStatusRunning, found.Status)
+	assert.Equal(t, 1, found.Attempts)
+}
+
 func TestDispatchPendingForOfflineAgentLeavesCommandPending(t *testing.T) {
 	database := setupCommandTestDB(t)
 	hub := &recordingHub{online: map[string]bool{"agent-1": false}}
@@ -126,6 +193,54 @@ func (h *recordingHub) Send(agentID string, msg interface{}) error {
 	return nil
 }
 
+type blockingHub struct {
+	online  map[string]bool
+	entered chan struct{}
+	release chan struct{}
+	sent    chan protocol.Message
+}
+
+func newBlockingHub(agentID string) *blockingHub {
+	return &blockingHub{
+		online:  map[string]bool{agentID: true},
+		entered: make(chan struct{}, 2),
+		release: make(chan struct{}),
+		sent:    make(chan protocol.Message, 2),
+	}
+}
+
+func (h *blockingHub) IsOnline(agentID string) bool {
+	return h.online[agentID]
+}
+
+func (h *blockingHub) Send(agentID string, msg interface{}) error {
+	message, ok := msg.(protocol.Message)
+	if !ok {
+		return errors.New("message is not protocol.Message")
+	}
+	h.entered <- struct{}{}
+	<-h.release
+	h.sent <- message
+	return nil
+}
+
+func (h *blockingHub) waitForSend(t *testing.T) {
+	t.Helper()
+	select {
+	case <-h.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for send")
+	}
+}
+
+func (h *blockingHub) releaseSends() {
+	close(h.release)
+}
+
+func (h *blockingHub) sendCount() int {
+	return len(h.sent)
+}
+
 func createCommandForTest(t *testing.T, service *Service, agentID string, msgType string) db.AgentCommand {
 	t.Helper()
 	var payload any
@@ -145,6 +260,19 @@ func createCommandForTest(t *testing.T, service *Service, agentID string, msgTyp
 		Message:   *msg,
 		TaskType:  taskType,
 		TaskState: TaskStatusPending,
+	})
+	require.NoError(t, err)
+	return command
+}
+
+func createPolicyPushCommandForTest(t *testing.T, service *Service, agentID string) db.AgentCommand {
+	t.Helper()
+	msg, err := protocol.NewMessage(protocol.TypePolicyPush, protocol.PolicyPushPayload{AgentID: agentID})
+	require.NoError(t, err)
+	command, err := service.CreateCommand(context.Background(), CreateCommandInput{
+		AgentID: agentID,
+		Type:    protocol.TypePolicyPush,
+		Message: *msg,
 	})
 	require.NoError(t, err)
 	return command
