@@ -69,6 +69,12 @@ func (s *Service) Test(ctx context.Context, request Request) Result {
 	start := now
 	result := Result{CheckedAt: now}
 
+	if err := ValidateRequest(request); err != nil {
+		result.Error = s.redactError(err, request)
+		result.LatencyMs = s.latencySince(start)
+		return result
+	}
+
 	tempDir, err := os.MkdirTemp("", "vaultfleet-rclone-*")
 	if err != nil {
 		result.Error = s.redactError(err, request)
@@ -131,7 +137,7 @@ func (s *Service) latencySince(start time.Time) int64 {
 }
 
 func rcloneConfigContents(request Request) (string, error) {
-	if err := validateRcloneConfig(request); err != nil {
+	if err := ValidateRequest(request); err != nil {
 		return "", err
 	}
 
@@ -160,7 +166,7 @@ func rcloneConfigContents(request Request) (string, error) {
 	return builder.String(), nil
 }
 
-func validateRcloneConfig(request Request) error {
+func ValidateRequest(request Request) error {
 	if containsLineBreak(request.RcloneType) {
 		return fmt.Errorf("rclone type contains invalid characters")
 	}

@@ -83,6 +83,9 @@ func (h *ConfigHandler) CreateStorage(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !validateStorageCheckRequest(c, request.RcloneType, config, writeBareErrorResponse) {
+		return
+	}
 
 	encryptedConfig, ok := h.encryptStringMap(c, config)
 	if !ok {
@@ -144,11 +147,13 @@ func (h *ConfigHandler) UpdateStorage(c *gin.Context) {
 		return
 	}
 
+	nextRcloneType := storage.RcloneType
+	nextEncryptedConfig := storage.RcloneConfig
 	if request.Name != "" {
 		storage.Name = request.Name
 	}
 	if request.RcloneType != "" {
-		storage.RcloneType = request.RcloneType
+		nextRcloneType = request.RcloneType
 		configChanged = true
 	}
 	if request.RcloneConfig != nil {
@@ -162,13 +167,38 @@ func (h *ConfigHandler) UpdateStorage(c *gin.Context) {
 			return
 		}
 
-		encryptedConfig, ok := h.encryptMap(c, nextConfig)
+		finalConfig, ok := stringifyRcloneConfig(c, nextConfig)
 		if !ok {
 			return
 		}
-		storage.RcloneConfig = encryptedConfig
+		if !validateStorageCheckRequest(c, nextRcloneType, finalConfig, writeBareErrorResponse) {
+			return
+		}
+
+		encryptedConfig, ok := h.encryptStringMap(c, finalConfig)
+		if !ok {
+			return
+		}
+		nextEncryptedConfig = encryptedConfig
 		configChanged = true
+	} else if request.RcloneType != "" {
+		currentConfig, err := h.decryptMap(storage.RcloneConfig)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "decrypt storage config"})
+			return
+		}
+
+		finalConfig, ok := stringifyRcloneConfig(c, currentConfig)
+		if !ok {
+			return
+		}
+		if !validateStorageCheckRequest(c, nextRcloneType, finalConfig, writeBareErrorResponse) {
+			return
+		}
 	}
+
+	storage.RcloneType = nextRcloneType
+	storage.RcloneConfig = nextEncryptedConfig
 
 	agentIDs, err := h.saveStorageUpdate(storage, configChanged)
 	if err != nil {
@@ -215,6 +245,9 @@ func (h *ConfigHandler) TestUnsavedStorage(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !validateStorageCheckRequest(c, request.RcloneType, config, writeErrorResponse) {
+		return
+	}
 
 	result := h.storageTester().Test(c.Request.Context(), storagecheck.Request{
 		RcloneType:   request.RcloneType,
@@ -237,6 +270,9 @@ func (h *ConfigHandler) TestSavedStorage(c *gin.Context) {
 
 	config, ok := stringifyRcloneConfigWithErrorWriter(c, rawConfig, writeErrorResponse)
 	if !ok {
+		return
+	}
+	if !validateStorageCheckRequest(c, storage.RcloneType, config, writeErrorResponse) {
 		return
 	}
 
@@ -460,6 +496,17 @@ func stringifyRcloneConfigWithErrorWriter(c *gin.Context, config map[string]any,
 		result[key] = stringValue
 	}
 	return result, true
+}
+
+func validateStorageCheckRequest(c *gin.Context, rcloneType string, config map[string]string, writeError func(*gin.Context, int, string)) bool {
+	if err := storagecheck.ValidateRequest(storagecheck.Request{
+		RcloneType:   rcloneType,
+		RcloneConfig: config,
+	}); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return false
+	}
+	return true
 }
 
 func writeBareErrorResponse(c *gin.Context, status int, message string) {
