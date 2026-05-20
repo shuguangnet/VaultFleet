@@ -63,7 +63,7 @@ func (p *PolicyChangedPusher) Handle(event events.Event) {
 	if !p.EnsureDurableCommand(context.Background(), agentID) {
 		return
 	}
-	if err := p.Commands.DispatchPendingForAgent(context.Background(), agentID, 10); err != nil {
+	if err := p.Commands.DispatchNewPendingForAgent(context.Background(), agentID, 10); err != nil {
 		log.Printf("dispatch policy command for agent %s failed: %v", agentID, err)
 	}
 }

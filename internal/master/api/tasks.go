@@ -82,7 +82,7 @@ func (h *TaskHandler) BackupNow(c *gin.Context) {
 	}
 
 	if h.Hub != nil && h.Hub.IsOnline(agentID) {
-		if err := commandService.DispatchPendingForAgent(contextFromGin(c), agentID, 100); err != nil {
+		if err := commandService.DispatchNewPendingForAgent(contextFromGin(c), agentID, 100); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "database error"})
 			return
 		}

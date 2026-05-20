@@ -67,7 +67,7 @@ func TestDispatchPendingForAgentSendsOldestPendingCommand(t *testing.T) {
 	assert.NotNil(t, updated.DispatchedAt)
 }
 
-func TestDispatchPendingForAgentDoesNotRedispatchShortCommand(t *testing.T) {
+func TestDispatchPendingForAgentRedispatchesUnackedShortCommand(t *testing.T) {
 	database := setupCommandTestDB(t)
 	hub := &recordingHub{online: map[string]bool{"agent-1": true}}
 	service := NewService(database, hub)
@@ -84,11 +84,12 @@ func TestDispatchPendingForAgentDoesNotRedispatchShortCommand(t *testing.T) {
 
 	require.NoError(t, service.DispatchPendingForAgent(context.Background(), "agent-1", 10))
 
-	assert.Len(t, hub.sent, 1)
+	require.Len(t, hub.sent, 2)
+	assert.Equal(t, command.MessageID, hub.sent[1].ID)
 	var afterSecondDispatch db.AgentCommand
 	require.NoError(t, database.DB.First(&afterSecondDispatch, "id = ?", command.ID).Error)
 	assert.Equal(t, CommandStatusDispatched, afterSecondDispatch.Status)
-	assert.Equal(t, 1, afterSecondDispatch.Attempts)
+	assert.Equal(t, 2, afterSecondDispatch.Attempts)
 }
 
 func TestDispatchPendingForAgentConcurrentDispatchSendsLongCommandAtMostOnce(t *testing.T) {
@@ -279,11 +280,52 @@ func TestCompletePolicyAckDoesNotRewriteTerminalCommand(t *testing.T) {
 	assert.Empty(t, found.ErrorMessage)
 }
 
+func TestDispatchDoesNotOverwritePolicyAckTerminalState(t *testing.T) {
+	database := setupCommandTestDB(t)
+	hub := newAckingHub("agent-1")
+	service := NewService(database, hub)
+	hub.onSend = func(message protocol.Message) {
+		require.NoError(t, service.CompletePolicyAck(context.Background(), "agent-1", message.ID, true, ""))
+	}
+	command := createPolicyPushCommandForTest(t, service, "agent-1")
+
+	require.NoError(t, service.DispatchPendingForAgent(context.Background(), "agent-1", 10))
+
+	var found db.AgentCommand
+	require.NoError(t, database.DB.First(&found, "id = ?", command.ID).Error)
+	assert.Equal(t, CommandStatusSucceeded, found.Status)
+	assert.NotNil(t, found.CompletedAt)
+}
+
 func setupCommandTestDB(t *testing.T) *db.Database {
 	t.Helper()
 	database, err := db.New(t.TempDir())
 	require.NoError(t, err)
 	return database
+}
+
+type ackingHub struct {
+	online map[string]bool
+	onSend func(protocol.Message)
+}
+
+func newAckingHub(agentID string) *ackingHub {
+	return &ackingHub{online: map[string]bool{agentID: true}}
+}
+
+func (h *ackingHub) IsOnline(agentID string) bool {
+	return h.online[agentID]
+}
+
+func (h *ackingHub) Send(agentID string, msg interface{}) error {
+	message, ok := msg.(protocol.Message)
+	if !ok {
+		return errors.New("message is not protocol.Message")
+	}
+	if h.onSend != nil {
+		h.onSend(message)
+	}
+	return nil
 }
 
 type recordingHub struct {

@@ -133,6 +133,14 @@ func (s *Service) CreateCommand(ctx context.Context, input CreateCommandInput) (
 }
 
 func (s *Service) DispatchPendingForAgent(ctx context.Context, agentID string, limit int) error {
+	return s.dispatchForAgent(ctx, agentID, limit, []string{CommandStatusPending, CommandStatusDispatched})
+}
+
+func (s *Service) DispatchNewPendingForAgent(ctx context.Context, agentID string, limit int) error {
+	return s.dispatchForAgent(ctx, agentID, limit, []string{CommandStatusPending})
+}
+
+func (s *Service) dispatchForAgent(ctx context.Context, agentID string, limit int, statuses []string) error {
 	if s == nil || s.DB == nil || s.DB.DB == nil || s.Hub == nil || agentID == "" {
 		return nil
 	}
@@ -149,9 +157,9 @@ func (s *Service) DispatchPendingForAgent(ctx context.Context, agentID string, l
 	now := s.now()
 	var commands []db.AgentCommand
 	err := s.DB.DB.WithContext(ctx).
-		Where("agent_id = ? AND status = ? AND (deadline_at IS NULL OR deadline_at > ?)",
+		Where("agent_id = ? AND status IN ? AND (deadline_at IS NULL OR deadline_at > ?)",
 			agentID,
-			CommandStatusPending,
+			statuses,
 			now,
 		).
 		Order("created_at ASC").
@@ -254,7 +262,7 @@ func (s *Service) dispatch(ctx context.Context, command db.AgentCommand) error {
 
 	return s.DB.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&db.AgentCommand{}).
-			Where("id = ?", command.ID).
+			Where("id = ? AND status NOT IN ?", command.ID, terminalStatuses()).
 			Updates(map[string]any{
 				"attempts":      gorm.Expr("attempts + ?", 1),
 				"dispatched_at": &now,
@@ -309,4 +317,8 @@ func isLongRunning(commandType string) bool {
 
 func isTerminal(status string) bool {
 	return status == CommandStatusSucceeded || status == CommandStatusFailed || status == CommandStatusTimeout
+}
+
+func terminalStatuses() []string {
+	return []string{CommandStatusSucceeded, CommandStatusFailed, CommandStatusTimeout}
 }
