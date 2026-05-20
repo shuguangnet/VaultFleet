@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"vaultfleet/internal/master/commands"
 	"vaultfleet/internal/master/db"
 )
 
@@ -17,8 +16,7 @@ const defaultCommandListLimit = 50
 const maxCommandListLimit = 200
 
 type CommandHandler struct {
-	DB       *db.Database
-	Commands *commands.Service
+	DB *db.Database
 }
 
 type commandResponse struct {
@@ -39,8 +37,8 @@ type commandResponse struct {
 	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
-func NewCommandHandler(database *db.Database, service *commands.Service) *CommandHandler {
-	return &CommandHandler{DB: database, Commands: service}
+func NewCommandHandler(database *db.Database) *CommandHandler {
+	return &CommandHandler{DB: database}
 }
 
 func RegisterCommandRoutes(rg *gin.RouterGroup, h *CommandHandler) {

@@ -33,6 +33,17 @@ func TestGetCommandRedactsPayload(t *testing.T) {
 	assert.NotContains(t, data, "payload")
 }
 
+func TestGetCommandReturnsNotFoundForMissingCommand(t *testing.T) {
+	setup := setupCommandsAPI(t)
+
+	w := getJSON(t, setup.router, "/api/commands/missing")
+
+	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assert.Equal(t, false, body["ok"])
+	assert.Equal(t, "command not found", body["error"])
+}
+
 func TestListAgentCommandsFiltersStatusAndLimit(t *testing.T) {
 	setup := setupCommandsAPI(t)
 	agent := createCommandsTestAgent(t, setup.database, "online")
@@ -96,7 +107,7 @@ func setupCommandsAPI(t *testing.T) commandsAPISetup {
 	require.NoError(t, err)
 
 	service := commands.NewService(database, &fakeCommandHub{online: map[string]bool{}})
-	handler := NewCommandHandler(database, service)
+	handler := NewCommandHandler(database)
 	router := gin.New()
 	RegisterCommandRoutes(router.Group("/api"), handler)
 
