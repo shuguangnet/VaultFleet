@@ -122,15 +122,19 @@ func (h *SnapshotHandler) RefreshSnapshots(c *gin.Context) {
 		wait = h.Hub.SendAndWait
 	}
 	if wait == nil {
-		_ = commandService.FailCommand(contextFromGin(c), agentID, msg.ID, "agent offline")
-		writeErrorResponse(c, http.StatusBadGateway, "agent offline")
+		writeDataResponse(c, http.StatusAccepted, gin.H{
+			"command_id": command.ID,
+			"message_id": msg.ID,
+		})
 		return
 	}
 
 	respCh, err := wait(agentID, *msg, h.timeout)
 	if err != nil {
-		_ = commandService.FailCommand(contextFromGin(c), agentID, msg.ID, "agent offline")
-		writeErrorResponse(c, http.StatusBadGateway, "agent offline")
+		writeDataResponse(c, http.StatusAccepted, gin.H{
+			"command_id": command.ID,
+			"message_id": msg.ID,
+		})
 		return
 	}
 
@@ -141,7 +145,7 @@ func (h *SnapshotHandler) RefreshSnapshots(c *gin.Context) {
 			writeErrorResponse(c, http.StatusGatewayTimeout, "timeout waiting for agent response")
 			return
 		}
-		payload, status, message := h.completeSnapshotRefreshResponse(contextFromGin(c), commandService, agentID, msg.ID, resp)
+		payload, status, message := h.completeSnapshotRefreshResponse(context.Background(), commandService, agentID, msg.ID, resp)
 		if status != http.StatusOK {
 			writeErrorResponse(c, status, message)
 			return

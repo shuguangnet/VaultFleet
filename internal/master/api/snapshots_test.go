@@ -534,6 +534,58 @@ func TestRefreshSnapshotsCancelledRequestStillCompletesFromAgentResponse(t *test
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestRefreshSnapshotsResponseReadyWithCancelledContextCompletesCommand(t *testing.T) {
+	setup := setupSnapshotAPI(t)
+	agent := createSnapshotTestAgent(t, setup.database, "online")
+	snapshotTime := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	completedAt := snapshotTime.Add(time.Second)
+	setup.hub.online[agent.ID] = true
+	setup.handler.timeout = time.Second
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	setup.hub.sendAndWait = func(agentID string, msg protocol.Message, timeout time.Duration) (<-chan protocol.Message, error) {
+		assert.Equal(t, agent.ID, agentID)
+		assert.Equal(t, protocol.TypeSnapshotListReq, msg.Type)
+		assert.Equal(t, time.Second, timeout)
+
+		resp, err := protocol.NewMessage(protocol.TypeSnapshotListResp, protocol.SnapshotListRespPayload{
+			AgentID: agent.ID,
+			Snapshots: []protocol.SnapshotInfo{
+				{ID: "snap-ready-cancelled", Time: snapshotTime, Paths: []string{"/var/lib"}, Size: 2048},
+			},
+		})
+		require.NoError(t, err)
+		resp.ID = msg.ID
+		ch := make(chan protocol.Message, 1)
+		ch <- *resp
+		close(ch)
+
+		setup.handler.Commands.Now = func() time.Time {
+			cancel()
+			return completedAt
+		}
+		return ch, nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/agents/"+agent.ID+"/snapshots/refresh", nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+	setup.router.ServeHTTP(w, req)
+
+	assert.Contains(t, []int{http.StatusOK, http.StatusGatewayTimeout}, w.Code, w.Body.String())
+	var snapshot db.Snapshot
+	require.NoError(t, setup.database.DB.First(&snapshot, "agent_id = ? AND snapshot_id = ?", agent.ID, "snap-ready-cancelled").Error)
+	assert.True(t, snapshot.Timestamp.Equal(snapshotTime))
+	assert.JSONEq(t, `["/var/lib"]`, snapshot.Paths)
+
+	var command db.AgentCommand
+	require.NoError(t, setup.database.DB.First(&command, "agent_id = ? AND type = ?", agent.ID, protocol.TypeSnapshotListReq).Error)
+	assert.Equal(t, commands.CommandStatusSucceeded, command.Status)
+	assert.Empty(t, command.ErrorMessage)
+	assert.NotNil(t, command.CompletedAt)
+	assert.Contains(t, command.Result, "snap-ready-cancelled")
+}
+
 func TestRefreshSnapshotsOfflineQueuesCommand(t *testing.T) {
 	setup := setupSnapshotAPI(t)
 	agent := createSnapshotTestAgent(t, setup.database, "offline")
@@ -558,6 +610,40 @@ func TestRefreshSnapshotsOfflineQueuesCommand(t *testing.T) {
 	assert.Equal(t, protocol.TypeSnapshotListReq, command.Type)
 	assert.Equal(t, commands.CommandStatusPending, command.Status)
 	assert.Equal(t, messageID, command.MessageID)
+}
+
+func TestRefreshSnapshotsSendAndWaitFailureLeavesCommandQueued(t *testing.T) {
+	setup := setupSnapshotAPI(t)
+	agent := createSnapshotTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+	setup.hub.sendAndWait = func(agentID string, msg protocol.Message, timeout time.Duration) (<-chan protocol.Message, error) {
+		assert.Equal(t, agent.ID, agentID)
+		assert.Equal(t, protocol.TypeSnapshotListReq, msg.Type)
+		return nil, errors.New("connection lost")
+	}
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/snapshots/refresh", map[string]any{})
+
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assert.Equal(t, true, body["ok"])
+	data, ok := body["data"].(map[string]any)
+	require.True(t, ok)
+	commandID, ok := data["command_id"].(string)
+	require.True(t, ok)
+	messageID, ok := data["message_id"].(string)
+	require.True(t, ok)
+	assert.NotEmpty(t, commandID)
+	assert.NotEmpty(t, messageID)
+
+	var command db.AgentCommand
+	require.NoError(t, setup.database.DB.First(&command, "id = ?", commandID).Error)
+	assert.Equal(t, agent.ID, command.AgentID)
+	assert.Equal(t, protocol.TypeSnapshotListReq, command.Type)
+	assert.Equal(t, commands.CommandStatusPending, command.Status)
+	assert.Equal(t, messageID, command.MessageID)
+	assert.Empty(t, command.ErrorMessage)
+	assert.Nil(t, command.CompletedAt)
 }
 
 func TestRefreshSnapshotsTimeout(t *testing.T) {
