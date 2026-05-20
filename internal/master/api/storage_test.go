@@ -190,6 +190,35 @@ func TestStorageTestUnsavedConfigDoesNotPersistAndReturnsResult(t *testing.T) {
 	assert.Equal(t, "SECRET456", tester.requests[0].RcloneConfig["secret_access_key"])
 }
 
+func TestStorageTestFailureKeepsEnvelopeOK(t *testing.T) {
+	setup := setupTestConfigAPI(t)
+	tester := &fakeStorageTester{
+		result: storagecheck.Result{
+			OK:    false,
+			Error: "failed",
+		},
+	}
+	handler := NewConfigHandler(setup.database)
+	handler.StorageTester = tester
+	router := gin.New()
+	api := router.Group("/api")
+	RegisterStorageRoutes(api, handler)
+
+	w := postAnyJSON(t, router, "/api/storage/test", map[string]any{
+		"rclone_type": "s3",
+		"rclone_config": map[string]any{
+			"provider": "Cloudflare",
+		},
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assert.Equal(t, true, body["ok"])
+	data := requireMap(t, body["data"])
+	assert.Equal(t, false, data["ok"])
+	assert.Equal(t, "failed", data["error"])
+}
+
 func TestStorageTestSavedConfigDecryptsConfig(t *testing.T) {
 	setup := setupTestConfigAPI(t)
 	tester := &fakeStorageTester{

@@ -220,7 +220,7 @@ func (h *ConfigHandler) TestUnsavedStorage(c *gin.Context) {
 		RcloneType:   request.RcloneType,
 		RcloneConfig: config,
 	})
-	writeDataResponse(c, http.StatusOK, result)
+	writeStorageTestResult(c, http.StatusOK, result)
 }
 
 func (h *ConfigHandler) TestSavedStorage(c *gin.Context) {
@@ -244,7 +244,14 @@ func (h *ConfigHandler) TestSavedStorage(c *gin.Context) {
 		RcloneType:   storage.RcloneType,
 		RcloneConfig: config,
 	})
-	writeDataResponse(c, http.StatusOK, result)
+	writeStorageTestResult(c, http.StatusOK, result)
+}
+
+func writeStorageTestResult(c *gin.Context, status int, result storagecheck.Result) {
+	c.JSON(status, gin.H{
+		"ok":   true,
+		"data": result,
+	})
 }
 
 func (h *ConfigHandler) storageHasPolicies(c *gin.Context, storageID string) (bool, bool) {
