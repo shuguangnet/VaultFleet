@@ -498,6 +498,83 @@ func TestPolicyChangedPusherCreatesNewCommandForUpdatedPolicyVersion(t *testing.
 	assert.True(t, second.PolicyUpdatedAt.Equal(newVersion))
 }
 
+func TestPolicyChangedPusherRetiresActivePolicyPushWhenPolicyDeleted(t *testing.T) {
+	database := newRouterAssemblyDatabase(t)
+	agent, storage := createRouterAssemblyPolicyFixtures(t, database)
+	policy := createStorageTestPolicy(t, database, agent.ID, storage.ID, false)
+	hub := &fakeCommandHub{online: map[string]bool{agent.ID: true}}
+	tracker := NewPolicyPushTracker()
+	now := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
+	commandService := commands.NewService(database, hub)
+	commandService.Now = func() time.Time { return now }
+	pusher := NewPolicyChangedPusher(database, hub, nil)
+	pusher.CommandLookup = CurrentPolicyCommandLookupWithTracker(database, tracker)
+	pusher.Commands = commandService
+
+	require.True(t, pusher.EnsureDurableCommand(context.Background(), agent.ID))
+	var command db.AgentCommand
+	require.NoError(t, database.DB.First(&command, "agent_id = ? AND type = ? AND policy_id = ?", agent.ID, protocol.TypePolicyPush, policy.ID).Error)
+	assert.Equal(t, commands.CommandStatusPending, command.Status)
+
+	require.NoError(t, database.DB.Delete(&policy).Error)
+	now = now.Add(time.Minute)
+
+	require.False(t, pusher.EnsureDurableCommand(context.Background(), agent.ID))
+
+	var retired db.AgentCommand
+	require.NoError(t, database.DB.First(&retired, "id = ?", command.ID).Error)
+	assert.Equal(t, commands.CommandStatusFailed, retired.Status)
+	assert.Contains(t, retired.ErrorMessage, "no current policy")
+	require.NotNil(t, retired.CompletedAt)
+	assert.True(t, retired.CompletedAt.Equal(now))
+}
+
+func TestPolicyChangedPusherRetiresPolicyPushForDifferentCurrentPolicy(t *testing.T) {
+	database := newRouterAssemblyDatabase(t)
+	agent, storage := createRouterAssemblyPolicyFixtures(t, database)
+	policyA := createStorageTestPolicy(t, database, agent.ID, storage.ID, false)
+	hub := &fakeCommandHub{online: map[string]bool{agent.ID: true}}
+	tracker := NewPolicyPushTracker()
+	now := time.Date(2026, 5, 20, 12, 30, 0, 0, time.UTC)
+	commandService := commands.NewService(database, hub)
+	commandService.Now = func() time.Time { return now }
+	pusher := NewPolicyChangedPusher(database, hub, nil)
+	pusher.CommandLookup = CurrentPolicyCommandLookupWithTracker(database, tracker)
+	pusher.Commands = commandService
+
+	require.True(t, pusher.EnsureDurableCommand(context.Background(), agent.ID))
+	var commandA db.AgentCommand
+	require.NoError(t, database.DB.First(&commandA, "agent_id = ? AND type = ? AND policy_id = ?", agent.ID, protocol.TypePolicyPush, policyA.ID).Error)
+
+	policyB := createStorageTestPolicy(t, database, agent.ID, storage.ID, false)
+	require.NotNil(t, commandA.PolicyUpdatedAt)
+	policyBUpdatedAt := commandA.PolicyUpdatedAt.Add(time.Minute)
+	require.NoError(t, database.DB.Model(&policyB).Update("updated_at", policyBUpdatedAt).Error)
+	now = now.Add(time.Minute)
+
+	require.True(t, pusher.EnsureDurableCommand(context.Background(), agent.ID))
+
+	var retiredA db.AgentCommand
+	require.NoError(t, database.DB.First(&retiredA, "id = ?", commandA.ID).Error)
+	assert.Equal(t, commands.CommandStatusFailed, retiredA.Status)
+	assert.Contains(t, retiredA.ErrorMessage, "stale policy push command retired")
+	require.NotNil(t, retiredA.CompletedAt)
+
+	var commandB db.AgentCommand
+	require.NoError(t, database.DB.First(&commandB, "agent_id = ? AND type = ? AND policy_id = ?", agent.ID, protocol.TypePolicyPush, policyB.ID).Error)
+	assert.Equal(t, commands.CommandStatusPending, commandB.Status)
+	assert.Equal(t, policyB.ID, commandB.PolicyID)
+	require.NotNil(t, commandB.PolicyUpdatedAt)
+	assert.True(t, commandB.PolicyUpdatedAt.Equal(policyBUpdatedAt))
+
+	var active []db.AgentCommand
+	require.NoError(t, database.DB.
+		Where("agent_id = ? AND type = ? AND status IN ?", agent.ID, protocol.TypePolicyPush, []string{commands.CommandStatusPending, commands.CommandStatusDispatched, commands.CommandStatusRunning}).
+		Find(&active).Error)
+	require.Len(t, active, 1)
+	assert.Equal(t, policyB.ID, active[0].PolicyID)
+}
+
 func TestPolicyChangedPusherCommandRefsMatchPolicyPayloadAndTrackerMessage(t *testing.T) {
 	database := newRouterAssemblyDatabase(t)
 	agent := createStorageTestAgent(t, database, "Tokyo-1")

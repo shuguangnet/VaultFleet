@@ -76,14 +76,15 @@ func (p *PolicyChangedPusher) EnsureDurableCommand(ctx context.Context, agentID 
 	defer p.mu.Unlock()
 
 	current, ok := p.lookupCommand(agentID)
+	now := p.now()
 	if !ok || current == nil || current.Message == nil {
+		p.retireActivePolicyPushCommands(agentID, "no current policy; stale policy push command retired", now)
 		return false
 	}
-	now := p.now()
+	p.retireSupersededPolicyPushCommands(agentID, current.PolicyID, current.StorageID, current.PolicyUpdatedAt, now)
 	if p.hasActivePolicyPushCommand(agentID, current.PolicyID, current.StorageID, current.PolicyUpdatedAt, now) {
 		return true
 	}
-	p.retireSupersededPolicyPushCommands(agentID, current.PolicyID, current.StorageID, current.PolicyUpdatedAt, now)
 	if _, err := p.Commands.CreateCommand(ctx, commands.CreateCommandInput{
 		AgentID:         agentID,
 		Type:            protocol.TypePolicyPush,
@@ -98,27 +99,57 @@ func (p *PolicyChangedPusher) EnsureDurableCommand(ctx context.Context, agentID 
 	return true
 }
 
+func (p *PolicyChangedPusher) retireActivePolicyPushCommands(agentID string, reason string, now time.Time) {
+	if p == nil || p.DB == nil || p.DB.DB == nil || agentID == "" {
+		return
+	}
+	result := p.DB.DB.Model(&db.AgentCommand{}).
+		Where(
+			"agent_id = ? AND type = ? AND status IN ?",
+			agentID,
+			protocol.TypePolicyPush,
+			activePolicyPushCommandStatuses(),
+		).
+		Where("(policy_id <> ? OR storage_id <> ? OR policy_updated_at IS NOT NULL)", "", "").
+		Updates(map[string]any{
+			"status":        commands.CommandStatusFailed,
+			"error_message": reason,
+			"completed_at":  now,
+		})
+	if result.Error != nil {
+		log.Printf("retire active policy commands for agent %s failed: %v", agentID, result.Error)
+	}
+}
+
 func (p *PolicyChangedPusher) retireSupersededPolicyPushCommands(agentID string, policyID string, storageID string, policyUpdatedAt time.Time, now time.Time) {
 	if p == nil || p.DB == nil || p.DB.DB == nil || agentID == "" || policyID == "" || storageID == "" || policyUpdatedAt.IsZero() {
 		return
 	}
 	result := p.DB.DB.Model(&db.AgentCommand{}).
 		Where(
-			"agent_id = ? AND type = ? AND policy_id = ? AND status IN ? AND (policy_updated_at IS NULL OR policy_updated_at <> ?)",
+			"agent_id = ? AND type = ? AND status IN ?",
 			agentID,
 			protocol.TypePolicyPush,
+			activePolicyPushCommandStatuses(),
+		).
+		Where(
+			"(policy_id IS NULL OR policy_id <> ? OR storage_id IS NULL OR storage_id <> ? OR policy_updated_at IS NULL OR policy_updated_at <> ?)",
 			policyID,
-			[]string{commands.CommandStatusPending, commands.CommandStatusDispatched, commands.CommandStatusRunning},
+			storageID,
 			policyUpdatedAt,
 		).
 		Updates(map[string]any{
 			"status":        commands.CommandStatusFailed,
-			"error_message": "superseded by newer policy version",
+			"error_message": "stale policy push command retired; superseded by current policy",
 			"completed_at":  now,
 		})
 	if result.Error != nil {
 		log.Printf("retire superseded policy commands for agent %s failed: %v", agentID, result.Error)
 	}
+}
+
+func activePolicyPushCommandStatuses() []string {
+	return []string{commands.CommandStatusPending, commands.CommandStatusDispatched, commands.CommandStatusRunning}
 }
 
 func (p *PolicyChangedPusher) lookupCommand(agentID string) (*CurrentPolicyCommand, bool) {
