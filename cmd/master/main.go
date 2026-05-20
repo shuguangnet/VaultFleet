@@ -29,6 +29,10 @@ type masterRuntime struct {
 	router         http.Handler
 }
 
+type runtimeOptions struct {
+	commandTimeoutScanInterval time.Duration
+}
+
 func main() {
 	dataDir := flag.String("data-dir", "/data", "path to master data directory")
 	addr := flag.String("addr", ":8080", "HTTP listen address")
@@ -91,6 +95,16 @@ func main() {
 }
 
 func buildRuntime(ctx context.Context, database *db.Database) masterRuntime {
+	return buildRuntimeWithOptions(ctx, database, runtimeOptions{
+		commandTimeoutScanInterval: time.Minute,
+	})
+}
+
+func buildRuntimeWithOptions(ctx context.Context, database *db.Database, options runtimeOptions) masterRuntime {
+	if options.commandTimeoutScanInterval <= 0 {
+		options.commandTimeoutScanInterval = time.Minute
+	}
+
 	hub := ws.NewHub()
 	bus := events.NewBus()
 	commandService := commands.NewService(database, hub)
@@ -103,9 +117,10 @@ func buildRuntime(ctx context.Context, database *db.Database) masterRuntime {
 		bus,
 		api.AuthenticateAgentByToken(database),
 		nil,
-		api.NewTaskResultProcessor(database),
+		api.NewTaskResultProcessor(database, commandService),
 	)
 	wsHandler.PolicyAckProcessor = api.NewPolicyAckProcessor(database, commandService)
+	wsHandler.SnapshotListResponseProcessor = api.NewSnapshotListResponseProcessor(database, commandService)
 	policyPusher := api.NewPolicyChangedPusher(database, hub, policyLookup)
 	policyPusher.Commands = commandService
 	wsHandler.PendingCommandDispatcher = func(agentID string) error {
@@ -113,6 +128,7 @@ func buildRuntime(ctx context.Context, database *db.Database) masterRuntime {
 		return commandService.DispatchPendingForAgent(ctx, agentID, 20)
 	}
 	wsHandler.AgentStateUpdater = api.NewAgentStateUpdater(database)
+	go commandService.RunTimeoutScanner(ctx, options.commandTimeoutScanInterval)
 	bus.Subscribe(events.PolicyChanged, policyPusher.Handle)
 	router := api.NewRouter(api.RouterConfig{
 		Database:       database,

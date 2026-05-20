@@ -144,14 +144,18 @@ func TestRuntimePolicyAckAfterTrackerRestartMarksPolicySynced(t *testing.T) {
 	require.NoError(t, database.DB.Create(&storage).Error)
 	policy := createMasterTestPolicy(t, database, agent.ID, storage.ID)
 
-	firstRuntime := buildRuntime(context.Background(), database)
+	firstCtx, firstCancel := context.WithCancel(context.Background())
+	t.Cleanup(firstCancel)
+	firstRuntime := buildRuntime(firstCtx, database)
 	require.True(t, firstRuntime.policyPusher.EnsureDurableCommand(context.Background(), agent.ID))
 
 	var pending db.AgentCommand
 	require.NoError(t, database.DB.First(&pending, "agent_id = ? AND type = ? AND policy_id = ?", agent.ID, protocol.TypePolicyPush, policy.ID).Error)
 	require.Equal(t, commands.CommandStatusPending, pending.Status)
 
-	restartedRuntime := buildRuntime(context.Background(), database)
+	restartedCtx, restartedCancel := context.WithCancel(context.Background())
+	t.Cleanup(restartedCancel)
+	restartedRuntime := buildRuntime(restartedCtx, database)
 	server := httptest.NewServer(restartedRuntime.router)
 	t.Cleanup(server.Close)
 
@@ -171,6 +175,140 @@ func TestRuntimePolicyAckAfterTrackerRestartMarksPolicySynced(t *testing.T) {
 		require.NoError(t, database.DB.First(&storedPolicy, "id = ?", policy.ID).Error)
 		return command.Status == commands.CommandStatusSucceeded && storedPolicy.Synced
 	}, time.Second, 10*time.Millisecond)
+}
+
+func TestRuntimeTaskResultCompletesDurableBackupCommand(t *testing.T) {
+	database, err := db.New(t.TempDir())
+	require.NoError(t, err)
+	agent := db.Agent{Name: "Task Result Agent", AgentToken: "task-result-token", Status: "offline"}
+	require.NoError(t, database.DB.Create(&agent).Error)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runtime := buildRuntime(ctx, database)
+	command := createMasterTestBackupCommand(t, runtime.commandService, agent.ID)
+	server := httptest.NewServer(runtime.router)
+	t.Cleanup(server.Close)
+
+	conn, _, err := websocket.DefaultDialer.Dial(masterWebSocketURL(server.URL, agent.AgentToken), nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	var dispatched protocol.Message
+	require.NoError(t, conn.ReadJSON(&dispatched))
+	require.Equal(t, command.MessageID, dispatched.ID)
+	require.Equal(t, protocol.TypeBackupNow, dispatched.Type)
+
+	finishedAt := time.Now().UTC()
+	result, err := protocol.NewMessage(protocol.TypeTaskResult, protocol.TaskResultPayload{
+		AgentID:    agent.ID,
+		TaskType:   "backup",
+		Status:     commands.TaskStatusSuccess,
+		SnapshotID: "runtime-backup-snap",
+		DurationMs: 1234,
+		RepoSize:   4096,
+		StartedAt:  finishedAt.Add(-time.Minute),
+		FinishedAt: finishedAt,
+		Snapshots: []protocol.SnapshotInfo{
+			{ID: "runtime-backup-snap", Time: finishedAt, Paths: []string{"/etc"}, Size: 4096},
+		},
+	})
+	require.NoError(t, err)
+	result.ID = dispatched.ID
+	require.NoError(t, conn.WriteJSON(result))
+
+	require.Eventually(t, func() bool {
+		var completed db.AgentCommand
+		require.NoError(t, database.DB.First(&completed, "id = ?", command.ID).Error)
+		return completed.Status == commands.CommandStatusSucceeded && completed.CompletedAt != nil && completed.Result != ""
+	}, time.Second, 10*time.Millisecond)
+
+	var histories []db.TaskHistory
+	require.NoError(t, database.DB.Find(&histories, "agent_id = ? AND message_id = ?", agent.ID, dispatched.ID).Error)
+	require.Len(t, histories, 1)
+	assert.Equal(t, command.ID, histories[0].CommandID)
+	assert.Equal(t, commands.TaskStatusSuccess, histories[0].Status)
+	assert.Equal(t, "runtime-backup-snap", histories[0].SnapshotID)
+
+	var snapshot db.Snapshot
+	require.NoError(t, database.DB.First(&snapshot, "agent_id = ? AND snapshot_id = ?", agent.ID, "runtime-backup-snap").Error)
+}
+
+func TestRuntimeSnapshotListResponseCompletesDurableCommandWithoutWaiter(t *testing.T) {
+	database, err := db.New(t.TempDir())
+	require.NoError(t, err)
+	agent := db.Agent{Name: "Snapshot Response Agent", AgentToken: "snapshot-response-token", Status: "offline"}
+	require.NoError(t, database.DB.Create(&agent).Error)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runtime := buildRuntime(ctx, database)
+	command := createMasterTestSnapshotListCommand(t, runtime.commandService, agent.ID)
+	server := httptest.NewServer(runtime.router)
+	t.Cleanup(server.Close)
+
+	conn, _, err := websocket.DefaultDialer.Dial(masterWebSocketURL(server.URL, agent.AgentToken), nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	var dispatched protocol.Message
+	require.NoError(t, conn.ReadJSON(&dispatched))
+	require.Equal(t, command.MessageID, dispatched.ID)
+	require.Equal(t, protocol.TypeSnapshotListReq, dispatched.Type)
+
+	snapshotTime := time.Date(2026, 5, 20, 16, 30, 0, 0, time.UTC)
+	response, err := protocol.NewMessage(protocol.TypeSnapshotListResp, protocol.SnapshotListRespPayload{
+		AgentID: agent.ID,
+		Snapshots: []protocol.SnapshotInfo{
+			{ID: "runtime-list-snap", Time: snapshotTime, Paths: []string{"/srv"}, Size: 8192},
+		},
+	})
+	require.NoError(t, err)
+	response.ID = dispatched.ID
+	require.NoError(t, conn.WriteJSON(response))
+
+	require.Eventually(t, func() bool {
+		var completed db.AgentCommand
+		require.NoError(t, database.DB.First(&completed, "id = ?", command.ID).Error)
+		return completed.Status == commands.CommandStatusSucceeded && completed.CompletedAt != nil && completed.Result != ""
+	}, time.Second, 10*time.Millisecond)
+
+	var snapshot db.Snapshot
+	require.NoError(t, database.DB.First(&snapshot, "agent_id = ? AND snapshot_id = ?", agent.ID, "runtime-list-snap").Error)
+	assert.True(t, snapshot.Timestamp.Equal(snapshotTime))
+	assert.Equal(t, int64(8192), snapshot.Size)
+}
+
+func TestRuntimeStartsCommandTimeoutScanner(t *testing.T) {
+	database, err := db.New(t.TempDir())
+	require.NoError(t, err)
+	agent := db.Agent{Name: "Timeout Agent", AgentToken: "timeout-token", Status: "offline"}
+	require.NoError(t, database.DB.Create(&agent).Error)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runtime := buildRuntimeWithOptions(ctx, database, runtimeOptions{
+		commandTimeoutScanInterval: 5 * time.Millisecond,
+	})
+	command := createMasterTestBackupCommand(t, runtime.commandService, agent.ID)
+	expiredAt := time.Now().Add(-time.Minute)
+	require.NoError(t, database.DB.Model(&db.AgentCommand{}).
+		Where("id = ?", command.ID).
+		Updates(map[string]any{
+			"status":      commands.CommandStatusPending,
+			"deadline_at": &expiredAt,
+		}).Error)
+
+	require.Eventually(t, func() bool {
+		var timedOut db.AgentCommand
+		require.NoError(t, database.DB.First(&timedOut, "id = ?", command.ID).Error)
+		return timedOut.Status == commands.CommandStatusTimeout && timedOut.CompletedAt != nil
+	}, time.Second, 10*time.Millisecond)
+
+	var history db.TaskHistory
+	require.NoError(t, database.DB.First(&history, "command_id = ?", command.ID).Error)
+	assert.Equal(t, commands.TaskStatusTimeout, history.Status)
+	assert.NotNil(t, history.FinishedAt)
 }
 
 func masterWebSocketURL(serverURL string, token string) string {
@@ -217,6 +355,36 @@ func createMasterTestPolicyPushCommand(t *testing.T, service *commands.Service, 
 	command, err := service.CreateCommand(context.Background(), commands.CreateCommandInput{
 		AgentID: agentID,
 		Type:    protocol.TypePolicyPush,
+		Message: *msg,
+	})
+	require.NoError(t, err)
+	return command
+}
+
+func createMasterTestBackupCommand(t *testing.T, service *commands.Service, agentID string) db.AgentCommand {
+	t.Helper()
+
+	msg, err := protocol.NewMessage(protocol.TypeBackupNow, protocol.BackupNowPayload{AgentID: agentID})
+	require.NoError(t, err)
+	command, err := service.CreateCommand(context.Background(), commands.CreateCommandInput{
+		AgentID:   agentID,
+		Type:      protocol.TypeBackupNow,
+		Message:   *msg,
+		TaskType:  "backup",
+		TaskState: commands.TaskStatusPending,
+	})
+	require.NoError(t, err)
+	return command
+}
+
+func createMasterTestSnapshotListCommand(t *testing.T, service *commands.Service, agentID string) db.AgentCommand {
+	t.Helper()
+
+	msg, err := protocol.NewMessage(protocol.TypeSnapshotListReq, protocol.SnapshotListReqPayload{AgentID: agentID})
+	require.NoError(t, err)
+	command, err := service.CreateCommand(context.Background(), commands.CreateCommandInput{
+		AgentID: agentID,
+		Type:    protocol.TypeSnapshotListReq,
 		Message: *msg,
 	})
 	require.NoError(t, err)

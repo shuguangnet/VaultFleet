@@ -23,6 +23,7 @@ type RouterHub interface {
 	SnapshotHub
 	RestoreHub
 	CommandHub
+	AgentStatusProvider
 }
 
 type RouterConfig struct {
@@ -136,6 +137,7 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	commandHandler := NewCommandHandler(cfg.Database)
 	notificationHandler := NewNotificationHandler(cfg.Database)
 	systemHandler := NewSystemHandler(cfg.Database)
+	healthHandler := NewHealthHandler(cfg.Database, cfg.Hub)
 
 	public := r.Group("/api")
 	public.GET("/auth/check", authHandler.CheckInit)
@@ -167,6 +169,7 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	RegisterSystemRoutes(protected.Group("/system"), systemHandler)
 
 	RegisterDownloadRoutes(r, cfg.Database.DataDir)
+	RegisterHealthRoutes(r, healthHandler)
 	RegisterFrontendRoutes(r)
 
 	return r

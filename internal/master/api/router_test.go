@@ -157,6 +157,29 @@ func TestRouterAssemblyPublicAgentEnrollIsNotBlockedByAuthOrInit(t *testing.T) {
 	assert.NotEqual(t, http.StatusConflict, w.Code)
 }
 
+func TestRouterAssemblyHealthRoutesBypassFrontendAndAuth(t *testing.T) {
+	setup := setupRouterAssembly(t)
+
+	for _, testCase := range []struct {
+		path       string
+		statusCode int
+		contains   string
+	}{
+		{path: "/health", statusCode: http.StatusOK, contains: `"status":"healthy"`},
+		{path: "/ready", statusCode: http.StatusOK, contains: `"status":"ready"`},
+		{path: "/metrics", statusCode: http.StatusOK, contains: "vaultfleet_agents_total"},
+	} {
+		t.Run(testCase.path, func(t *testing.T) {
+			w := routerAssemblyRequest(setup.router, http.MethodGet, testCase.path, nil)
+
+			require.Equal(t, testCase.statusCode, w.Code, w.Body.String())
+			assert.Contains(t, w.Body.String(), testCase.contains)
+			assert.NotContains(t, w.Header().Get("Content-Type"), "text/html")
+			assert.NotContains(t, w.Body.String(), "VaultFleet")
+		})
+	}
+}
+
 func TestRouterAssemblyAgentWebSocketUsesInjectedHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database := newRouterAssemblyDatabase(t)

@@ -129,6 +129,15 @@ func TestHub_GetAllAgentsReturnsStatusCopy(t *testing.T) {
 	assert.Contains(t, hub.GetAllAgents(), "agent-1")
 }
 
+func TestHub_OnlineAgentCount(t *testing.T) {
+	hub := NewHub()
+	hub.Add("agent-1", &SafeConn{})
+	hub.Add("agent-2", &SafeConn{})
+	hub.MarkOffline("agent-2")
+
+	assert.Equal(t, 1, hub.OnlineAgentCount())
+}
+
 func TestHub_AddReplacesAndClosesPreviousConnection(t *testing.T) {
 	hub := NewHub()
 	oldConn := &SafeConn{}

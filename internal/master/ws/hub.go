@@ -285,3 +285,16 @@ func (h *Hub) GetAllAgents() map[string]*AgentStatus {
 	}
 	return agents
 }
+
+func (h *Hub) OnlineAgentCount() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	count := 0
+	for _, status := range h.agents {
+		if status != nil && status.Online {
+			count++
+		}
+	}
+	return count
+}
