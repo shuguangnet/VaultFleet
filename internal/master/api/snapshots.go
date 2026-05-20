@@ -218,6 +218,9 @@ func NewTaskResultProcessor(database *db.Database, completer ...TaskResultComman
 		if err != nil {
 			return err
 		}
+		if err := upsertCommandLinkedBackupSnapshots(database, agentID, msg.ID, *result); err != nil {
+			return err
+		}
 		if len(completer) > 0 && completer[0] != nil {
 			if err := completer[0].CompleteTaskResult(context.Background(), agentID, msg.ID, *result); err != nil {
 				return err
@@ -252,6 +255,37 @@ func NewSnapshotListResponseProcessor(database *db.Database, completer SnapshotL
 	}
 }
 
+func upsertCommandLinkedBackupSnapshots(database *db.Database, agentID string, messageID string, result protocol.TaskResultPayload) error {
+	if result.TaskType != "backup" || result.Status != "success" || len(result.Snapshots) == 0 || messageID == "" {
+		return nil
+	}
+	if database == nil || database.DB == nil {
+		return errors.New("database not configured")
+	}
+	if agentID == "" {
+		agentID = result.AgentID
+	}
+	linked, err := commandLinkedTaskHistoryExists(database.DB, agentID, messageID)
+	if err != nil || !linked {
+		return err
+	}
+	return upsertSnapshotsDB(database.DB, agentID, result.Snapshots)
+}
+
+func commandLinkedTaskHistoryExists(gormDB *gorm.DB, agentID string, messageID string) (bool, error) {
+	var history db.TaskHistory
+	err := gormDB.
+		Where("agent_id = ? AND message_id = ? AND command_id <> ?", agentID, messageID, "").
+		First(&history).Error
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	return false, err
+}
+
 func recordTaskResult(database *db.Database, agentID string, messageID string, result protocol.TaskResultPayload) error {
 	if database == nil || database.DB == nil {
 		return errors.New("database not configured")
@@ -260,15 +294,12 @@ func recordTaskResult(database *db.Database, agentID string, messageID string, r
 		agentID = result.AgentID
 	}
 	if messageID != "" {
-		var history db.TaskHistory
-		err := database.DB.
-			Where("agent_id = ? AND message_id = ? AND command_id <> ?", agentID, messageID, "").
-			First(&history).Error
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
+		linked, err := commandLinkedTaskHistoryExists(database.DB, agentID, messageID)
+		if err != nil {
 			return err
+		}
+		if linked {
+			return nil
 		}
 	}
 	if result.TaskType == "restore" {

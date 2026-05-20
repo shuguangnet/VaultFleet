@@ -281,6 +281,60 @@ func TestTaskResultProcessorCompletesCommandLinkedTaskWithoutDuplicateHistory(t 
 	assert.Contains(t, found.Result, `"snapshot_id":"snap-command-linked"`)
 }
 
+func TestTaskResultProcessorCompletesCommandLinkedBackupAndPersistsSnapshots(t *testing.T) {
+	database, err := db.New(t.TempDir())
+	require.NoError(t, err)
+	agent := createSnapshotTestAgent(t, database, "online")
+	service := commands.NewService(database, nil)
+	finishedAt := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	service.Now = func() time.Time { return finishedAt }
+	startedAt := finishedAt.Add(-2 * time.Minute)
+	msg, err := protocol.NewMessage(protocol.TypeBackupNow, protocol.BackupNowPayload{AgentID: agent.ID})
+	require.NoError(t, err)
+	command, err := service.CreateCommand(context.Background(), commands.CreateCommandInput{
+		AgentID:   agent.ID,
+		Type:      protocol.TypeBackupNow,
+		Message:   *msg,
+		TaskType:  "backup",
+		TaskState: commands.TaskStatusRunning,
+	})
+	require.NoError(t, err)
+	require.NoError(t, database.DB.Model(&db.AgentCommand{}).Where("id = ?", command.ID).Update("status", commands.CommandStatusRunning).Error)
+	resultMsg, err := protocol.NewMessage(protocol.TypeTaskResult, protocol.TaskResultPayload{
+		AgentID:    agent.ID,
+		TaskType:   "backup",
+		Status:     "success",
+		SnapshotID: "snap-linked",
+		DurationMs: 120000,
+		RepoSize:   2048,
+		StartedAt:  startedAt,
+		FinishedAt: finishedAt,
+		Snapshots: []protocol.SnapshotInfo{
+			{ID: "snap-linked", Time: finishedAt, Paths: []string{"/srv"}, Size: 2048},
+		},
+	})
+	require.NoError(t, err)
+	resultMsg.ID = msg.ID
+
+	processor := NewTaskResultProcessor(database, service)
+	require.NoError(t, processor(agent.ID, *resultMsg))
+
+	var histories []db.TaskHistory
+	require.NoError(t, database.DB.Find(&histories, "agent_id = ? AND message_id = ?", agent.ID, msg.ID).Error)
+	require.Len(t, histories, 1)
+	assert.Equal(t, commands.TaskStatusSuccess, histories[0].Status)
+
+	var snapshot db.Snapshot
+	require.NoError(t, database.DB.First(&snapshot, "agent_id = ? AND snapshot_id = ?", agent.ID, "snap-linked").Error)
+	assert.True(t, snapshot.Timestamp.Equal(finishedAt))
+	assert.JSONEq(t, `["/srv"]`, snapshot.Paths)
+	assert.Equal(t, int64(2048), snapshot.Size)
+
+	var found db.AgentCommand
+	require.NoError(t, database.DB.First(&found, "id = ?", command.ID).Error)
+	assert.Equal(t, commands.CommandStatusSucceeded, found.Status)
+}
+
 func TestUpsertSnapshotsConcurrentSameSnapshotDoesNotDuplicate(t *testing.T) {
 	database, err := db.New(t.TempDir())
 	require.NoError(t, err)
