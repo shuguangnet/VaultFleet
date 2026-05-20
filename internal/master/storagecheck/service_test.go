@@ -79,6 +79,64 @@ func TestServiceRedactsSensitiveKeyPatternsFromRunnerError(t *testing.T) {
 	assert.NotContains(t, result.Error, "key-pem-value")
 }
 
+func TestServiceRejectsUnsafeRcloneConfigKeysAndValues(t *testing.T) {
+	tests := []struct {
+		name   string
+		config map[string]string
+	}{
+		{
+			name:   "reserved type key",
+			config: map[string]string{"type": "sftp"},
+		},
+		{
+			name:   "empty key",
+			config: map[string]string{"": "value"},
+		},
+		{
+			name:   "key with newline",
+			config: map[string]string{"bad\nkey": "value"},
+		},
+		{
+			name:   "value with newline",
+			config: map[string]string{"provider": "Cloudflare\r\nendpoint = injected"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &fakeRunner{}
+			service := NewService(runner)
+
+			result := service.Test(context.Background(), Request{
+				RcloneType:   "s3",
+				RcloneConfig: tt.config,
+			})
+
+			assert.False(t, result.OK)
+			assert.NotEmpty(t, result.Error)
+			assert.Equal(t, 0, runner.calls)
+		})
+	}
+}
+
+func TestServiceRedactsOverlappingSecretsByLongestFirst(t *testing.T) {
+	runner := &fakeRunner{err: errors.New("failed with abcdef abc")}
+	service := NewService(runner)
+
+	result := service.Test(context.Background(), Request{
+		RcloneType: "s3",
+		RcloneConfig: map[string]string{
+			"token":   "abc",
+			"api_key": "abcdef",
+		},
+	})
+
+	assert.False(t, result.OK)
+	assert.Equal(t, "failed with [redacted] [redacted]", result.Error)
+	assert.NotContains(t, result.Error, "abcdef")
+	assert.NotContains(t, result.Error, "abc")
+}
+
 func TestServiceObscuresWebDAVPasswordInTempConfig(t *testing.T) {
 	runner := &fakeRunner{
 		t: t,

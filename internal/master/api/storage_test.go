@@ -219,6 +219,19 @@ func TestStorageTestFailureKeepsEnvelopeOK(t *testing.T) {
 	assert.Equal(t, "failed", data["error"])
 }
 
+func TestStorageTestInvalidRequestUsesErrorEnvelope(t *testing.T) {
+	setup := setupTestConfigAPI(t)
+
+	w := postAnyJSON(t, setup.router, "/api/storage/test", map[string]any{
+		"rclone_type": "s3",
+	})
+
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assert.Equal(t, false, body["ok"])
+	assert.NotEmpty(t, body["error"])
+}
+
 func TestStorageTestSavedConfigDecryptsConfig(t *testing.T) {
 	setup := setupTestConfigAPI(t)
 	tester := &fakeStorageTester{
@@ -246,7 +259,18 @@ func TestStorageTestSavedConfigDecryptsConfig(t *testing.T) {
 	assert.Equal(t, "SECRET456", tester.requests[0].RcloneConfig["secret_access_key"])
 }
 
-func TestStorageTestUnsavedConfigRejectsNonStringValues(t *testing.T) {
+func TestStorageTestSavedMissingUsesErrorEnvelope(t *testing.T) {
+	setup := setupTestConfigAPI(t)
+
+	w := postAnyJSON(t, setup.router, "/api/storage/missing/test", nil)
+
+	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assert.Equal(t, false, body["ok"])
+	assert.NotEmpty(t, body["error"])
+}
+
+func TestStorageTestRejectsNonStringConfigWithErrorEnvelope(t *testing.T) {
 	setup := setupTestConfigAPI(t)
 	tester := &fakeStorageTester{}
 	handler := NewConfigHandler(setup.database)
@@ -265,6 +289,7 @@ func TestStorageTestUnsavedConfigRejectsNonStringValues(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 	body := parseJSON(t, w)
+	assert.Equal(t, false, body["ok"])
 	assert.Equal(t, "rclone config values must be strings", body["error"])
 	assert.Empty(t, tester.requests)
 }

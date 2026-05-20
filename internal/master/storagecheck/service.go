@@ -131,6 +131,10 @@ func (s *Service) latencySince(start time.Time) int64 {
 }
 
 func rcloneConfigContents(request Request) (string, error) {
+	if err := validateRcloneConfig(request); err != nil {
+		return "", err
+	}
+
 	var builder strings.Builder
 	builder.WriteString("[vaultfleet]\n")
 	builder.WriteString("type = ")
@@ -156,6 +160,29 @@ func rcloneConfigContents(request Request) (string, error) {
 	return builder.String(), nil
 }
 
+func validateRcloneConfig(request Request) error {
+	if containsLineBreak(request.RcloneType) {
+		return fmt.Errorf("rclone type contains invalid characters")
+	}
+	for key, value := range request.RcloneConfig {
+		switch {
+		case key == "":
+			return fmt.Errorf("rclone config key cannot be empty")
+		case strings.EqualFold(key, "type"):
+			return fmt.Errorf("rclone config key is reserved")
+		case containsLineBreak(key):
+			return fmt.Errorf("rclone config key contains invalid characters")
+		case containsLineBreak(value):
+			return fmt.Errorf("rclone config value contains invalid characters")
+		}
+	}
+	return nil
+}
+
+func containsLineBreak(value string) bool {
+	return strings.ContainsAny(value, "\r\n")
+}
+
 func rcloneConfigValue(configType string, key string, value string) (string, error) {
 	if configType == "webdav" && key == "pass" && value != "" {
 		return obscureRcloneValue(value)
@@ -165,13 +192,30 @@ func rcloneConfigValue(configType string, key string, value string) (string, err
 
 func (s *Service) redactError(err error, request Request) string {
 	message := err.Error()
-	for key, value := range request.RcloneConfig {
-		if value == "" || !isSecretKey(key) {
-			continue
-		}
+	values := secretValuesByLength(request.RcloneConfig)
+	for _, value := range values {
 		message = strings.ReplaceAll(message, value, "[redacted]")
 	}
 	return message
+}
+
+func secretValuesByLength(config map[string]string) []string {
+	values := make([]string, 0, len(config))
+	seen := make(map[string]bool, len(config))
+	for key, value := range config {
+		if value == "" || !isSecretKey(key) {
+			continue
+		}
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		values = append(values, value)
+	}
+	sort.Slice(values, func(i, j int) bool {
+		return len(values[i]) > len(values[j])
+	})
+	return values
 }
 
 func isSecretKey(key string) bool {

@@ -207,11 +207,11 @@ func (h *ConfigHandler) DeleteStorage(c *gin.Context) {
 func (h *ConfigHandler) TestUnsavedStorage(c *gin.Context) {
 	var request testStorageRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		writeErrorResponse(c, http.StatusBadRequest, "invalid request")
 		return
 	}
 
-	config, ok := stringifyRcloneConfig(c, request.RcloneConfig)
+	config, ok := stringifyRcloneConfigWithErrorWriter(c, request.RcloneConfig, writeErrorResponse)
 	if !ok {
 		return
 	}
@@ -224,18 +224,18 @@ func (h *ConfigHandler) TestUnsavedStorage(c *gin.Context) {
 }
 
 func (h *ConfigHandler) TestSavedStorage(c *gin.Context) {
-	storage, ok := h.findStorageByID(c, c.Param("id"))
+	storage, ok := h.findStorageByIDWithErrorWriter(c, c.Param("id"), writeErrorResponse)
 	if !ok {
 		return
 	}
 
 	rawConfig, err := h.decryptMap(storage.RcloneConfig)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "decrypt storage config"})
+		writeErrorResponse(c, http.StatusInternalServerError, "decrypt storage config")
 		return
 	}
 
-	config, ok := stringifyRcloneConfig(c, rawConfig)
+	config, ok := stringifyRcloneConfigWithErrorWriter(c, rawConfig, writeErrorResponse)
 	if !ok {
 		return
 	}
@@ -337,14 +337,18 @@ func (h *ConfigHandler) publishStorageChanged(agentIDs []string) {
 }
 
 func (h *ConfigHandler) findStorageByID(c *gin.Context, id string) (db.StorageConfig, bool) {
+	return h.findStorageByIDWithErrorWriter(c, id, writeBareErrorResponse)
+}
+
+func (h *ConfigHandler) findStorageByIDWithErrorWriter(c *gin.Context, id string, writeError func(*gin.Context, int, string)) (db.StorageConfig, bool) {
 	var storage db.StorageConfig
 	if err := h.DB.DB.First(&storage, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "storage config not found"})
+			writeError(c, http.StatusNotFound, "storage config not found")
 			return db.StorageConfig{}, false
 		}
 
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
+		writeError(c, http.StatusInternalServerError, "database error")
 		return db.StorageConfig{}, false
 	}
 
@@ -442,16 +446,24 @@ func (h *ConfigHandler) storageTester() StorageTester {
 }
 
 func stringifyRcloneConfig(c *gin.Context, config map[string]any) (map[string]string, bool) {
+	return stringifyRcloneConfigWithErrorWriter(c, config, writeBareErrorResponse)
+}
+
+func stringifyRcloneConfigWithErrorWriter(c *gin.Context, config map[string]any, writeError func(*gin.Context, int, string)) (map[string]string, bool) {
 	result := make(map[string]string, len(config))
 	for key, value := range config {
 		stringValue, ok := value.(string)
 		if !ok {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "rclone config values must be strings"})
+			writeError(c, http.StatusBadRequest, "rclone config values must be strings")
 			return nil, false
 		}
 		result[key] = stringValue
 	}
 	return result, true
+}
+
+func writeBareErrorResponse(c *gin.Context, status int, message string) {
+	c.JSON(status, gin.H{"error": message})
 }
 
 const redactedSecretValue = "[redacted]"
