@@ -145,17 +145,43 @@ export function TasksPage() {
                     <TableRow key={`${task.id}-detail`}>
                       <TableCell colSpan={6} className="bg-muted/10 p-0">
                         <div className="p-4 space-y-4">
-                          <div className="grid grid-cols-2 gap-4 text-xs">
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-xs">
                             <div className="space-y-1">
                               <span className="text-muted-foreground">Message ID:</span>
-                              <code className="block p-1 bg-muted rounded">{task.message_id}</code>
+                              <code className="block p-1 bg-muted rounded truncate">{task.message_id}</code>
                             </div>
+                            {task.command_id && (
+                              <div className="space-y-1">
+                                <span className="text-muted-foreground">Command ID:</span>
+                                <code className="block p-1 bg-muted rounded truncate">{task.command_id}</code>
+                              </div>
+                            )}
                             {task.snapshot_id && (
                               <div className="space-y-1">
                                 <span className="text-muted-foreground">Snapshot ID:</span>
-                                <code className="block p-1 bg-muted rounded">{task.snapshot_id}</code>
+                                <code className="block p-1 bg-muted rounded truncate">{task.snapshot_id}</code>
                               </div>
                             )}
+                            <div className="space-y-1">
+                              <span className="text-muted-foreground">开始时间:</span>
+                              <div className="p-1 bg-muted rounded">
+                                {task.started_at ? format(new Date(task.started_at), "yyyy-MM-dd HH:mm:ss", { locale: zhCN }) : "-"}
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <span className="text-muted-foreground">结束时间:</span>
+                              <div className="p-1 bg-muted rounded">
+                                {task.finished_at ? format(new Date(task.finished_at), "yyyy-MM-dd HH:mm:ss", { locale: zhCN }) : "-"}
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <span className="text-muted-foreground">关联信息:</span>
+                              <div className="flex gap-2">
+                                {task.policy_id && <span className="p-1 bg-indigo-50 text-indigo-700 rounded border border-indigo-100">策略:{task.policy_id.substring(0,8)}</span>}
+                                {task.storage_id && <span className="p-1 bg-slate-50 text-slate-700 rounded border border-slate-100">存储:{task.storage_id.substring(0,8)}</span>}
+                                {!task.policy_id && !task.storage_id && <span className="p-1 bg-muted text-muted-foreground rounded italic">无</span>}
+                              </div>
+                            </div>
                           </div>
                           
                           {task.error_log && (
