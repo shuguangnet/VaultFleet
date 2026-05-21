@@ -6,13 +6,8 @@ bin/
 data/
 .playwright-cli/
 
-# Test specs with credentials
-docs/superpowers/specs/2026-05-19-vaultfleet-e2e-acceptance-test.md
-docs/superpowers/specs/2026-05-21-vaultfleet-e2e-acceptance-test-v2.md
-
-# E2E artifacts with environment-specific evidence
-docs/superpowers/plans/2026-05-21-vaultfleet-e2e-repair.md
-docs/superpowers/test-results/
+# Development plans and specs (intermediate artifacts)
+docs/superpowers/
 
 # Frontend
 web/node_modules/
