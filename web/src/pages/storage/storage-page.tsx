@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { listStorage, createStorage, updateStorage, deleteStorage } from "@/services/storage";
+import { listStorage, createStorage, updateStorage, deleteStorage, testUnsavedStorage, testSavedStorage } from "@/services/storage";
 import { StorageConfig, StorageInput } from "@/types/storage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Database, Settings2, Trash2, MoreHorizontal } from "lucide-react";
+import { Plus, Database, Settings2, Trash2, MoreHorizontal, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +21,8 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ErrorPanel } from "@/components/error-panel";
 import { format } from "date-fns";
 import { zhCN } from "date-fns/locale";
+import { toast } from "sonner";
+import { StorageTestResult } from "@/types/health";
 
 const STORAGE_TEMPLATES: Record<string, { name: string; defaults: Record<string, string>; fields: { key: string; label: string; type?: string }[] }> = {
   s3: {
@@ -65,6 +67,7 @@ export function StoragePage() {
   const [isDrawerOpen, setIsAddDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<StorageTestResult | null>(null);
   
   const [formData, setFormData] = useState<StorageInput>({
     name: "",
@@ -73,6 +76,40 @@ export function StoragePage() {
   });
 
   const { data: storageList, isLoading } = useQuery({ queryKey: ["storage"], queryFn: listStorage });
+
+  const testMutation = useMutation({
+    mutationFn: (body: { rclone_type: string; rclone_config: Record<string, string> }) => 
+      testUnsavedStorage(body),
+    onSuccess: (data) => {
+      setTestResult(data);
+      if (data.ok) {
+        toast.success(`连接成功 (${data.latency_ms}ms)`);
+      } else {
+        toast.error(`连接失败: ${data.error}`);
+      }
+    },
+    onError: (error: any) => {
+      toast.error(`测试请求失败: ${error.message}`);
+    }
+  });
+
+  const listTestMutation = useMutation({
+    mutationFn: (id: string) => testSavedStorage(id),
+    onSuccess: (data) => {
+      if (data.ok) {
+        toast.success(`连接成功 (${data.latency_ms}ms)`);
+      } else {
+        toast.error(`连接失败: ${data.error}`);
+      }
+    },
+    onError: (error: any) => {
+      toast.error(`测试请求失败: ${error.message}`);
+    }
+  });
+
+  const handleTestStorage = (id: string) => {
+    listTestMutation.mutate(id);
+  };
 
   const createMutation = useMutation({
     mutationFn: createStorage,
@@ -220,10 +257,35 @@ export function StoragePage() {
                 </TabsContent>
               </Tabs>
 
-              <div className="fixed bottom-0 right-0 left-0 bg-background border-t p-4 lg:left-auto lg:w-[var(--radix-sheet-width)]">
-                 <Button type="submit" className="w-full" disabled={createMutation.isPending || updateMutation.isPending}>
-                  {createMutation.isPending || updateMutation.isPending ? "正在保存..." : "保存配置"}
-                </Button>
+              <div className="fixed bottom-0 right-0 left-0 bg-background border-t p-4 lg:left-auto lg:w-[var(--radix-sheet-width)] space-y-2">
+                 <div className="flex items-center justify-between text-xs px-1">
+                   <span>连接测试:</span>
+                   {testMutation.isPending ? (
+                     <span className="flex items-center text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin mr-1" /> 测试中...</span>
+                   ) : testResult ? (
+                     testResult.ok ? (
+                       <span className="flex items-center text-green-600 font-medium"><CheckCircle2 className="h-3 w-3 mr-1" /> 通过 ({testResult.latency_ms}ms)</span>
+                     ) : (
+                       <span className="flex items-center text-red-500 font-medium" title={testResult.error}><XCircle className="h-3 w-3 mr-1" /> 失败</span>
+                     )
+                   ) : (
+                     <span className="text-muted-foreground">尚未测试</span>
+                   )}
+                 </div>
+                 <div className="flex gap-2">
+                   <Button 
+                    type="button" 
+                    variant="outline" 
+                    className="flex-1" 
+                    onClick={() => testMutation.mutate({ rclone_type: formData.rclone_type, rclone_config: formData.rclone_config })}
+                    disabled={testMutation.isPending}
+                   >
+                     测试连接
+                   </Button>
+                   <Button type="submit" className="flex-[2]" disabled={createMutation.isPending || updateMutation.isPending}>
+                    {createMutation.isPending || updateMutation.isPending ? "正在保存..." : "保存配置"}
+                  </Button>
+                 </div>
               </div>
             </form>
           </SheetContent>
@@ -259,6 +321,9 @@ export function StoragePage() {
                         <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => handleTestStorage(s.id)}>
+                          <CheckCircle2 className="mr-2 h-4 w-4" /> 测试连接
+                        </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => handleEdit(s)}>
                           <Settings2 className="mr-2 h-4 w-4" /> 编辑
                         </DropdownMenuItem>
