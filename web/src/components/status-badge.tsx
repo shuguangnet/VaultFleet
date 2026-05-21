@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
-type StatusType = "online" | "offline" | "success" | "failed" | "running" | "syncing" | "unsynced" | "pending";
+type StatusType = "online" | "offline" | "success" | "failed" | "running" | "syncing" | "unsynced" | "pending" | "timeout" | "dispatched" | "succeeded" | "queued";
 
 interface StatusBadgeProps {
   status: StatusType;
@@ -17,7 +17,11 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
     running: { label: "运行中", className: "bg-blue-500 hover:bg-blue-600 animate-pulse" },
     syncing: { label: "同步中", className: "bg-blue-500 hover:bg-blue-600" },
     unsynced: { label: "待同步", className: "bg-amber-500 hover:bg-amber-600" },
-    pending: { label: "待同步", className: "bg-amber-500 hover:bg-amber-600" },
+    pending: { label: "等待中", className: "bg-amber-500 hover:bg-amber-600" },
+    timeout: { label: "超时", className: "bg-orange-500 hover:bg-orange-600" },
+    dispatched: { label: "已下发", className: "bg-indigo-500 hover:bg-indigo-600" },
+    succeeded: { label: "成功", className: "bg-green-600 hover:bg-green-700" },
+    queued: { label: "已排队", className: "bg-slate-500 hover:bg-slate-600" },
   };
 
   const { label, className: statusClass } = config[status] || { label: status, className: "bg-gray-500" };
