@@ -153,6 +153,23 @@ func (h *AgentHandler) RegenerateToken(c *gin.Context) {
 	})
 }
 
+func (h *AgentHandler) GetInstallToken(c *gin.Context) {
+	agent, ok := h.findAgentByID(c, c.Param("id"))
+	if !ok {
+		return
+	}
+
+	enrolled := agent.EnrollToken == ""
+	c.JSON(http.StatusOK, gin.H{
+		"ok": true,
+		"data": gin.H{
+			"id":           agent.ID,
+			"enroll_token": agent.EnrollToken,
+			"enrolled":     enrolled,
+		},
+	})
+}
+
 func (h *AgentHandler) findAgentByID(c *gin.Context, id string) (db.Agent, bool) {
 	var agent db.Agent
 	if err := h.DB.DB.First(&agent, "id = ?", id).Error; err != nil {

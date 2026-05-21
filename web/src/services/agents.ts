@@ -7,6 +7,7 @@ export const createAgent = (body: { name: string }) => apiPost<CreateAgentRespon
 export const getAgent = async (id: string) => normalizeAgent(await apiGet<ApiAgent>(`/api/agents/${id}`));
 export const deleteAgent = (id: string) => apiDelete(`/api/agents/${id}`);
 export const regenerateAgentToken = (id: string) => apiPost<CreateAgentResponse>(`/api/agents/${id}/regenerate-token`);
+export const getInstallToken = (id: string) => apiGet<{ id: string; enroll_token: string; enrolled: boolean }>(`/api/agents/${id}/install-token`);
 export const browseAgent = (id: string, body: BrowseRequest) => apiPost<BrowseResponse>(`/api/agents/${id}/browse`, body);
 export const backupNow = (id: string) => apiPost<{ command_id: string; message_id: string }>(`/api/agents/${id}/backup-now`);
 

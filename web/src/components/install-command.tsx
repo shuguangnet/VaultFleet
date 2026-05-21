@@ -4,17 +4,48 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Copy, Check } from "lucide-react";
 
+type ScriptSource = "github" | "github-proxy" | "master";
+
 interface InstallCommandProps {
   enrollToken: string;
 }
 
+const GITHUB_RAW_URL =
+  "https://raw.githubusercontent.com/momo-z/VaultFleet/main/build/install.sh";
+
 export function InstallCommand({ enrollToken }: InstallCommandProps) {
+  const [scriptSource, setScriptSource] = useState<ScriptSource>("github");
   const [masterHost, setMasterHost] = useState(window.location.origin);
+  const [githubProxy, setGithubProxy] = useState("https://ghgo.xyz/");
   const [copied, setCopied] = useState(false);
 
-  const command = `curl -fsSL ${masterHost}/install.sh | bash -s -- \\
-  --server ${masterHost} \\
-  --token ${enrollToken}`;
+  const buildCommand = (): string => {
+    switch (scriptSource) {
+      case "github":
+        return [
+          `curl -fsSL ${GITHUB_RAW_URL} | bash -s -- \\`,
+          `  --server ${masterHost} \\`,
+          `  --token ${enrollToken}`,
+        ].join("\n");
+
+      case "github-proxy":
+        return [
+          `curl -fsSL ${githubProxy}${GITHUB_RAW_URL} | bash -s -- \\`,
+          `  --server ${masterHost} \\`,
+          `  --token ${enrollToken} \\`,
+          `  --github-proxy ${githubProxy}`,
+        ].join("\n");
+
+      case "master":
+        return [
+          `curl -fsSL ${masterHost}/install.sh | bash -s -- \\`,
+          `  --server ${masterHost} \\`,
+          `  --token ${enrollToken}`,
+        ].join("\n");
+    }
+  };
+
+  const command = buildCommand();
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(command);
@@ -24,21 +55,70 @@ export function InstallCommand({ enrollToken }: InstallCommandProps) {
 
   return (
     <div className="space-y-4">
+      {/* Script source selection */}
       <div className="space-y-2">
-        <Label htmlFor="master-host">Master 地址</Label>
-        <div className="flex gap-2">
+        <Label>脚本来源</Label>
+        <div className="space-y-2">
+          {(
+            [
+              { value: "github", label: "GitHub（推荐）", desc: "直接从 GitHub 下载" },
+              { value: "github-proxy", label: "GitHub + 代理", desc: "通过代理加速，适合国内网络" },
+              { value: "master", label: "Master 服务器", desc: "从 Master 下载脚本" },
+            ] as const
+          ).map((option) => (
+            <label
+              key={option.value}
+              className={`flex items-start gap-3 rounded-md border p-3 cursor-pointer transition-colors ${
+                scriptSource === option.value
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:bg-muted/50"
+              }`}
+            >
+              <input
+                type="radio"
+                name="script-source"
+                value={option.value}
+                checked={scriptSource === option.value}
+                onChange={() => setScriptSource(option.value)}
+                className="mt-0.5 accent-primary"
+              />
+              <div className="flex flex-col">
+                <span className="text-sm font-medium">{option.label}</span>
+                <span className="text-xs text-muted-foreground">{option.desc}</span>
+              </div>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {/* GitHub proxy input (only for github-proxy mode) */}
+      {scriptSource === "github-proxy" && (
+        <div className="space-y-2">
+          <Label htmlFor="github-proxy">GitHub 代理地址</Label>
           <Input
-            id="master-host"
-            value={masterHost}
-            onChange={(e) => setMasterHost(e.target.value)}
-            placeholder="http://master-ip:8080"
+            id="github-proxy"
+            value={githubProxy}
+            onChange={(e) => setGithubProxy(e.target.value)}
+            placeholder="https://ghgo.xyz/"
           />
         </div>
+      )}
+
+      {/* Master host input */}
+      <div className="space-y-2">
+        <Label htmlFor="master-host">Master 地址</Label>
+        <Input
+          id="master-host"
+          value={masterHost}
+          onChange={(e) => setMasterHost(e.target.value)}
+          placeholder="http://master-ip:8080"
+        />
         <p className="text-xs text-muted-foreground">
-          如果 Agent 无法通过当前浏览器 URL 访问 Master，请修改此地址。
+          Agent 将连接此地址与 Master 通信
         </p>
       </div>
 
+      {/* Generated install command */}
       <div className="space-y-2">
         <Label>安装指令</Label>
         <div className="relative">

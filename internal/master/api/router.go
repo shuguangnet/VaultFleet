@@ -158,6 +158,7 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	protected.GET("/agents/:id", agentHandler.Get)
 	protected.DELETE("/agents/:id", agentHandler.Delete)
 	protected.POST("/agents/:id/regenerate-token", agentHandler.RegenerateToken)
+	protected.GET("/agents/:id/install-token", agentHandler.GetInstallToken)
 	RegisterStorageRoutes(protected, storageHandler)
 	RegisterPolicyRoutes(protected, policyHandler)
 	RegisterBrowseRoutes(protected, browseHandler)

@@ -127,7 +127,17 @@ curl -fsSL http://MASTER_HOST:8080/install.sh | bash -s -- \
 5. 使用一次性 token 向 Master 注册。
 6. 创建并启动 systemd / OpenRC 服务；没有受支持的 init system 时使用 `nohup` 启动。
 
-### 3. 配置备份策略
+### 3. 卸载 Agent
+
+如果需要从服务器上卸载 Agent，运行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/momo-z/VaultFleet/main/build/uninstall.sh | bash
+```
+
+该脚本会停止服务、删除二进制文件（vaultfleet-agent、restic、rclone）和配置目录。
+
+### 4. 配置备份策略
 
 典型流程：
 
@@ -362,6 +372,16 @@ curl -fsSL http://MASTER_HOST:8080/install.sh | bash -s -- \
 It is useful for unpublished builds, private mirrors, internal CDNs, or temporary download sources.
 
 The installer downloads the Agent, installs `restic` and `rclone`, enrolls the node, and starts the Agent with systemd, OpenRC, or `nohup`.
+
+### Uninstall Agent
+
+To remove the Agent from a server:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/momo-z/VaultFleet/main/build/uninstall.sh | bash
+```
+
+This stops the service and removes binaries (vaultfleet-agent, restic, rclone) and the configuration directory.
 
 ## Common Commands
 

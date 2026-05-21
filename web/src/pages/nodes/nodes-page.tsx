@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { listAgents, createAgent, deleteAgent, regenerateAgentToken } from "@/services/agents";
+import { listAgents, createAgent, deleteAgent, regenerateAgentToken, getInstallToken } from "@/services/agents";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Search, MoreHorizontal, RefreshCw, Trash2, ExternalLink } from "lucide-react";
+import { Plus, Search, MoreHorizontal, RefreshCw, Trash2, ExternalLink, Terminal } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,6 +26,8 @@ export function NodesPage() {
   const [enrollToken, setEnrollToken] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmConfirmDeleteId] = useState<string | null>(null);
   const [confirmRegenId, setConfirmRegenId] = useState<string | null>(null);
+  const [installCommandAgentId, setInstallCommandAgentId] = useState<string | null>(null);
+  const [showEnrolledConfirm, setShowEnrolledConfirm] = useState(false);
 
   const { data: agents, isLoading } = useQuery({
     queryKey: ["agents"],
@@ -70,7 +72,28 @@ export function NodesPage() {
     if (!open) {
       setEnrollToken(null);
       setNewNodeName("");
+      setInstallCommandAgentId(null);
       createMutation.reset();
+    }
+  };
+
+  const handleShowInstallCommand = async (agentId: string) => {
+    try {
+      const result = await getInstallToken(agentId);
+      if (!result.enrolled) {
+        // Agent not yet enrolled, show install command directly
+        setInstallCommandAgentId(agentId);
+        setEnrollToken(result.enroll_token);
+        setIsAddDrawerOpen(true);
+      } else {
+        // Agent already enrolled, ask for confirmation
+        setInstallCommandAgentId(agentId);
+        setShowEnrolledConfirm(true);
+      }
+    } catch {
+      // If the API call fails, fall back to regen flow
+      setInstallCommandAgentId(agentId);
+      setShowEnrolledConfirm(true);
     }
   };
 
@@ -184,6 +207,9 @@ export function NodesPage() {
                         <DropdownMenuItem asChild>
                           <Link to={`/nodes/${agent.id}`}>详情</Link>
                         </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleShowInstallCommand(agent.id)}>
+                          <Terminal className="mr-2 h-4 w-4" /> 安装指令
+                        </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => setConfirmRegenId(agent.id)}>
                           <RefreshCw className="mr-2 h-4 w-4" /> 重新生成 Token
                         </DropdownMenuItem>
@@ -217,6 +243,22 @@ export function NodesPage() {
         confirmText="重新生成"
         variant="default"
         onConfirm={() => confirmRegenId && regenMutation.mutate(confirmRegenId)}
+        loading={regenMutation.isPending}
+      />
+
+      <ConfirmDialog
+        open={showEnrolledConfirm}
+        onOpenChange={(open) => !open && setShowEnrolledConfirm(false)}
+        title="节点已注册"
+        description="该节点已完成注册，重新部署将使当前运行的 Agent 失效并生成新的安装 Token。是否继续？"
+        confirmText="重新生成并部署"
+        variant="default"
+        onConfirm={() => {
+          if (installCommandAgentId) {
+            regenMutation.mutate(installCommandAgentId);
+            setShowEnrolledConfirm(false);
+          }
+        }}
         loading={regenMutation.isPending}
       />
     </div>
