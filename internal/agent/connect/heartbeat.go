@@ -20,6 +20,7 @@ type SystemInfo struct {
 	DiskUsedGB    float64 `json:"disk_used_gb"`
 	ResticVersion string  `json:"restic_version"`
 	RcloneVersion string  `json:"rclone_version"`
+	AgentVersion  string  `json:"agent_version"`
 }
 
 type SystemInfoCollector func() SystemInfo
@@ -48,6 +49,7 @@ func RunHeartbeat(ctx context.Context, client *Client, collector SystemInfoColle
 			DiskPercent:   diskPercent(info.DiskTotalGB, info.DiskUsedGB),
 			ResticVersion: info.ResticVersion,
 			RcloneVersion: info.RcloneVersion,
+			AgentVersion:  info.AgentVersion,
 			Uptime:        0,
 		}
 

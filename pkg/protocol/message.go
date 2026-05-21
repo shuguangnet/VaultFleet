@@ -65,6 +65,7 @@ type HeartbeatPayload struct {
 	DiskPercent   float64 `json:"disk_percent"`
 	ResticVersion string  `json:"restic_version"`
 	RcloneVersion string  `json:"rclone_version"`
+	AgentVersion  string  `json:"agent_version,omitempty"`
 	Uptime        int64   `json:"uptime"`
 }
 

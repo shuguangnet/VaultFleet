@@ -99,7 +99,12 @@ func runClient(ctx context.Context, cfg *AgentConfig) error {
 	client = connect.NewClient(cfg.Server, cfg.AgentToken, handler.Handle)
 	client.SetOnConnect(handler.FlushPendingResults)
 
-	go connect.RunHeartbeat(ctx, client, connect.DefaultSystemInfoCollector, 0)
+	collector := func() connect.SystemInfo {
+		info := connect.DefaultSystemInfoCollector()
+		info.AgentVersion = version
+		return info
+	}
+	go connect.RunHeartbeat(ctx, client, collector, 0)
 	client.Run(ctx)
 	return nil
 }
