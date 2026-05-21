@@ -8,6 +8,7 @@ data/
 
 # Test specs with credentials
 docs/superpowers/specs/2026-05-19-vaultfleet-e2e-acceptance-test.md
+docs/superpowers/specs/2026-05-21-vaultfleet-e2e-acceptance-test-v2.md
 
 # Frontend
 web/node_modules/
