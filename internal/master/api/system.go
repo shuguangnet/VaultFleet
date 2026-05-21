@@ -2,7 +2,11 @@ package api
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +27,8 @@ func NewSystemHandler(database *db.Database) *SystemHandler {
 
 func RegisterSystemRoutes(rg *gin.RouterGroup, h *SystemHandler) {
 	rg.GET("/export", h.Export)
+	rg.POST("/import", h.Import)
+	rg.POST("/import/confirm", h.ImportConfirm)
 	rg.PUT("/password", h.ChangePassword)
 }
 
@@ -107,4 +113,62 @@ func (h *SystemHandler) findPasswordChangeUser(c *gin.Context, user *db.User) er
 		return errPasswordUserAmbiguous
 	}
 	return h.DB.DB.First(user).Error
+}
+
+func (h *SystemHandler) Import(c *gin.Context) {
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "请上传备份文件"})
+		return
+	}
+
+	if file.Size > backup.MaxImportSize {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": fmt.Sprintf("文件大小超过限制 (%d MB)", backup.MaxImportSize>>20)})
+		return
+	}
+
+	f, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "无法读取上传文件"})
+		return
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(io.LimitReader(f, backup.MaxImportSize+1))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "读取文件失败"})
+		return
+	}
+
+	result := backup.ValidateBackupZip(data)
+	if result.Valid {
+		stagingPath := filepath.Join(h.DB.DataDir, ".import-staging.zip")
+		if err := os.WriteFile(stagingPath, data, 0600); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "保存临时文件失败"})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true, "data": result})
+}
+
+func (h *SystemHandler) ImportConfirm(c *gin.Context) {
+	stagingPath := filepath.Join(h.DB.DataDir, ".import-staging.zip")
+	if _, err := os.Stat(stagingPath); os.IsNotExist(err) {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "没有待导入的备份文件，请先上传"})
+		return
+	}
+
+	backupPath := filepath.Join(h.DB.DataDir, "backup.zip")
+	if err := os.Rename(stagingPath, backupPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "准备导入文件失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true, "data": gin.H{"message": "导入已确认，Master 即将重启"}})
+
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		os.Exit(0)
+	}()
 }
