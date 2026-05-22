@@ -17,6 +17,7 @@ func TestMessageMarshalUnmarshal(t *testing.T) {
 		DiskPercent:   30.0,
 		ResticVersion: "0.16.0",
 		RcloneVersion: "1.65.0",
+		Capabilities:  []string{CapabilitySnapshotBrowse, CapabilityRestoreIncludePaths},
 		Uptime:        86400,
 	}
 
@@ -38,6 +39,7 @@ func TestMessageMarshalUnmarshal(t *testing.T) {
 	require.NoError(t, err)
 	assert.InDelta(t, 45.5, parsed.CPUPercent, 0.01)
 	assert.Equal(t, "0.16.0", parsed.ResticVersion)
+	assert.Equal(t, []string{CapabilitySnapshotBrowse, CapabilityRestoreIncludePaths}, parsed.Capabilities)
 }
 
 func TestNewMessage_GeneratesUniqueHexIDs(t *testing.T) {
@@ -223,11 +225,19 @@ func TestCollectLogsPayloadRoundTrip(t *testing.T) {
 }
 
 func TestRestorePayloads(t *testing.T) {
-	reqPayload := RestoreReqPayload{SnapshotID: "abc123", Target: "/restore/20260518"}
+	reqPayload := RestoreReqPayload{
+		SnapshotID:   "abc123",
+		Target:       "/restore/20260518",
+		IncludePaths: []string{"/etc/hosts", "/var/log/app.log"},
+	}
 
 	_, parsedReq := roundTripPayload[RestoreReqPayload](t, TypeRestoreReq, reqPayload)
 	assert.Equal(t, "abc123", parsedReq.SnapshotID)
 	assert.Equal(t, "/restore/20260518", parsedReq.Target)
+	assert.Equal(t, []string{"/etc/hosts", "/var/log/app.log"}, parsedReq.IncludePaths)
+
+	_, parsedSelectiveReq := roundTripPayload[RestoreReqPayload](t, TypeSelectiveRestoreReq, reqPayload)
+	assert.Equal(t, reqPayload, *parsedSelectiveReq)
 
 	progress := RestoreProgressPayload{
 		AgentID:       "agent-001",
@@ -255,9 +265,12 @@ func TestAllMessageTypeConstants(t *testing.T) {
 		TypeBackupNow,
 		TypeTaskResult,
 		TypeRestoreReq,
+		TypeSelectiveRestoreReq,
 		TypeRestoreProgress,
 		TypeSnapshotListReq,
 		TypeSnapshotListResp,
+		TypeSnapshotBrowseReq,
+		TypeSnapshotBrowseResp,
 		TypeCollectLogsReq,
 		TypeCollectLogsResp,
 	}
@@ -270,15 +283,18 @@ func TestAllMessageTypeConstants(t *testing.T) {
 		"backup_now",
 		"task_result",
 		"restore_req",
+		"selective_restore_req",
 		"restore_progress",
 		"snapshot_list_req",
 		"snapshot_list_resp",
+		"snapshot_browse_req",
+		"snapshot_browse_resp",
 		"collect_logs_req",
 		"collect_logs_resp",
 	}
 
 	assert.Equal(t, expected, types)
-	assert.Len(t, types, 13)
+	assert.Len(t, types, 16)
 	seen := make(map[string]bool)
 	for _, typ := range types {
 		assert.NotEmpty(t, typ)

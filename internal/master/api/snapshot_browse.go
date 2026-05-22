@@ -49,6 +49,15 @@ func (h *SnapshotBrowseHandler) BrowseSnapshot(c *gin.Context) {
 		writeErrorResponse(c, http.StatusBadGateway, "agent offline")
 		return
 	}
+	supportsSnapshotBrowse, err := agentHasCapability(h.DB, agentID, protocol.CapabilitySnapshotBrowse)
+	if err != nil {
+		writeErrorResponse(c, http.StatusInternalServerError, "database error")
+		return
+	}
+	if !supportsSnapshotBrowse {
+		writeErrorResponse(c, http.StatusBadRequest, "agent does not support snapshot browse")
+		return
+	}
 
 	var request snapshotBrowseRequest
 	if err := c.ShouldBindJSON(&request); err != nil {

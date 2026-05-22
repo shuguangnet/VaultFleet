@@ -106,7 +106,15 @@ func (r ResticRunner) buildStatsCmd() *exec.Cmd {
 }
 
 func (r ResticRunner) buildRestoreCmdWithIncludes(snapshotID, targetPath string, includePaths []string) *exec.Cmd {
-	return r.buildRestoreCmdWithIncludesContext(context.Background(), snapshotID, targetPath, includePaths)
+	cmd, _ := r.buildRestoreCmdWithIncludesChecked(context.Background(), snapshotID, targetPath, includePaths)
+	return cmd
+}
+
+func (r ResticRunner) buildRestoreCmdWithIncludesChecked(ctx context.Context, snapshotID, targetPath string, includePaths []string) (*exec.Cmd, error) {
+	if err := validateRestoreIncludePaths(includePaths); err != nil {
+		return nil, err
+	}
+	return r.buildRestoreCmdWithIncludesContext(ctx, snapshotID, targetPath, includePaths), nil
 }
 
 func (r ResticRunner) buildInitCmdContext(ctx context.Context) *exec.Cmd {
@@ -342,12 +350,24 @@ func (r ResticRunner) RepositorySize(ctx context.Context) (int64, error) {
 }
 
 func (r ResticRunner) RestoreSnapshot(ctx context.Context, snapshotID, targetPath string, includePaths []string) error {
-	cmd := r.buildRestoreCmdWithIncludesContext(ctx, snapshotID, targetPath, includePaths)
+	cmd, err := r.buildRestoreCmdWithIncludesChecked(ctx, snapshotID, targetPath, includePaths)
+	if err != nil {
+		return err
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
 		return commandError("restore restic snapshot", stderr.String(), err)
+	}
+	return nil
+}
+
+func validateRestoreIncludePaths(includePaths []string) error {
+	for _, path := range includePaths {
+		if strings.ContainsAny(path, "*?[") {
+			return fmt.Errorf("include path contains unsupported pattern characters: %s", path)
+		}
 	}
 	return nil
 }

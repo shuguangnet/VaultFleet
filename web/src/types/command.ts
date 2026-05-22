@@ -1,4 +1,4 @@
-export type CommandType = "backup_now" | "restore_req" | "policy_push" | "snapshot_list_req";
+export type CommandType = "backup_now" | "restore_req" | "selective_restore_req" | "policy_push" | "snapshot_list_req";
 export type CommandStatus = "pending" | "dispatched" | "running" | "succeeded" | "failed" | "timeout";
 
 export interface AgentCommand {

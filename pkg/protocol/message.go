@@ -10,21 +10,27 @@ import (
 
 // Message type constants identify WebSocket payload kinds exchanged by master and agents.
 const (
-	TypeHeartbeat          = "heartbeat"
-	TypeDirBrowseReq       = "dir_browse_req"
-	TypeDirBrowseResp      = "dir_browse_resp"
-	TypePolicyPush         = "policy_push"
-	TypePolicyAck          = "policy_ack"
-	TypeBackupNow          = "backup_now"
-	TypeTaskResult         = "task_result"
-	TypeRestoreReq         = "restore_req"
-	TypeRestoreProgress    = "restore_progress"
-	TypeSnapshotListReq    = "snapshot_list_req"
-	TypeSnapshotListResp   = "snapshot_list_resp"
-	TypeSnapshotBrowseReq  = "snapshot_browse_req"
-	TypeSnapshotBrowseResp = "snapshot_browse_resp"
-	TypeCollectLogsReq     = "collect_logs_req"
-	TypeCollectLogsResp    = "collect_logs_resp"
+	TypeHeartbeat           = "heartbeat"
+	TypeDirBrowseReq        = "dir_browse_req"
+	TypeDirBrowseResp       = "dir_browse_resp"
+	TypePolicyPush          = "policy_push"
+	TypePolicyAck           = "policy_ack"
+	TypeBackupNow           = "backup_now"
+	TypeTaskResult          = "task_result"
+	TypeRestoreReq          = "restore_req"
+	TypeSelectiveRestoreReq = "selective_restore_req"
+	TypeRestoreProgress     = "restore_progress"
+	TypeSnapshotListReq     = "snapshot_list_req"
+	TypeSnapshotListResp    = "snapshot_list_resp"
+	TypeSnapshotBrowseReq   = "snapshot_browse_req"
+	TypeSnapshotBrowseResp  = "snapshot_browse_resp"
+	TypeCollectLogsReq      = "collect_logs_req"
+	TypeCollectLogsResp     = "collect_logs_resp"
+)
+
+const (
+	CapabilitySnapshotBrowse      = "snapshot_browse"
+	CapabilityRestoreIncludePaths = "restore_include_paths"
 )
 
 // Message is the shared WebSocket envelope used by master and agents.
@@ -64,13 +70,14 @@ func ParsePayload[T any](msg *Message) (*T, error) {
 
 // HeartbeatPayload reports agent health and installed backup tool versions.
 type HeartbeatPayload struct {
-	CPUPercent    float64 `json:"cpu_percent"`
-	MemoryPercent float64 `json:"memory_percent"`
-	DiskPercent   float64 `json:"disk_percent"`
-	ResticVersion string  `json:"restic_version"`
-	RcloneVersion string  `json:"rclone_version"`
-	AgentVersion  string  `json:"agent_version,omitempty"`
-	Uptime        int64   `json:"uptime"`
+	CPUPercent    float64  `json:"cpu_percent"`
+	MemoryPercent float64  `json:"memory_percent"`
+	DiskPercent   float64  `json:"disk_percent"`
+	ResticVersion string   `json:"restic_version"`
+	RcloneVersion string   `json:"rclone_version"`
+	AgentVersion  string   `json:"agent_version,omitempty"`
+	Capabilities  []string `json:"capabilities,omitempty"`
+	Uptime        int64    `json:"uptime"`
 }
 
 // DirBrowseRespPayload returns directory entries for a browse request.

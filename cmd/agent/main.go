@@ -96,14 +96,31 @@ func runClient(ctx context.Context, cfg *AgentConfig) error {
 			return client.Send(msg)
 		},
 	})
-	client = connect.NewClient(cfg.Server, cfg.AgentToken, handler.Handle)
-	client.SetOnConnect(handler.FlushPendingResults)
-
 	collector := func() connect.SystemInfo {
 		info := connect.DefaultSystemInfoCollector()
 		info.AgentVersion = version
+		info.Capabilities = []string{
+			protocol.CapabilitySnapshotBrowse,
+			protocol.CapabilityRestoreIncludePaths,
+		}
 		return info
 	}
+	client = connect.NewClient(cfg.Server, cfg.AgentToken, handler.Handle)
+	sendHeartbeat := func() {
+		collectorInfo := collector()
+		payload := protocol.HeartbeatPayload{
+			AgentVersion: collectorInfo.AgentVersion,
+			Capabilities: collectorInfo.Capabilities,
+		}
+		msg, err := protocol.NewMessage(protocol.TypeHeartbeat, payload)
+		if err == nil {
+			_ = client.Send(*msg)
+		}
+	}
+	client.SetOnConnect(func() {
+		sendHeartbeat()
+		handler.FlushPendingResults()
+	})
 	go connect.RunHeartbeat(ctx, client, collector, 0)
 	client.Run(ctx)
 	return nil

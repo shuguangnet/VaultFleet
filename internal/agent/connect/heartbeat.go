@@ -12,15 +12,16 @@ import (
 const HeartbeatInterval = 30 * time.Second
 
 type SystemInfo struct {
-	OS            string  `json:"os"`
-	Arch          string  `json:"arch"`
-	CPUCount      int     `json:"cpu_count"`
-	MemoryTotalMB uint64  `json:"memory_total_mb"`
-	DiskTotalGB   float64 `json:"disk_total_gb"`
-	DiskUsedGB    float64 `json:"disk_used_gb"`
-	ResticVersion string  `json:"restic_version"`
-	RcloneVersion string  `json:"rclone_version"`
-	AgentVersion  string  `json:"agent_version"`
+	OS            string   `json:"os"`
+	Arch          string   `json:"arch"`
+	CPUCount      int      `json:"cpu_count"`
+	MemoryTotalMB uint64   `json:"memory_total_mb"`
+	DiskTotalGB   float64  `json:"disk_total_gb"`
+	DiskUsedGB    float64  `json:"disk_used_gb"`
+	ResticVersion string   `json:"restic_version"`
+	RcloneVersion string   `json:"rclone_version"`
+	AgentVersion  string   `json:"agent_version"`
+	Capabilities  []string `json:"capabilities"`
 }
 
 type SystemInfoCollector func() SystemInfo
@@ -50,6 +51,7 @@ func RunHeartbeat(ctx context.Context, client *Client, collector SystemInfoColle
 			ResticVersion: info.ResticVersion,
 			RcloneVersion: info.RcloneVersion,
 			AgentVersion:  info.AgentVersion,
+			Capabilities:  info.Capabilities,
 			Uptime:        0,
 		}
 

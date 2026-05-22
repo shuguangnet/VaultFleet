@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"os"
 	"path/filepath"
@@ -14,6 +15,8 @@ import (
 	"vaultfleet/internal/agent/scheduler"
 	"vaultfleet/pkg/protocol"
 )
+
+const maxSnapshotBrowseResponseBytes = 900 * 1024
 
 type SendFunc func(protocol.Message) error
 
@@ -116,7 +119,7 @@ func (h *Handler) Handle(msg protocol.Message) {
 		h.handleBackupNow(msg)
 	case protocol.TypeDirBrowseReq:
 		h.handleDirBrowseReq(msg)
-	case protocol.TypeRestoreReq:
+	case protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq:
 		h.handleRestoreReq(msg)
 	case protocol.TypeSnapshotListReq:
 		h.handleSnapshotListReq(msg)
@@ -814,6 +817,16 @@ func (h *Handler) sendSnapshotBrowseResp(messageID string, snapshotID string, en
 		SnapshotID: snapshotID,
 		Entries:    entries,
 		Error:      errorText,
+	}
+	if errorText == "" && len(entries) > 0 {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			payload.Entries = nil
+			payload.Error = "encode snapshot browse response: " + err.Error()
+		} else if len(raw) > maxSnapshotBrowseResponseBytes {
+			payload.Entries = nil
+			payload.Error = "snapshot browse response too large; narrow the snapshot contents before browsing"
+		}
 	}
 	msg, err := protocol.NewMessage(protocol.TypeSnapshotBrowseResp, payload)
 	if err != nil {

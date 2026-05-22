@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"vaultfleet/pkg/protocol"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -43,10 +45,11 @@ type enrollResponseEnvelope struct {
 }
 
 type systemInfo struct {
-	Hostname string `json:"hostname"`
-	OS       string `json:"os"`
-	Arch     string `json:"arch"`
-	Version  string `json:"version,omitempty"`
+	Hostname     string   `json:"hostname"`
+	OS           string   `json:"os"`
+	Arch         string   `json:"arch"`
+	Version      string   `json:"version,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 func Enroll(serverURL, enrollToken, configPath, version string) (*AgentConfig, error) {
@@ -121,6 +124,10 @@ func collectSystemInfo(version string) string {
 		OS:       runtime.GOOS,
 		Arch:     runtime.GOARCH,
 		Version:  version,
+		Capabilities: []string{
+			protocol.CapabilitySnapshotBrowse,
+			protocol.CapabilityRestoreIncludePaths,
+		},
 	})
 	if err != nil {
 		return fmt.Sprintf("hostname=%s os=%s arch=%s", hostname, runtime.GOOS, runtime.GOARCH)

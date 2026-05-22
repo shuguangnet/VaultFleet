@@ -223,6 +223,24 @@ func TestBuildRestoreCmdWithIncludePaths(t *testing.T) {
 	})
 }
 
+func TestBuildRestoreCmdRejectsIncludePathPatterns(t *testing.T) {
+	pwFile := writeTempPasswordFile(t, "secret")
+	runner := ResticRunner{
+		RcloneConfPath: "/tmp/rclone.conf",
+		PasswordFile:   pwFile,
+		RepoPath:       "repo",
+	}
+
+	_, err := runner.buildRestoreCmdWithIncludesChecked(context.Background(), "abc123", "/restore/target", []string{"/data/file[1].txt"})
+
+	if err == nil {
+		t.Fatal("buildRestoreCmdWithIncludesChecked() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "include path contains unsupported pattern characters") {
+		t.Fatalf("error = %q, want unsupported pattern characters", err.Error())
+	}
+}
+
 func TestBuildRestoreCmdWithEmptyIncludesHasNoIncludeFlag(t *testing.T) {
 	pwFile := writeTempPasswordFile(t, "secret")
 	runner := ResticRunner{
@@ -532,6 +550,31 @@ func TestRestoreSnapshotReturnsStderrOnFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "restore failed") {
 		t.Fatalf("RestoreSnapshot() error = %q, want stderr included", err.Error())
+	}
+}
+
+func TestRestoreSnapshotRejectsIncludePathPatternsBeforeRunningRestic(t *testing.T) {
+	dir := t.TempDir()
+	writeFakeRestic(t, dir, fakeResticScript{Stderr: "restic should not run\n", Exit: 1})
+	prependPath(t, dir)
+
+	pwFile := writeTempPasswordFile(t, "secret")
+	runner := ResticRunner{
+		RcloneConfPath: "/tmp/rclone.conf",
+		PasswordFile:   pwFile,
+		RepoPath:       "repo",
+	}
+
+	err := runner.RestoreSnapshot(context.Background(), "abc123", "/restore", []string{"/data/*.txt"})
+
+	if err == nil {
+		t.Fatal("RestoreSnapshot() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "include path contains unsupported pattern characters") {
+		t.Fatalf("RestoreSnapshot() error = %q, want unsupported pattern characters", err.Error())
+	}
+	if strings.Contains(err.Error(), "restic should not run") {
+		t.Fatalf("RestoreSnapshot() ran restic unexpectedly: %v", err)
 	}
 }
 

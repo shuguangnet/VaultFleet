@@ -20,6 +20,7 @@ import (
 func TestSnapshotBrowseHappyPath(t *testing.T) {
 	setup := setupSnapshotBrowseAPI(t)
 	agent := createSnapshotBrowseAgent(t, setup.database, "online")
+	markSnapshotBrowseCapability(t, setup.database, agent.ID)
 	setup.hub.Add(agent.ID, nil)
 
 	setup.handler.timeout = time.Second
@@ -88,6 +89,7 @@ func TestSnapshotBrowseMissingAgent(t *testing.T) {
 func TestSnapshotBrowseRequiresSnapshotID(t *testing.T) {
 	setup := setupSnapshotBrowseAPI(t)
 	agent := createSnapshotBrowseAgent(t, setup.database, "online")
+	markSnapshotBrowseCapability(t, setup.database, agent.ID)
 	setup.hub.Add(agent.ID, nil)
 
 	w := postSnapshotBrowseJSON(t, setup.router, "/api/agents/"+agent.ID+"/snapshot-browse", map[string]any{})
@@ -98,6 +100,7 @@ func TestSnapshotBrowseRequiresSnapshotID(t *testing.T) {
 func TestSnapshotBrowseTimeout(t *testing.T) {
 	setup := setupSnapshotBrowseAPI(t)
 	agent := createSnapshotBrowseAgent(t, setup.database, "online")
+	markSnapshotBrowseCapability(t, setup.database, agent.ID)
 	setup.hub.Add(agent.ID, nil)
 	setup.handler.timeout = time.Second
 	setup.handler.sendAndWait = func(string, protocol.Message, time.Duration) (<-chan protocol.Message, error) {
@@ -118,6 +121,7 @@ func TestSnapshotBrowseTimeout(t *testing.T) {
 func TestSnapshotBrowseAgentErrorPayload(t *testing.T) {
 	setup := setupSnapshotBrowseAPI(t)
 	agent := createSnapshotBrowseAgent(t, setup.database, "online")
+	markSnapshotBrowseCapability(t, setup.database, agent.ID)
 	setup.hub.Add(agent.ID, nil)
 	setup.handler.sendAndWait = func(_ string, msg protocol.Message, _ time.Duration) (<-chan protocol.Message, error) {
 		resp, err := protocol.NewMessage(protocol.TypeSnapshotBrowseResp, protocol.SnapshotBrowseRespPayload{
@@ -140,6 +144,24 @@ func TestSnapshotBrowseAgentErrorPayload(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, w.Code)
 	body := parseJSON(t, w)
 	assert.Equal(t, "snapshot not found", body["error"])
+}
+
+func TestSnapshotBrowseRejectsAgentWithoutCapability(t *testing.T) {
+	setup := setupSnapshotBrowseAPI(t)
+	agent := createSnapshotBrowseAgent(t, setup.database, "online")
+	setup.hub.Add(agent.ID, nil)
+	setup.handler.sendAndWait = func(string, protocol.Message, time.Duration) (<-chan protocol.Message, error) {
+		t.Fatal("sendAndWait should not be called for unsupported agents")
+		return nil, nil
+	}
+
+	w := postSnapshotBrowseJSON(t, setup.router, "/api/agents/"+agent.ID+"/snapshot-browse", map[string]any{
+		"snapshot_id": "snap-1",
+	})
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	body := parseJSON(t, w)
+	assert.Equal(t, "agent does not support snapshot browse", body["error"])
 }
 
 type snapshotBrowseAPISetup struct {
@@ -188,4 +210,21 @@ func postSnapshotBrowseJSON(t *testing.T, router http.Handler, path string, body
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	return w
+}
+
+func markSnapshotBrowseCapability(t *testing.T, database *db.Database, agentID string) {
+	t.Helper()
+	markAgentCapabilities(t, database, agentID, []string{protocol.CapabilitySnapshotBrowse})
+}
+
+func markRestoreCapability(t *testing.T, database *db.Database, agentID string) {
+	t.Helper()
+	markAgentCapabilities(t, database, agentID, []string{protocol.CapabilityRestoreIncludePaths})
+}
+
+func markAgentCapabilities(t *testing.T, database *db.Database, agentID string, capabilities []string) {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{"capabilities": capabilities})
+	require.NoError(t, err)
+	require.NoError(t, database.DB.Model(&db.Agent{}).Where("id = ?", agentID).Update("system_info", string(data)).Error)
 }

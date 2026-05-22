@@ -61,8 +61,21 @@ func (h *RestoreHandler) Restore(c *gin.Context) {
 	if !ok {
 		return
 	}
+	msgType := protocol.TypeRestoreReq
+	if len(request.IncludePaths) > 0 {
+		supportsSelectiveRestore, err := agentHasCapability(h.DB, agentID, protocol.CapabilityRestoreIncludePaths)
+		if err != nil {
+			writeErrorResponse(c, http.StatusInternalServerError, "database error")
+			return
+		}
+		if !supportsSelectiveRestore {
+			writeErrorResponse(c, http.StatusBadRequest, "agent does not support selective restore")
+			return
+		}
+		msgType = protocol.TypeSelectiveRestoreReq
+	}
 
-	msg, err := protocol.NewMessage(protocol.TypeRestoreReq, protocol.RestoreReqPayload{
+	msg, err := protocol.NewMessage(msgType, protocol.RestoreReqPayload{
 		SnapshotID:   snapshotID,
 		Target:       targetPath,
 		IncludePaths: request.IncludePaths,
@@ -75,7 +88,7 @@ func (h *RestoreHandler) Restore(c *gin.Context) {
 	commandService := h.commandService()
 	command, err := commandService.CreateCommand(contextFromGin(c), commands.CreateCommandInput{
 		AgentID:    agentID,
-		Type:       protocol.TypeRestoreReq,
+		Type:       msgType,
 		Message:    *msg,
 		TaskType:   "restore",
 		TaskState:  commands.TaskStatusPending,

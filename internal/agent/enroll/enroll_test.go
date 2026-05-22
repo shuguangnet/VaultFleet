@@ -50,11 +50,18 @@ func TestEnroll_SuccessPostsCurrentContractAndSavesConfig(t *testing.T) {
 	require.NotEmpty(t, req["system_info"])
 	assert.NotContains(t, string(mustJSON(t, req)), `"token"`)
 
-	var systemInfo map[string]string
+	var systemInfo struct {
+		Hostname     string   `json:"hostname"`
+		OS           string   `json:"os"`
+		Arch         string   `json:"arch"`
+		Capabilities []string `json:"capabilities"`
+	}
 	require.NoError(t, json.Unmarshal([]byte(req["system_info"]), &systemInfo))
-	assert.NotEmpty(t, systemInfo["hostname"])
-	assert.Equal(t, runtime.GOOS, systemInfo["os"])
-	assert.Equal(t, runtime.GOARCH, systemInfo["arch"])
+	assert.NotEmpty(t, systemInfo.Hostname)
+	assert.Equal(t, runtime.GOOS, systemInfo.OS)
+	assert.Equal(t, runtime.GOARCH, systemInfo.Arch)
+	assert.Contains(t, systemInfo.Capabilities, "snapshot_browse")
+	assert.Contains(t, systemInfo.Capabilities, "restore_include_paths")
 
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)

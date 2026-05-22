@@ -186,6 +186,7 @@ func TestRestoreWithIncludePathsPassesThemInPayload(t *testing.T) {
 	setup := setupRestoreAPI(t)
 	agent := createRestoreTestAgent(t, setup.database, "online")
 	setup.hub.online[agent.ID] = true
+	markRestoreCapability(t, setup.database, agent.ID)
 
 	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore", map[string]any{
 		"snapshot_id":   "snap-1",
@@ -195,9 +196,31 @@ func TestRestoreWithIncludePathsPassesThemInPayload(t *testing.T) {
 
 	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
 	require.Len(t, setup.hub.sent, 1)
+	assert.Equal(t, protocol.TypeSelectiveRestoreReq, setup.hub.sent[0].message.Type)
 	payload, err := protocol.ParsePayload[protocol.RestoreReqPayload](&setup.hub.sent[0].message)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/etc/hosts", "/var/log/app.log"}, payload.IncludePaths)
+}
+
+func TestRestoreWithIncludePathsRejectsAgentWithoutCapability(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	agent := createRestoreTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore", map[string]any{
+		"snapshot_id":   "snap-1",
+		"target_path":   "/restore/target",
+		"include_paths": []string{"/etc/hosts"},
+	})
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	body := parseJSON(t, w)
+	assert.Equal(t, "agent does not support selective restore", body["error"])
+	assert.Empty(t, setup.hub.sent)
+
+	var count int64
+	require.NoError(t, setup.database.DB.Model(&db.AgentCommand{}).Where("agent_id = ?", agent.ID).Count(&count).Error)
+	assert.Equal(t, int64(0), count)
 }
 
 func TestRestoreRecordsPendingCommandAndTaskBeforeSendingMessage(t *testing.T) {

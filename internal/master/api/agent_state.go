@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"time"
 
 	"vaultfleet/internal/master/db"
@@ -35,32 +34,15 @@ func NewHeartbeatStateUpdater(database *db.Database) HeartbeatStateUpdater {
 		if lastSeenAt != nil {
 			updates["last_seen_at"] = *lastSeenAt
 		}
-		if heartbeat != nil && heartbeat.AgentVersion != "" {
+		if heartbeat != nil && (heartbeat.AgentVersion != "" || len(heartbeat.Capabilities) > 0) {
 			var agent db.Agent
 			if err := database.DB.Select("system_info").First(&agent, "id = ?", agentID).Error; err == nil {
-				updated := mergeVersionIntoSystemInfo(agent.SystemInfo, heartbeat.AgentVersion)
+				updated := mergeHeartbeatIntoSystemInfo(agent.SystemInfo, heartbeat)
 				updates["system_info"] = updated
 			}
 		}
 		return database.DB.Model(&db.Agent{}).Where("id = ?", agentID).Updates(updates).Error
 	}
-}
-
-func mergeVersionIntoSystemInfo(raw string, version string) string {
-	var info map[string]interface{}
-	if raw != "" {
-		if err := json.Unmarshal([]byte(raw), &info); err != nil {
-			info = make(map[string]interface{})
-		}
-	} else {
-		info = make(map[string]interface{})
-	}
-	info["version"] = version
-	data, err := json.Marshal(info)
-	if err != nil {
-		return raw
-	}
-	return string(data)
 }
 
 func SubscribeAgentStateEvents(database *db.Database, bus *events.Bus) {

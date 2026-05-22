@@ -66,7 +66,7 @@ func DeadlineForType(commandType string, now time.Time) time.Time {
 		return now.Add(5 * time.Minute)
 	case protocol.TypeSnapshotListReq:
 		return now.Add(2 * time.Minute)
-	case protocol.TypeBackupNow, protocol.TypeRestoreReq:
+	case protocol.TypeBackupNow, protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq:
 		return now.Add(6 * time.Hour)
 	default:
 		return now.Add(30 * time.Minute)
@@ -273,7 +273,7 @@ func (s *Service) CompleteTaskResultWith(ctx context.Context, agentID string, me
 				"agent_id = ? AND message_id = ? AND type IN ? AND status NOT IN ?",
 				agentID,
 				messageID,
-				[]string{protocol.TypeBackupNow, protocol.TypeRestoreReq},
+				[]string{protocol.TypeBackupNow, protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq},
 				terminalStatuses(),
 			).
 			First(&command).Error
@@ -672,14 +672,14 @@ func (s *Service) now() time.Time {
 }
 
 func isLongRunning(commandType string) bool {
-	return commandType == protocol.TypeBackupNow || commandType == protocol.TypeRestoreReq
+	return commandType == protocol.TypeBackupNow || commandType == protocol.TypeRestoreReq || commandType == protocol.TypeSelectiveRestoreReq
 }
 
 func taskTypeForCommand(commandType string) (string, bool) {
 	switch commandType {
 	case protocol.TypeBackupNow:
 		return "backup", true
-	case protocol.TypeRestoreReq:
+	case protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq:
 		return "restore", true
 	default:
 		return "", false

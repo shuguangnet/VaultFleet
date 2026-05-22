@@ -1010,6 +1010,39 @@ func TestHandleSnapshotBrowseRunnerFailureSendsErrorPayload(t *testing.T) {
 	assert.Nil(t, payload.Entries)
 }
 
+func TestHandleSnapshotBrowseResponseTooLargeSendsErrorPayload(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{
+		AgentID: "agent-1",
+		Storage: protocol.StorageConfig{
+			RepoPath: "repo/agent-1",
+		},
+	}))
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   t.TempDir(),
+		SendFunc:    sent.send,
+		SnapshotBrowseRunner: func(context.Context, executor.ExecutorConfig, string) ([]executor.SnapshotFileEntry, error) {
+			return []executor.SnapshotFileEntry{
+				{Path: "/" + strings.Repeat("a", maxSnapshotBrowseResponseBytes), Type: "file"},
+			}, nil
+		},
+	})
+	msg, err := protocol.NewMessage(protocol.TypeSnapshotBrowseReq, protocol.SnapshotBrowseReqPayload{SnapshotID: "snap-1"})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	messages := sent.snapshot()
+	require.Len(t, messages, 1)
+	payload, err := protocol.ParsePayload[protocol.SnapshotBrowseRespPayload](&messages[0])
+	require.NoError(t, err)
+	assert.Contains(t, payload.Error, "snapshot browse response too large")
+	assert.Nil(t, payload.Entries)
+	assert.Less(t, len(messages[0].Payload), maxSnapshotBrowseResponseBytes)
+}
+
 func TestHandlerDirBrowseReqSendsResponseWithSameID(t *testing.T) {
 	var browsedPath string
 	var browsedDepth int
