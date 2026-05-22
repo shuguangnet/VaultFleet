@@ -21,6 +21,8 @@ const (
 	TypeRestoreProgress  = "restore_progress"
 	TypeSnapshotListReq  = "snapshot_list_req"
 	TypeSnapshotListResp = "snapshot_list_resp"
+	TypeCollectLogsReq   = "collect_logs_req"
+	TypeCollectLogsResp  = "collect_logs_resp"
 )
 
 // Message is the shared WebSocket envelope used by master and agents.
@@ -174,4 +176,15 @@ type RestoreReqPayload struct {
 // SnapshotListReqPayload requests repository snapshots from an agent.
 type SnapshotListReqPayload struct {
 	AgentID string `json:"agent_id"`
+}
+
+// CollectLogsReqPayload requests recent logs from an agent.
+type CollectLogsReqPayload struct {
+	MaxBytes int `json:"max_bytes"`
+}
+
+// CollectLogsRespPayload returns collected log text from an agent.
+type CollectLogsRespPayload struct {
+	Logs  string `json:"logs"`
+	Error string `json:"error,omitempty"`
 }

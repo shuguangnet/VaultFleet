@@ -175,7 +175,7 @@ func (h *Handler) dispatch(agentID string, msg protocol.Message) {
 				"payload":  msg.Payload,
 			},
 		})
-	case protocol.TypeDirBrowseResp, protocol.TypeSnapshotListResp:
+	case protocol.TypeDirBrowseResp, protocol.TypeSnapshotListResp, protocol.TypeCollectLogsResp:
 		handled := h.hub.HandleResponse(agentID, msg)
 		if !handled && msg.Type == protocol.TypeSnapshotListResp && h.SnapshotListResponseProcessor != nil {
 			if err := h.SnapshotListResponseProcessor(agentID, msg); err != nil {

@@ -433,6 +433,34 @@ func TestHandler_SnapshotListRespDispatchesToWaiter(t *testing.T) {
 	}
 }
 
+func TestHandler_CollectLogsRespDispatchesToWaiter(t *testing.T) {
+	setup := setupHandlerTest(t, validTestAuth, noPolicy)
+	clientConn := addTestWebSocketAgent(t, setup.hub, "agent-1")
+	respCh, err := setup.hub.SendAndWait("agent-1", protocol.Message{
+		Type:    protocol.TypeCollectLogsReq,
+		ID:      "logs-1",
+		Payload: json.RawMessage(`{"max_bytes":1024}`),
+	}, time.Second)
+	require.NoError(t, err)
+	var sent protocol.Message
+	require.NoError(t, clientConn.ReadJSON(&sent))
+	handler := NewHandler(setup.hub, setup.bus, validTestAuth, noPolicy, nil)
+	response := protocol.Message{
+		Type:    protocol.TypeCollectLogsResp,
+		ID:      "logs-1",
+		Payload: json.RawMessage(`{"logs":"line1\nline2\n"}`),
+	}
+
+	handler.dispatch("agent-1", response)
+
+	select {
+	case got := <-respCh:
+		assert.Equal(t, response, got)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for collect logs response")
+	}
+}
+
 func TestHandler_SnapshotListRespWithoutWaiterCompletesDurableCommand(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database, err := db.New(t.TempDir())

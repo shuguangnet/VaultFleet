@@ -236,6 +236,38 @@ func TestHub_SendAndWaitReturnsMatchingBrowseResponse(t *testing.T) {
 	assert.False(t, hub.HasWaiter("agent-1", "browse-1"))
 }
 
+func TestHub_SendAndWaitReturnsMatchingCollectLogsResponse(t *testing.T) {
+	hub := NewHub()
+	clientConn := addTestWebSocketAgent(t, hub, "agent-1")
+	request := protocol.Message{
+		Type:    protocol.TypeCollectLogsReq,
+		ID:      "logs-1",
+		Payload: json.RawMessage(`{"max_bytes":1024}`),
+	}
+	response := protocol.Message{
+		Type:    protocol.TypeCollectLogsResp,
+		ID:      "logs-1",
+		Payload: json.RawMessage(`{"logs":"line1\nline2\n"}`),
+	}
+
+	respCh, err := hub.SendAndWait("agent-1", request, 500*time.Millisecond)
+	require.NoError(t, err)
+	require.True(t, hub.HasWaiter("agent-1", "logs-1"))
+	var sent protocol.Message
+	require.NoError(t, clientConn.ReadJSON(&sent))
+	assert.Equal(t, request, sent)
+
+	assert.True(t, hub.HandleResponse("agent-1", response))
+
+	select {
+	case got := <-respCh:
+		assert.Equal(t, response, got)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for collect logs response")
+	}
+	assert.False(t, hub.HasWaiter("agent-1", "logs-1"))
+}
+
 func TestHub_SendAndWaitCleansWaiterOnTimeout(t *testing.T) {
 	hub := NewHub()
 	clientConn := addTestWebSocketAgent(t, hub, "agent-1")

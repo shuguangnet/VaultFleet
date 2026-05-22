@@ -208,6 +208,20 @@ func TestSnapshotListReqPayload(t *testing.T) {
 	assert.Equal(t, "agent-003", parsed.AgentID)
 }
 
+func TestCollectLogsPayloadRoundTrip(t *testing.T) {
+	req, parsedReq := roundTripPayload[CollectLogsReqPayload](t, TypeCollectLogsReq, CollectLogsReqPayload{MaxBytes: 1024})
+	assert.Equal(t, TypeCollectLogsReq, req.Type)
+	assert.Equal(t, 1024, parsedReq.MaxBytes)
+
+	respPayload := CollectLogsRespPayload{
+		Logs:  "line1\nline2\n",
+		Error: "partial collection failed",
+	}
+	resp, parsedResp := roundTripPayload[CollectLogsRespPayload](t, TypeCollectLogsResp, respPayload)
+	assert.Equal(t, TypeCollectLogsResp, resp.Type)
+	assert.Equal(t, respPayload, *parsedResp)
+}
+
 func TestRestorePayloads(t *testing.T) {
 	reqPayload := RestoreReqPayload{SnapshotID: "abc123", Target: "/restore/20260518"}
 
@@ -244,6 +258,8 @@ func TestAllMessageTypeConstants(t *testing.T) {
 		TypeRestoreProgress,
 		TypeSnapshotListReq,
 		TypeSnapshotListResp,
+		TypeCollectLogsReq,
+		TypeCollectLogsResp,
 	}
 	expected := []string{
 		"heartbeat",
@@ -257,10 +273,12 @@ func TestAllMessageTypeConstants(t *testing.T) {
 		"restore_progress",
 		"snapshot_list_req",
 		"snapshot_list_resp",
+		"collect_logs_req",
+		"collect_logs_resp",
 	}
 
 	assert.Equal(t, expected, types)
-	assert.Len(t, types, 11)
+	assert.Len(t, types, 13)
 	seen := make(map[string]bool)
 	for _, typ := range types {
 		assert.NotEmpty(t, typ)
