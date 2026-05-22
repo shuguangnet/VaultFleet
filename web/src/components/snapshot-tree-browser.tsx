@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   AlertCircle,
@@ -48,6 +48,12 @@ export function SnapshotTreeBrowser({
   const browseMutation = useMutation({
     mutationFn: () => browseSnapshot(agentId, { snapshot_id: snapshotId }),
   });
+
+  useEffect(() => {
+    setExpanded(false);
+    setExpandedNodes(new Set());
+    browseMutation.reset();
+  }, [agentId, snapshotId]);
 
   const tree = useMemo(() => {
     return buildTree(browseMutation.data?.entries ?? []);
@@ -117,7 +123,12 @@ export function SnapshotTreeBrowser({
       }
 
       const affectedPathSet = new Set(affectedPaths);
-      onSelectedPathsChange(selectedPaths.filter((path) => !affectedPathSet.has(path)));
+      onSelectedPathsChange(selectedPaths.filter((path) => {
+        if (affectedPathSet.has(path)) {
+          return false;
+        }
+        return !isAncestorPath(path, node.path);
+      }));
     },
     [onSelectedPathsChange, selectedPaths],
   );
@@ -374,6 +385,16 @@ function getParentPath(path: string): string | null {
   }
   const prefix = path.startsWith("/") ? "/" : "";
   return `${prefix}${parts.slice(0, -1).join("/")}`;
+}
+
+function isAncestorPath(candidate: string, path: string): boolean {
+  if (candidate === path) {
+    return false;
+  }
+  if (candidate === "/") {
+    return path !== "/";
+  }
+  return path.startsWith(candidate.endsWith("/") ? candidate : `${candidate}/`);
 }
 
 function formatSize(bytes: number): string {

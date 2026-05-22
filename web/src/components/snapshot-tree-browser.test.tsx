@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -136,6 +136,59 @@ describe("SnapshotTreeBrowser", () => {
     await user.click(refreshButton);
 
     expect(browseSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes selected ancestor directories when a descendant is unchecked", async () => {
+    const onSelectedPathsChange = vi.fn();
+    const user = userEvent.setup();
+    vi.mocked(browseSnapshot).mockResolvedValue({
+      snapshot_id: "snap-1",
+      entries: [
+        { path: "/data", type: "dir", size: 0, mtime: "2026-05-22T00:00:00Z" },
+        { path: "/data/docs", type: "dir", size: 0, mtime: "2026-05-22T00:00:00Z" },
+        { path: "/data/docs/readme.md", type: "file", size: 2048, mtime: "2026-05-22T00:00:00Z" },
+        { path: "/data/photo.jpg", type: "file", size: 1024, mtime: "2026-05-22T00:00:00Z" },
+      ],
+    });
+
+    renderBrowser({
+      selectedPaths: ["/data", "/data/docs", "/data/docs/readme.md", "/data/photo.jpg"],
+      onSelectedPathsChange,
+    });
+
+    await user.click(screen.getByRole("button", { name: /浏览快照内容/ }));
+    expect(await screen.findByText("data")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "展开 /data" }));
+    const photoRow = screen.getByText("photo.jpg").closest("[data-snapshot-tree-row]");
+    expect(photoRow).not.toBeNull();
+
+    await user.click(within(photoRow as HTMLElement).getByRole("checkbox", { name: "选择 /data/photo.jpg" }));
+
+    expect(onSelectedPathsChange).toHaveBeenLastCalledWith([
+      "/data/docs",
+      "/data/docs/readme.md",
+    ]);
+  });
+
+  it("resets the expanded tree when the snapshot changes", async () => {
+    const user = userEvent.setup();
+    vi.mocked(browseSnapshot).mockResolvedValue({
+      snapshot_id: "snap-1",
+      entries: [{ path: "/data", type: "dir", size: 0, mtime: "2026-05-22T00:00:00Z" }],
+    });
+
+    const { rerender } = renderBrowser();
+
+    await user.click(screen.getByRole("button", { name: /浏览快照内容/ }));
+    expect(await screen.findByText("data")).toBeInTheDocument();
+
+    rerenderBrowser(rerender, { snapshotId: "snap-2" });
+
+    await waitFor(() => {
+      expect(screen.queryByText("data")).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: /浏览快照内容/ })).toBeInTheDocument();
   });
 });
 
