@@ -103,12 +103,19 @@ func (h *Handler) HandleWebSocket(c *gin.Context) {
 	}
 
 	if h.PendingCommandDispatcher != nil {
-		if err := h.PendingCommandDispatcher(agentID); err != nil {
-			log.Printf("dispatch pending commands for agent %s failed: %v", agentID, err)
-		}
+		h.dispatchPendingCommands(agentID)
 	}
 
 	h.readLoop(agentID, safeConn)
+}
+
+func (h *Handler) dispatchPendingCommands(agentID string) {
+	if h.PendingCommandDispatcher == nil {
+		return
+	}
+	if err := h.PendingCommandDispatcher(agentID); err != nil {
+		log.Printf("dispatch pending commands for agent %s failed: %v", agentID, err)
+	}
 }
 
 func (h *Handler) cleanupConnection(agentID string, conn *SafeConn) {
@@ -144,8 +151,12 @@ func (h *Handler) dispatch(agentID string, msg protocol.Message) {
 		h.updateAgentState(agentID, "online", &now)
 		if h.HeartbeatStateUpdater != nil {
 			heartbeat, err := protocol.ParsePayload[protocol.HeartbeatPayload](&msg)
-			if err == nil && heartbeat.AgentVersion != "" {
-				_ = h.HeartbeatStateUpdater(agentID, "online", &now, heartbeat)
+			if err == nil && (heartbeat.AgentVersion != "" || len(heartbeat.Capabilities) > 0) {
+				if err := h.HeartbeatStateUpdater(agentID, "online", &now, heartbeat); err != nil {
+					log.Printf("update agent %s heartbeat state failed: %v", agentID, err)
+				} else if len(heartbeat.Capabilities) > 0 {
+					h.dispatchPendingCommands(agentID)
+				}
 			}
 		}
 	case protocol.TypePolicyAck:

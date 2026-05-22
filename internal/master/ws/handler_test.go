@@ -47,6 +47,18 @@ func setupHandlerTest(t *testing.T, auth AgentAuthFunc, lookup PolicyLookupFunc)
 	}
 }
 
+func setupHandlerTestDB(t *testing.T) *db.Database {
+	t.Helper()
+	database, err := db.New(t.TempDir())
+	require.NoError(t, err)
+	sqlDB, err := database.DB.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, sqlDB.Close())
+	})
+	return database
+}
+
 func validTestAuth(token string) (string, error) {
 	if token != "valid-token" {
 		return "", errors.New("invalid token")
@@ -167,8 +179,7 @@ func TestHandler_HeartbeatDispatchUpdatesLastSeen(t *testing.T) {
 
 func TestHandlerConnectionUpdatesAgentDatabaseState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	database, err := db.New(t.TempDir())
-	require.NoError(t, err)
+	database := setupHandlerTestDB(t)
 	agent := db.Agent{Name: "Tokyo-1", AgentToken: "ak_valid", Status: "offline"}
 	require.NoError(t, database.DB.Create(&agent).Error)
 
@@ -189,13 +200,90 @@ func TestHandlerConnectionUpdatesAgentDatabaseState(t *testing.T) {
 
 	conn, _, err := websocket.DefaultDialer.Dial(websocketURL(server.URL, "/ws", url.Values{"token": []string{"ak_valid"}}), nil)
 	require.NoError(t, err)
-	defer conn.Close()
+	t.Cleanup(func() {
+		_ = conn.Close()
+		require.Eventually(t, func() bool {
+			return !hub.IsOnline(agent.ID)
+		}, time.Second, 10*time.Millisecond)
+	})
 
 	require.Eventually(t, func() bool {
 		var stored db.Agent
 		require.NoError(t, database.DB.First(&stored, "id = ?", agent.ID).Error)
 		return stored.Status == "online" && stored.LastSeenAt != nil
 	}, time.Second, 10*time.Millisecond)
+}
+
+func TestHandlerHeartbeatCapabilitiesWithoutVersionUpdatesAgentSystemInfo(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database := setupHandlerTestDB(t)
+	agent := db.Agent{
+		Name:       "Tokyo-1",
+		Status:     "offline",
+		SystemInfo: `{"os":"linux"}`,
+	}
+	require.NoError(t, database.DB.Create(&agent).Error)
+
+	hub := NewHub()
+	handler := NewHandler(hub, events.NewBus(), validTestAuth, noPolicy, nil)
+	handler.HeartbeatStateUpdater = masterapi.NewHeartbeatStateUpdater(database)
+	msg, err := protocol.NewMessage(protocol.TypeHeartbeat, protocol.HeartbeatPayload{
+		Capabilities: []string{protocol.CapabilitySnapshotBrowse, protocol.CapabilityRestoreIncludePaths},
+	})
+	require.NoError(t, err)
+
+	handler.dispatch(agent.ID, *msg)
+
+	var stored db.Agent
+	require.NoError(t, database.DB.First(&stored, "id = ?", agent.ID).Error)
+	assert.Equal(t, "online", stored.Status)
+	require.NotNil(t, stored.LastSeenAt)
+	var info struct {
+		OS           string   `json:"os"`
+		Capabilities []string `json:"capabilities"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stored.SystemInfo), &info))
+	assert.Equal(t, "linux", info.OS)
+	assert.Equal(t, []string{protocol.CapabilitySnapshotBrowse, protocol.CapabilityRestoreIncludePaths}, info.Capabilities)
+}
+
+func TestHandlerHeartbeatWithCapabilitiesDispatchesPendingCommandsAfterStateUpdate(t *testing.T) {
+	setup := setupHandlerTest(t, validTestAuth, noPolicy)
+	handler := NewHandler(setup.hub, setup.bus, validTestAuth, noPolicy, nil)
+	order := make(chan string, 2)
+	handler.HeartbeatStateUpdater = func(agentID string, status string, lastSeenAt *time.Time, heartbeat *protocol.HeartbeatPayload) error {
+		assert.Equal(t, "agent-1", agentID)
+		assert.Equal(t, "online", status)
+		require.NotNil(t, lastSeenAt)
+		require.NotNil(t, heartbeat)
+		assert.Equal(t, []string{protocol.CapabilityRestoreIncludePaths}, heartbeat.Capabilities)
+		order <- "state"
+		return nil
+	}
+	handler.PendingCommandDispatcher = func(agentID string) error {
+		assert.Equal(t, "agent-1", agentID)
+		order <- "dispatch"
+		return nil
+	}
+	msg, err := protocol.NewMessage(protocol.TypeHeartbeat, protocol.HeartbeatPayload{
+		Capabilities: []string{protocol.CapabilityRestoreIncludePaths},
+	})
+	require.NoError(t, err)
+
+	handler.dispatch("agent-1", *msg)
+
+	select {
+	case got := <-order:
+		assert.Equal(t, "state", got)
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat state updater was not called")
+	}
+	select {
+	case got := <-order:
+		assert.Equal(t, "dispatch", got)
+	case <-time.After(time.Second):
+		t.Fatal("pending command dispatcher was not called")
+	}
 }
 
 func TestHandler_HeartbeatDispatchMarksAgentOnline(t *testing.T) {
@@ -319,8 +407,7 @@ func TestHandler_TaskResultDispatchPublishesRawPayload(t *testing.T) {
 
 func TestHandler_TaskResultProcessorFromConstructorRecordsHistoryAndSnapshots(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	database, err := db.New(t.TempDir())
-	require.NoError(t, err)
+	database := setupHandlerTestDB(t)
 	agent := db.Agent{Name: "Tokyo-1", Status: "online"}
 	require.NoError(t, database.DB.Create(&agent).Error)
 	hub := NewHub()
@@ -491,8 +578,7 @@ func TestHandler_SnapshotBrowseRespDispatchesToWaiter(t *testing.T) {
 
 func TestHandler_SnapshotListRespWithoutWaiterCompletesDurableCommand(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	database, err := db.New(t.TempDir())
-	require.NoError(t, err)
+	database := setupHandlerTestDB(t)
 	agent := db.Agent{Name: "Tokyo-1", Status: "online"}
 	require.NoError(t, database.DB.Create(&agent).Error)
 	commandService := commands.NewService(database, nil)
@@ -674,8 +760,7 @@ func TestHandler_PolicyPushedOnConnect(t *testing.T) {
 func TestHandler_FullRegistrationFlow(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	database, err := db.New(t.TempDir())
-	require.NoError(t, err)
+	database := setupHandlerTestDB(t)
 	agent := db.Agent{
 		Name:        "Tokyo-1",
 		EnrollToken: "ek_full_flow",

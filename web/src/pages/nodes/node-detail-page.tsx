@@ -27,6 +27,7 @@ import { safeFormatDate } from "@/lib/date";
 const COMMAND_TYPE_LABELS: Record<string, string> = {
   backup_now: "手动备份",
   restore_req: "恢复",
+  selective_restore_req: "恢复",
   policy_push: "策略下发",
   snapshot_list_req: "快照刷新",
 };

@@ -67,6 +67,99 @@ func TestDispatchPendingForAgentSendsOldestPendingCommand(t *testing.T) {
 	assert.NotNil(t, updated.DispatchedAt)
 }
 
+func TestDispatchPendingForAgentFailsLegacyRestoreIncludePathsWithoutCapability(t *testing.T) {
+	database := setupCommandTestDB(t)
+	require.NoError(t, database.DB.Create(&db.Agent{
+		ID:         "agent-1",
+		Name:       "Agent 1",
+		Status:     "online",
+		SystemInfo: `{"capabilities":["snapshot_browse"]}`,
+	}).Error)
+	hub := &recordingHub{online: map[string]bool{"agent-1": true}}
+	service := NewService(database, hub)
+	command := createRestoreCommandForTest(t, service, "agent-1", protocol.TypeRestoreReq, []string{"/etc/hosts"})
+
+	require.NoError(t, service.DispatchPendingForAgent(context.Background(), "agent-1", 10))
+
+	assert.Empty(t, hub.sent)
+	var found db.AgentCommand
+	require.NoError(t, database.DB.First(&found, "id = ?", command.ID).Error)
+	assert.Equal(t, CommandStatusFailed, found.Status)
+	assert.Equal(t, 0, found.Attempts)
+	assert.Nil(t, found.DispatchedAt)
+	assert.Contains(t, found.ErrorMessage, "agent does not support selective restore")
+	assert.NotNil(t, found.CompletedAt)
+
+	var history db.TaskHistory
+	require.NoError(t, database.DB.First(&history, "command_id = ?", command.ID).Error)
+	assert.Equal(t, TaskStatusFailed, history.Status)
+	assert.Contains(t, history.ErrorLog, "agent does not support selective restore")
+	assert.NotNil(t, history.FinishedAt)
+}
+
+func TestDispatchPendingForAgentLeavesLegacyRestoreIncludePathsPendingWhenCapabilityUnknown(t *testing.T) {
+	database := setupCommandTestDB(t)
+	require.NoError(t, database.DB.Create(&db.Agent{
+		ID:         "agent-1",
+		Name:       "Agent 1",
+		Status:     "online",
+		SystemInfo: `{"os":"linux"}`,
+	}).Error)
+	hub := &recordingHub{online: map[string]bool{"agent-1": true}}
+	service := NewService(database, hub)
+	command := createRestoreCommandForTest(t, service, "agent-1", protocol.TypeRestoreReq, []string{"/etc/hosts"})
+
+	require.NoError(t, service.DispatchPendingForAgent(context.Background(), "agent-1", 10))
+
+	assert.Empty(t, hub.sent)
+	var found db.AgentCommand
+	require.NoError(t, database.DB.First(&found, "id = ?", command.ID).Error)
+	assert.Equal(t, CommandStatusPending, found.Status)
+	assert.Equal(t, 0, found.Attempts)
+	assert.Nil(t, found.DispatchedAt)
+	assert.Empty(t, found.ErrorMessage)
+	assert.Nil(t, found.CompletedAt)
+
+	var history db.TaskHistory
+	require.NoError(t, database.DB.First(&history, "command_id = ?", command.ID).Error)
+	assert.Equal(t, TaskStatusPending, history.Status)
+	assert.Empty(t, history.ErrorLog)
+	assert.Nil(t, history.FinishedAt)
+}
+
+func TestDispatchPendingForAgentSendsLegacyRestoreIncludePathsAsSelectiveWhenSupported(t *testing.T) {
+	database := setupCommandTestDB(t)
+	agent := db.Agent{
+		ID:         "agent-1",
+		Name:       "Agent 1",
+		Status:     "online",
+		SystemInfo: `{"capabilities":["restore_include_paths"]}`,
+	}
+	require.NoError(t, database.DB.Create(&agent).Error)
+	hub := &recordingHub{online: map[string]bool{"agent-1": true}}
+	service := NewService(database, hub)
+	command := createRestoreCommandForTest(t, service, "agent-1", protocol.TypeRestoreReq, []string{"/etc/hosts"})
+
+	require.NoError(t, service.DispatchPendingForAgent(context.Background(), "agent-1", 10))
+
+	require.Len(t, hub.sent, 1)
+	assert.Equal(t, protocol.TypeSelectiveRestoreReq, hub.sent[0].Type)
+	payload, err := protocol.ParsePayload[protocol.RestoreReqPayload](&hub.sent[0])
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/etc/hosts"}, payload.IncludePaths)
+
+	var found db.AgentCommand
+	require.NoError(t, database.DB.First(&found, "id = ?", command.ID).Error)
+	assert.Equal(t, CommandStatusRunning, found.Status)
+	assert.Equal(t, protocol.TypeSelectiveRestoreReq, found.Type)
+	assert.Equal(t, 1, found.Attempts)
+	assert.NotNil(t, found.DispatchedAt)
+
+	persistedMessage, err := service.messageFromCommand(found)
+	require.NoError(t, err)
+	assert.Equal(t, protocol.TypeSelectiveRestoreReq, persistedMessage.Type)
+}
+
 func TestDispatchPendingForAgentRedispatchesUnackedShortCommand(t *testing.T) {
 	database := setupCommandTestDB(t)
 	hub := &recordingHub{online: map[string]bool{"agent-1": true}}
@@ -855,6 +948,26 @@ func createCommandForTest(t *testing.T, service *Service, agentID string, msgTyp
 		Message:   *msg,
 		TaskType:  taskType,
 		TaskState: TaskStatusPending,
+	})
+	require.NoError(t, err)
+	return command
+}
+
+func createRestoreCommandForTest(t *testing.T, service *Service, agentID string, msgType string, includePaths []string) db.AgentCommand {
+	t.Helper()
+	msg, err := protocol.NewMessage(msgType, protocol.RestoreReqPayload{
+		SnapshotID:   "snap-1",
+		Target:       "/restore",
+		IncludePaths: includePaths,
+	})
+	require.NoError(t, err)
+	command, err := service.CreateCommand(context.Background(), CreateCommandInput{
+		AgentID:    agentID,
+		Type:       msgType,
+		Message:    *msg,
+		TaskType:   "restore",
+		TaskState:  TaskStatusPending,
+		SnapshotID: "snap-1",
 	})
 	require.NoError(t, err)
 	return command

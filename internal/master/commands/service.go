@@ -537,9 +537,99 @@ func (s *Service) messageFromCommand(command db.AgentCommand) (protocol.Message,
 	return message, nil
 }
 
-func (s *Service) dispatch(ctx context.Context, command db.AgentCommand) error {
+func (s *Service) prepareMessageForDispatch(ctx context.Context, command db.AgentCommand) (protocol.Message, error) {
 	message, err := s.messageFromCommand(command)
 	if err != nil {
+		return protocol.Message{}, err
+	}
+	if command.Type != protocol.TypeRestoreReq || message.Type != protocol.TypeRestoreReq {
+		return message, nil
+	}
+
+	payload, err := protocol.ParsePayload[protocol.RestoreReqPayload](&message)
+	if err != nil {
+		return protocol.Message{}, fmt.Errorf("parse restore command payload: %w", err)
+	}
+	if len(payload.IncludePaths) == 0 {
+		return message, nil
+	}
+
+	supportsSelectiveRestore, err := s.agentHasCapability(ctx, command.AgentID, protocol.CapabilityRestoreIncludePaths)
+	if err != nil {
+		return protocol.Message{}, err
+	}
+	if !supportsSelectiveRestore {
+		return protocol.Message{}, errSelectiveRestoreUnsupported
+	}
+
+	message.Type = protocol.TypeSelectiveRestoreReq
+	if err := s.persistPreparedMessage(ctx, command, message, protocol.TypeSelectiveRestoreReq); err != nil {
+		return protocol.Message{}, err
+	}
+	return message, nil
+}
+
+var errSelectiveRestoreUnsupported = errors.New("agent does not support selective restore")
+var errAgentCapabilitiesUnknown = errors.New("agent capabilities unknown")
+
+func (s *Service) agentHasCapability(ctx context.Context, agentID string, capability string) (bool, error) {
+	if s == nil || s.DB == nil || s.DB.DB == nil || agentID == "" || capability == "" {
+		return false, errAgentCapabilitiesUnknown
+	}
+	var agent db.Agent
+	if err := s.DB.DB.WithContext(ctx).Select("system_info").First(&agent, "id = ?", agentID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, errAgentCapabilitiesUnknown
+		}
+		return false, err
+	}
+	var info map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(agent.SystemInfo), &info); err != nil {
+		return false, errAgentCapabilitiesUnknown
+	}
+	rawCapabilities, ok := info["capabilities"]
+	if !ok {
+		return false, errAgentCapabilitiesUnknown
+	}
+	var capabilities []string
+	if err := json.Unmarshal(rawCapabilities, &capabilities); err != nil {
+		return false, errAgentCapabilitiesUnknown
+	}
+	for _, supported := range capabilities {
+		if supported == capability {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *Service) persistPreparedMessage(ctx context.Context, command db.AgentCommand, message protocol.Message, commandType string) error {
+	raw, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("marshal prepared command payload: %w", err)
+	}
+	encrypted, err := db.Encrypt(string(raw), s.DB.MasterKey)
+	if err != nil {
+		return fmt.Errorf("encrypt prepared command payload: %w", err)
+	}
+	return s.DB.DB.WithContext(ctx).Model(&db.AgentCommand{}).
+		Where("id = ? AND status NOT IN ?", command.ID, terminalStatuses()).
+		Updates(map[string]any{
+			"type":       commandType,
+			"payload":    encrypted,
+			"updated_at": s.now(),
+		}).Error
+}
+
+func (s *Service) dispatch(ctx context.Context, command db.AgentCommand) error {
+	message, err := s.prepareMessageForDispatch(ctx, command)
+	if err != nil {
+		if errors.Is(err, errAgentCapabilitiesUnknown) {
+			return nil
+		}
+		if errors.Is(err, errSelectiveRestoreUnsupported) {
+			return s.failCommandAndTask(ctx, command, err.Error())
+		}
 		return err
 	}
 	dispatched, err := s.recordDispatchSuccessForCommand(ctx, command)
@@ -550,6 +640,40 @@ func (s *Service) dispatch(ctx context.Context, command db.AgentCommand) error {
 		return s.rollbackDispatchFailure(ctx, command, err)
 	}
 	return nil
+}
+
+func (s *Service) failCommandAndTask(ctx context.Context, command db.AgentCommand, errorText string) error {
+	if s == nil || s.DB == nil || s.DB.DB == nil {
+		return nil
+	}
+	now := s.now()
+	return s.DB.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&db.AgentCommand{}).
+			Where("id = ? AND status NOT IN ?", command.ID, terminalStatuses()).
+			Updates(map[string]any{
+				"status":        CommandStatusFailed,
+				"error_message": errorText,
+				"completed_at":  &now,
+				"updated_at":    now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		if !isLongRunning(command.Type) {
+			return nil
+		}
+		return tx.Model(&db.TaskHistory{}).
+			Where("command_id = ? AND status IN ?", command.ID, []string{TaskStatusPending, TaskStatusRunning}).
+			Updates(map[string]any{
+				"status":      TaskStatusFailed,
+				"error_log":   errorText,
+				"finished_at": &now,
+				"updated_at":  now,
+			}).Error
+	})
 }
 
 func (s *Service) RecordDispatchSuccess(ctx context.Context, commandID string) error {
