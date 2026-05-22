@@ -102,3 +102,30 @@ func TestHandler_HandleCollectLogsReq(t *testing.T) {
 	assert.Contains(t, payload.Logs, "[REDACTED]")
 	assert.NotContains(t, payload.Logs, "abc")
 }
+
+func TestHandler_InjectedLogFileBypassesJournalctlDetection(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "agent.log")
+	require.NoError(t, os.WriteFile(logFile, []byte("injected log password=file-secret\n"), 0o644))
+
+	binDir := filepath.Join(dir, "bin")
+	require.NoError(t, os.Mkdir(binDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "systemctl"), []byte("#!/bin/sh\nprintf active\n"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "journalctl"), []byte("#!/bin/sh\nprintf 'host journal token=host-secret\\n'\n"), 0o755))
+	t.Setenv("PATH", binDir)
+
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{SendFunc: sent.send, LogFile: logFile})
+	msg, err := protocol.NewMessage(protocol.TypeCollectLogsReq, protocol.CollectLogsReqPayload{MaxBytes: 1024})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	require.Len(t, sent.messages, 1)
+	payload, err := protocol.ParsePayload[protocol.CollectLogsRespPayload](&sent.messages[0])
+	require.NoError(t, err)
+	assert.Contains(t, payload.Logs, "injected log")
+	assert.NotContains(t, payload.Logs, "host journal")
+	assert.NotContains(t, payload.Logs, "file-secret")
+	assert.NotContains(t, payload.Logs, "host-secret")
+}

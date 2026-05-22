@@ -760,12 +760,14 @@ func (h *Handler) handleCollectLogsReq(msg protocol.Message) {
 		maxBytes = req.MaxBytes
 	}
 
-	logFile := h.logFile
-	if logFile == "" {
-		logFile = defaultLogFile
+	logs := ""
+	if h.logFile != "" {
+		logs = collectLogsFromFile(h.logFile, maxBytes)
+	} else {
+		logs = collectLogs(defaultLogFile, maxBytes)
 	}
 	resp, err := protocol.NewMessage(protocol.TypeCollectLogsResp, protocol.CollectLogsRespPayload{
-		Logs: collectLogs(logFile, maxBytes),
+		Logs: logs,
 	})
 	if err != nil {
 		log.Printf("create collect_logs response failed: %v", err)
