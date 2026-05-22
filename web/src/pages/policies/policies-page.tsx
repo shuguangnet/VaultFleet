@@ -296,13 +296,17 @@ export function PoliciesPage() {
                     <div className="space-y-2">
                       <Label className="text-xs font-normal text-muted-foreground">通过文件浏览器添加：</Label>
                       {isAgentOnline ? (
-                        <DirectoryBrowser 
-                          agentId={formData.agent_id} 
+                        <DirectoryBrowser
+                          agentId={formData.agent_id}
+                          selectedPaths={formData.backup_dirs}
                           onSelect={(path) => {
                             if (!formData.backup_dirs.includes(path)) {
                               setFormData({ ...formData, backup_dirs: [...formData.backup_dirs, path] });
                             }
-                          }} 
+                          }}
+                          onDeselect={(path) => {
+                            setFormData({ ...formData, backup_dirs: formData.backup_dirs.filter(d => d !== path) });
+                          }}
                         />
                       ) : (
                         <div className="text-xs p-4 border border-dashed rounded text-center text-muted-foreground">
