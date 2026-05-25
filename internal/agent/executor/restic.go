@@ -70,6 +70,7 @@ func (r ResticRunner) baseArgs() []string {
 	} else {
 		args = append(args, "--insecure-no-password")
 	}
+	args = append(args, "-o", "rclone.args=serve restic --stdio --config "+r.RcloneConfPath)
 	return args
 }
 
@@ -215,7 +216,7 @@ func (r ResticRunner) InitRepo(ctx context.Context) error {
 // restic init does not trigger Mkdir itself — some S3-compatible backends
 // (e.g. Tianyi Cloud) return 409 Conflict when the parent directory already exists.
 func (r ResticRunner) ensureRemoteDir(ctx context.Context) error {
-	cmd := exec.CommandContext(ctx, "rclone", "mkdir", "vaultfleet:"+r.RepoPath)
+	cmd := exec.CommandContext(ctx, "rclone", "--config", r.RcloneConfPath, "mkdir", "vaultfleet:"+r.RepoPath)
 	cmd.Env = r.baseEnv()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

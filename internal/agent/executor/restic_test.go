@@ -32,6 +32,8 @@ func TestBuildInitCmdIncludesRepoPasswordAndRcloneConfigEnv(t *testing.T) {
 		"rclone:vaultfleet:backups/agent-1",
 		"--password-file",
 		pwFile,
+		"-o",
+		"rclone.args=serve restic --stdio --config /tmp/rclone.conf",
 	})
 	assertEnvContains(t, cmd.Env, "RCLONE_CONFIG=/tmp/rclone.conf")
 }
@@ -71,6 +73,8 @@ func TestBuildBackupCmdIncludesExcludesAndDirectories(t *testing.T) {
 		"rclone:vaultfleet:repo",
 		"--password-file",
 		pwFile,
+		"-o",
+		"rclone.args=serve restic --stdio --config /tmp/rclone.conf",
 		"--exclude=*.tmp",
 		"--exclude=/home/alice/cache",
 		"/home/alice",
@@ -100,6 +104,8 @@ func TestBuildForgetCmdIncludesPruneAndNonZeroRetention(t *testing.T) {
 		"rclone:vaultfleet:repo",
 		"--password-file",
 		pwFile,
+		"-o",
+		"rclone.args=serve restic --stdio --config /tmp/rclone.conf",
 		"--prune",
 		"--keep-last=3",
 		"--keep-daily=7",
@@ -125,6 +131,8 @@ func TestBuildSnapshotsCmdRequestsJSON(t *testing.T) {
 		"rclone:vaultfleet:repo",
 		"--password-file",
 		pwFile,
+		"-o",
+		"rclone.args=serve restic --stdio --config /tmp/rclone.conf",
 	})
 }
 
@@ -147,6 +155,8 @@ func TestBuildLsSnapshotCmdIncludesSnapshotIDAndJSON(t *testing.T) {
 		"rclone:vaultfleet:repo",
 		"--password-file",
 		pwFile,
+		"-o",
+		"rclone.args=serve restic --stdio --config /tmp/rclone.conf",
 	})
 }
 
@@ -170,6 +180,8 @@ func TestBuildStatsCmdRequestsRawRepositorySizeAsJSON(t *testing.T) {
 		"rclone:vaultfleet:repo",
 		"--password-file",
 		pwFile,
+		"-o",
+		"rclone.args=serve restic --stdio --config /tmp/rclone.conf",
 	})
 }
 
@@ -193,6 +205,8 @@ func TestBuildRestoreCmdIncludesSnapshotAndTarget(t *testing.T) {
 		"rclone:vaultfleet:repo",
 		"--password-file",
 		pwFile,
+		"-o",
+		"rclone.args=serve restic --stdio --config /tmp/rclone.conf",
 	})
 }
 
@@ -220,6 +234,8 @@ func TestBuildRestoreCmdWithIncludePaths(t *testing.T) {
 		"rclone:vaultfleet:repo",
 		"--password-file",
 		pwFile,
+		"-o",
+		"rclone.args=serve restic --stdio --config /tmp/rclone.conf",
 	})
 }
 
@@ -261,6 +277,8 @@ func TestBuildRestoreCmdWithEmptyIncludesHasNoIncludeFlag(t *testing.T) {
 		"rclone:vaultfleet:repo",
 		"--password-file",
 		pwFile,
+		"-o",
+		"rclone.args=serve restic --stdio --config /tmp/rclone.conf",
 	})
 }
 
@@ -350,7 +368,7 @@ func TestInitRepoCallsRcloneMkdirBeforeResticInit(t *testing.T) {
 		t.Fatalf("read rclone log: %v", err)
 	}
 	got := strings.TrimSpace(string(logData))
-	want := "mkdir vaultfleet:backups/node-1"
+	want := "--config " + filepath.Join(dir, "rclone.conf") + " mkdir vaultfleet:backups/node-1"
 	if got != want {
 		t.Fatalf("rclone called with %q, want %q", got, want)
 	}
@@ -617,6 +635,8 @@ func TestBaseArgsUsesInsecureNoPasswordWhenPasswordFileIsEmpty(t *testing.T) {
 		"-r",
 		"rclone:vaultfleet:repo",
 		"--insecure-no-password",
+		"-o",
+		"rclone.args=serve restic --stdio --config /tmp/rclone.conf",
 	})
 }
 
@@ -635,6 +655,8 @@ func TestBaseArgsUsesInsecureNoPasswordWhenPasswordFileMissing(t *testing.T) {
 		"-r",
 		"rclone:vaultfleet:repo",
 		"--insecure-no-password",
+		"-o",
+		"rclone.args=serve restic --stdio --config /tmp/rclone.conf",
 		"/data",
 	})
 }
