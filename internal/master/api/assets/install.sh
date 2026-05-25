@@ -121,12 +121,17 @@ if [[ "$OS" != "linux" ]]; then
     exit 1
 fi
 
-if [[ -z "$AGENT_URL" ]]; then
-    GITHUB_RELEASE_BASE="https://github.com/${GITHUB_REPO}/releases/latest/download"
-    AGENT_URL="${GITHUB_RELEASE_BASE}/vaultfleet-agent-linux-${ARCH}"
+proxy_url() {
+    local url="$1"
     if [[ -n "$GITHUB_PROXY" ]]; then
-        AGENT_URL="${GITHUB_PROXY%/}/${AGENT_URL}"
+        echo "${GITHUB_PROXY%/}/${url}"
+    else
+        echo "$url"
     fi
+}
+
+if [[ -z "$AGENT_URL" ]]; then
+    AGENT_URL=$(proxy_url "https://github.com/${GITHUB_REPO}/releases/latest/download/vaultfleet-agent-linux-${ARCH}")
 fi
 if [[ -n "$AGENT_SHA256" && ! "$AGENT_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
     echo "Agent SHA256 must be a 64-character hex digest"
@@ -176,7 +181,7 @@ if [[ ! -x "${INSTALL_DIR}/restic-real" ]]; then
 		ensure_command sha256sum coreutils
 		restic_archive="${tmp_dir}/restic.bz2"
 		restic_bin="${tmp_dir}/restic"
-		curl -fsSL "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_${OS}_${ARCH}.bz2" -o "$restic_archive"
+		curl -fsSL "$(proxy_url "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_${OS}_${ARCH}.bz2")" -o "$restic_archive"
 		verify_sha256 "$RESTIC_SHA256" "$restic_archive"
 		bunzip2 -c "$restic_archive" > "$restic_bin"
 		chmod +x "$restic_bin"
@@ -215,6 +220,10 @@ echo "==> Enrolling agent with master..."
     --server "$MASTER_URL" \
     --token "$ENROLL_TOKEN" \
     --config "${CONFIG_DIR}/agent.yaml"
+
+if [[ -n "$GITHUB_PROXY" ]]; then
+    echo "github_proxy: \"${GITHUB_PROXY}\"" >> "${CONFIG_DIR}/agent.yaml"
+fi
 
 if command -v systemctl &>/dev/null; then
     echo "==> Creating systemd service..."
