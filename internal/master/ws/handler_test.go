@@ -942,3 +942,94 @@ func TestHandler_PublishesAgentOnlineAndOfflineEvents(t *testing.T) {
 		}
 	}, time.Second, 10*time.Millisecond)
 }
+
+func TestHandlerHeartbeatSendsVersionInfoWhenMismatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	hub := NewHub()
+	handler := NewHandler(hub, events.NewBus(), validTestAuth, noPolicy, nil)
+	handler.MasterVersion = "v2.0.0"
+	handler.GitHubRepo = "momo-z/VaultFleet"
+	handler.HeartbeatStateUpdater = func(string, string, *time.Time, *protocol.HeartbeatPayload) error {
+		return nil
+	}
+
+	router := gin.New()
+	router.GET("/ws", handler.HandleWebSocket)
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+
+	conn, _, err := websocket.DefaultDialer.Dial(websocketURL(server.URL, "/ws", url.Values{"token": []string{"valid-token"}}), nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	heartbeat, err := protocol.NewMessage(protocol.TypeHeartbeat, protocol.HeartbeatPayload{
+		AgentVersion: "v1.0.0",
+		Capabilities: []string{protocol.CapabilitySnapshotBrowse},
+	})
+	require.NoError(t, err)
+	require.NoError(t, conn.WriteJSON(heartbeat))
+
+	var msg protocol.Message
+	require.NoError(t, conn.ReadJSON(&msg))
+	assert.Equal(t, protocol.TypeVersionInfo, msg.Type)
+	payload, err := protocol.ParsePayload[protocol.VersionInfoPayload](&msg)
+	require.NoError(t, err)
+	assert.Equal(t, "v2.0.0", payload.Version)
+	assert.Equal(t, "momo-z/VaultFleet", payload.GitHubRepo)
+}
+
+func TestHandlerHeartbeatSkipsVersionInfoWhenMatch(t *testing.T) {
+	hub := NewHub()
+	handler := NewHandler(hub, events.NewBus(), validTestAuth, noPolicy, nil)
+	handler.MasterVersion = "v1.0.0"
+	handler.GitHubRepo = "momo-z/VaultFleet"
+	handler.HeartbeatStateUpdater = func(string, string, *time.Time, *protocol.HeartbeatPayload) error {
+		return nil
+	}
+
+	msg, err := protocol.NewMessage(protocol.TypeHeartbeat, protocol.HeartbeatPayload{
+		AgentVersion: "v1.0.0",
+		Capabilities: []string{protocol.CapabilitySnapshotBrowse},
+	})
+	require.NoError(t, err)
+
+	handler.dispatch("agent-1", *msg)
+}
+
+func TestHandlerHeartbeatVersionInfoCooldown(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	hub := NewHub()
+	handler := NewHandler(hub, events.NewBus(), validTestAuth, noPolicy, nil)
+	handler.MasterVersion = "v2.0.0"
+	handler.GitHubRepo = "momo-z/VaultFleet"
+	handler.HeartbeatStateUpdater = func(string, string, *time.Time, *protocol.HeartbeatPayload) error {
+		return nil
+	}
+
+	router := gin.New()
+	router.GET("/ws", handler.HandleWebSocket)
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+
+	conn, _, err := websocket.DefaultDialer.Dial(websocketURL(server.URL, "/ws", url.Values{"token": []string{"valid-token"}}), nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	heartbeat, err := protocol.NewMessage(protocol.TypeHeartbeat, protocol.HeartbeatPayload{
+		AgentVersion: "v1.0.0",
+		Capabilities: []string{protocol.CapabilitySnapshotBrowse},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, conn.WriteJSON(heartbeat))
+	var firstMsg protocol.Message
+	require.NoError(t, conn.ReadJSON(&firstMsg))
+	assert.Equal(t, protocol.TypeVersionInfo, firstMsg.Type)
+
+	require.NoError(t, conn.WriteJSON(heartbeat))
+
+	conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	var secondMsg protocol.Message
+	err = conn.ReadJSON(&secondMsg)
+	assert.Error(t, err, "should not receive a second version_info within cooldown")
+}

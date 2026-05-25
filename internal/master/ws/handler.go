@@ -41,6 +41,10 @@ type Handler struct {
 	capabilityDispatches          map[string]struct{}
 	now                           func() time.Time
 	pongWait                      time.Duration
+	MasterVersion                 string
+	GitHubRepo                    string
+	versionNotifyMu               sync.Mutex
+	versionNotifyTimes            map[string]time.Time
 }
 
 func NewHandler(hub *Hub, eventBus *events.Bus, authAgent AgentAuthFunc, policyLookup PolicyLookupFunc, taskResultProcess TaskResultProcessorFunc) *Handler {
@@ -53,6 +57,7 @@ func NewHandler(hub *Hub, eventBus *events.Bus, authAgent AgentAuthFunc, policyL
 		capabilityDispatches: make(map[string]struct{}),
 		now:                  time.Now,
 		pongWait:             defaultPongWait,
+		versionNotifyTimes:   make(map[string]time.Time),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: allowAgentOrigin,
 		},
@@ -126,6 +131,7 @@ func (h *Handler) dispatchPendingCommands(agentID string) {
 func (h *Handler) cleanupConnection(agentID string, conn *SafeConn) {
 	if h.hub.RemoveIfCurrent(agentID, conn) {
 		h.resetCapabilityDispatch(agentID)
+		h.resetVersionNotify(agentID)
 		h.updateAgentState(agentID, "offline", nil)
 		h.eventBus.Publish(events.Event{Type: events.AgentOffline, Payload: agentID})
 	}
@@ -171,9 +177,9 @@ func (h *Handler) dispatch(agentID string, msg protocol.Message) {
 		h.hub.UpdateLastSeen(agentID, now)
 		h.hub.MarkOnline(agentID)
 		h.updateAgentState(agentID, "online", &now)
-		if h.HeartbeatStateUpdater != nil {
-			heartbeat, err := protocol.ParsePayload[protocol.HeartbeatPayload](&msg)
-			if err == nil && (heartbeat.AgentVersion != "" || len(heartbeat.Capabilities) > 0) {
+		heartbeat, parseErr := protocol.ParsePayload[protocol.HeartbeatPayload](&msg)
+		if parseErr == nil && (heartbeat.AgentVersion != "" || len(heartbeat.Capabilities) > 0) {
+			if h.HeartbeatStateUpdater != nil {
 				if err := h.HeartbeatStateUpdater(agentID, "online", &now, heartbeat); err != nil {
 					log.Printf("update agent %s heartbeat state failed: %v", agentID, err)
 				} else if len(heartbeat.Capabilities) > 0 {
@@ -181,6 +187,9 @@ func (h *Handler) dispatch(agentID string, msg protocol.Message) {
 						h.dispatchPendingCommands(agentID)
 					}
 				}
+			}
+			if heartbeat.AgentVersion != "" && h.MasterVersion != "" && heartbeat.AgentVersion != h.MasterVersion {
+				h.notifyVersionIfCooldown(agentID)
 			}
 		}
 	case protocol.TypePolicyAck:
@@ -218,6 +227,38 @@ func (h *Handler) dispatch(agentID string, msg protocol.Message) {
 			}
 		}
 	}
+}
+
+const versionNotifyCooldown = time.Hour
+
+func (h *Handler) notifyVersionIfCooldown(agentID string) {
+	h.versionNotifyMu.Lock()
+	last, ok := h.versionNotifyTimes[agentID]
+	now := h.now()
+	if ok && now.Sub(last) < versionNotifyCooldown {
+		h.versionNotifyMu.Unlock()
+		return
+	}
+	h.versionNotifyTimes[agentID] = now
+	h.versionNotifyMu.Unlock()
+
+	msg, err := protocol.NewMessage(protocol.TypeVersionInfo, protocol.VersionInfoPayload{
+		Version:    h.MasterVersion,
+		GitHubRepo: h.GitHubRepo,
+	})
+	if err != nil {
+		log.Printf("create version info message failed: %v", err)
+		return
+	}
+	if err := h.hub.Send(agentID, msg); err != nil {
+		log.Printf("send version info to agent %s failed: %v", agentID, err)
+	}
+}
+
+func (h *Handler) resetVersionNotify(agentID string) {
+	h.versionNotifyMu.Lock()
+	delete(h.versionNotifyTimes, agentID)
+	h.versionNotifyMu.Unlock()
 }
 
 func (h *Handler) updateAgentState(agentID string, status string, lastSeenAt *time.Time) {
