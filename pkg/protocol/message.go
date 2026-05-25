@@ -28,6 +28,8 @@ const (
 	TypeCollectLogsResp     = "collect_logs_resp"
 	TypeDirSizeReq         = "dir_size_req"
 	TypeDirSizeResp        = "dir_size_resp"
+	TypeVersionInfo = "version_info"
+	TypeUpdateAgent = "update_agent"
 )
 
 const (
@@ -229,4 +231,14 @@ type CollectLogsReqPayload struct {
 type CollectLogsRespPayload struct {
 	Logs  string `json:"logs"`
 	Error string `json:"error,omitempty"`
+}
+
+type VersionInfoPayload struct {
+	Version    string `json:"version"`
+	GitHubRepo string `json:"github_repo"`
+}
+
+type UpdateAgentPayload struct {
+	Version    string `json:"version"`
+	GitHubRepo string `json:"github_repo"`
 }
