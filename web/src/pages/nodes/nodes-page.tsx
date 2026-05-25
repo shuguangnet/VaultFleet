@@ -190,7 +190,7 @@ export function NodesPage() {
                   <TableCell className="hidden md:table-cell text-xs">
                     <div className="flex flex-col">
                       <span>{agent.os} / {agent.arch}</span>
-                      {agent.version && <span className="text-muted-foreground">v{agent.version}</span>}
+                      {agent.version && <span className="text-muted-foreground">{agent.version}</span>}
                     </div>
                   </TableCell>
                   <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
