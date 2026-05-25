@@ -1246,3 +1246,100 @@ func fileInfo(t *testing.T, path string) os.FileInfo {
 	require.NoError(t, err)
 	return info
 }
+
+type recordingUpdater struct {
+	calls []struct{ version, repo string }
+	mu    sync.Mutex
+}
+
+func (u *recordingUpdater) Update(version, repo string) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.calls = append(u.calls, struct{ version, repo string }{version, repo})
+	return nil
+}
+
+func TestHandlerVersionInfoTriggersUpdate(t *testing.T) {
+	updater := &recordingUpdater{}
+	handler := NewHandler(HandlerConfig{
+		PolicyStore:  policy.NewStore(""),
+		AgentVersion: "v1.0.0",
+		Updater:      updater,
+	})
+	msg, err := protocol.NewMessage(protocol.TypeVersionInfo, protocol.VersionInfoPayload{
+		Version:    "v2.0.0",
+		GitHubRepo: "momo-z/VaultFleet",
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	// handleVersionInfo launches a goroutine, give it time to complete
+	require.Eventually(t, func() bool {
+		updater.mu.Lock()
+		defer updater.mu.Unlock()
+		return len(updater.calls) == 1
+	}, time.Second, 10*time.Millisecond)
+	updater.mu.Lock()
+	defer updater.mu.Unlock()
+	assert.Equal(t, "v2.0.0", updater.calls[0].version)
+	assert.Equal(t, "momo-z/VaultFleet", updater.calls[0].repo)
+}
+
+func TestHandlerVersionInfoSkipsWhenSameVersion(t *testing.T) {
+	updater := &recordingUpdater{}
+	handler := NewHandler(HandlerConfig{
+		PolicyStore:  policy.NewStore(""),
+		AgentVersion: "v2.0.0",
+		Updater:      updater,
+	})
+	msg, err := protocol.NewMessage(protocol.TypeVersionInfo, protocol.VersionInfoPayload{
+		Version:    "v2.0.0",
+		GitHubRepo: "momo-z/VaultFleet",
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	time.Sleep(50 * time.Millisecond)
+	updater.mu.Lock()
+	defer updater.mu.Unlock()
+	assert.Empty(t, updater.calls)
+}
+
+func TestHandlerVersionInfoSkipsWhenNoUpdater(t *testing.T) {
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: policy.NewStore(""),
+	})
+	msg, err := protocol.NewMessage(protocol.TypeVersionInfo, protocol.VersionInfoPayload{
+		Version: "v2.0.0",
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+}
+
+func TestHandlerUpdateAgentTriggersUpdateEvenWhenSameVersion(t *testing.T) {
+	updater := &recordingUpdater{}
+	handler := NewHandler(HandlerConfig{
+		PolicyStore:  policy.NewStore(""),
+		AgentVersion: "v2.0.0",
+		Updater:      updater,
+	})
+	msg, err := protocol.NewMessage(protocol.TypeUpdateAgent, protocol.UpdateAgentPayload{
+		Version:    "v2.0.0",
+		GitHubRepo: "momo-z/VaultFleet",
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	require.Eventually(t, func() bool {
+		updater.mu.Lock()
+		defer updater.mu.Unlock()
+		return len(updater.calls) == 1
+	}, time.Second, 10*time.Millisecond)
+	updater.mu.Lock()
+	defer updater.mu.Unlock()
+	assert.Equal(t, "v2.0.0", updater.calls[0].version)
+}

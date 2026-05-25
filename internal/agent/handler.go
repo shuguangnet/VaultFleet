@@ -24,6 +24,10 @@ type BrowseFunc func(fsRoot string, scanPath string, maxDepth int) ([]protocol.D
 
 type DirSizeFunc func(fsRoot string, path string) (int64, error)
 
+type AgentUpdater interface {
+	Update(targetVersion, githubRepo string) error
+}
+
 type BackupRunnerFunc func(context.Context, executor.ExecutorConfig) executor.TaskResult
 type RestoreRunnerFunc func(context.Context, executor.ExecutorConfig, string, string, []string) error
 type SnapshotListRunnerFunc func(context.Context, executor.ExecutorConfig) ([]executor.SnapshotInfo, error)
@@ -48,6 +52,8 @@ type HandlerConfig struct {
 	SnapshotListRunner   SnapshotListRunnerFunc
 	SnapshotBrowseRunner SnapshotBrowseRunnerFunc
 	DirSizeFunc          DirSizeFunc
+	AgentVersion string
+	Updater      AgentUpdater
 }
 
 type Handler struct {
@@ -63,6 +69,8 @@ type Handler struct {
 	snapshotListRunner   SnapshotListRunnerFunc
 	snapshotBrowseRunner SnapshotBrowseRunnerFunc
 	dirSizeFunc          DirSizeFunc
+	agentVersion string
+	updater      AgentUpdater
 	backupMu             sync.Mutex
 	backupRunning        bool
 }
@@ -117,6 +125,8 @@ func NewHandler(config HandlerConfig) *Handler {
 		snapshotListRunner:   snapshotListRunner,
 		snapshotBrowseRunner: snapshotBrowseRunner,
 		dirSizeFunc:          dirSizeFunc,
+		agentVersion: config.AgentVersion,
+		updater:      config.Updater,
 	}
 }
 
@@ -138,6 +148,10 @@ func (h *Handler) Handle(msg protocol.Message) {
 		h.handleSnapshotBrowseReq(msg)
 	case protocol.TypeCollectLogsReq:
 		h.handleCollectLogsReq(msg)
+	case protocol.TypeVersionInfo:
+		h.handleVersionInfo(msg)
+	case protocol.TypeUpdateAgent:
+		h.handleUpdateAgent(msg)
 	}
 }
 
@@ -959,4 +973,41 @@ func (h *Handler) handleDirSizeReq(msg protocol.Message) {
 	if err := h.send(*resp); err != nil {
 		log.Printf("send directory size response failed: %v", err)
 	}
+}
+
+func (h *Handler) handleVersionInfo(msg protocol.Message) {
+	if h.updater == nil {
+		return
+	}
+	info, err := protocol.ParsePayload[protocol.VersionInfoPayload](&msg)
+	if err != nil {
+		log.Printf("parse version info failed: %v", err)
+		return
+	}
+	if info.Version == h.agentVersion {
+		return
+	}
+	log.Printf("master version %s differs from agent version %s, starting update", info.Version, h.agentVersion)
+	go func() {
+		if err := h.updater.Update(info.Version, info.GitHubRepo); err != nil {
+			log.Printf("self-update to %s failed: %v", info.Version, err)
+		}
+	}()
+}
+
+func (h *Handler) handleUpdateAgent(msg protocol.Message) {
+	if h.updater == nil {
+		return
+	}
+	info, err := protocol.ParsePayload[protocol.UpdateAgentPayload](&msg)
+	if err != nil {
+		log.Printf("parse update agent failed: %v", err)
+		return
+	}
+	log.Printf("master requested update to %s", info.Version)
+	go func() {
+		if err := h.updater.Update(info.Version, info.GitHubRepo); err != nil {
+			log.Printf("self-update to %s failed: %v", info.Version, err)
+		}
+	}()
 }
