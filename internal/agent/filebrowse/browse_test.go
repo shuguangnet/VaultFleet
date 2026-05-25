@@ -198,3 +198,63 @@ func findEntry(t *testing.T, entries []DirEntry, wantPath string) DirEntry {
 	t.Fatalf("entry %q not found in %#v", wantPath, entries)
 	return DirEntry{}
 }
+
+func TestCalculateDirSizeHappyPath(t *testing.T) {
+	root := setupBrowseTree(t)
+
+	size, err := CalculateDirSize(root, filepath.Join(root, "etc"))
+
+	require.NoError(t, err)
+	// etc/nginx.conf 内容为 "server {}\n" = 10 字节
+	assert.Equal(t, int64(10), size)
+}
+
+func TestCalculateDirSizeDeepTree(t *testing.T) {
+	root := setupBrowseTree(t)
+
+	size, err := CalculateDirSize(root, filepath.Join(root, "home"))
+
+	require.NoError(t, err)
+	// home/app/config/settings.json 内容为 "{}" = 2 字节
+	assert.Equal(t, int64(2), size)
+}
+
+func TestCalculateDirSizeRejectsPathOutsideRoot(t *testing.T) {
+	root := setupBrowseTree(t)
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0644))
+
+	_, err := CalculateDirSize(root, outside)
+
+	require.Error(t, err)
+}
+
+func TestCalculateDirSizeReturnsErrorForMissingPath(t *testing.T) {
+	root := setupBrowseTree(t)
+
+	_, err := CalculateDirSize(root, filepath.Join(root, "nonexistent"))
+
+	require.Error(t, err)
+}
+
+func TestCalculateDirSizeReturnsErrorForFile(t *testing.T) {
+	root := setupBrowseTree(t)
+
+	_, err := CalculateDirSize(root, filepath.Join(root, "etc", "nginx.conf"))
+
+	require.Error(t, err)
+}
+
+func TestCalculateDirSizeTimeout(t *testing.T) {
+	root := setupBrowseTree(t)
+	originalTimeout := dirSizeTimeout
+	dirSizeTimeout = 0
+	t.Cleanup(func() {
+		dirSizeTimeout = originalTimeout
+	})
+
+	_, err := CalculateDirSize(root, root)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, context.DeadlineExceeded))
+}

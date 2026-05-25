@@ -189,3 +189,60 @@ func pathDepth(path string) int {
 	}
 	return len(strings.Split(clean, string(os.PathSeparator)))
 }
+
+var dirSizeTimeout = 30 * time.Second
+
+func CalculateDirSize(fsRoot string, path string) (int64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dirSizeTimeout)
+	defer cancel()
+
+	cleanRoot, cleanPath, err := resolveScanPath(fsRoot, path)
+	if err != nil {
+		return 0, err
+	}
+
+	info, err := os.Lstat(cleanPath)
+	if err != nil {
+		return 0, err
+	}
+	if !info.IsDir() {
+		return 0, fmt.Errorf("path %q is not a directory", cleanPath)
+	}
+
+	var totalSize int64
+	err = filepath.WalkDir(cleanPath, func(p string, d fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if walkErr != nil {
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if p == cleanPath {
+			return nil
+		}
+		if isExcludedTopLevel(cleanRoot, p) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.IsDir() {
+			totalSize += info.Size()
+		}
+		return nil
+	})
+	return totalSize, err
+}
