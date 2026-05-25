@@ -244,5 +244,8 @@ func CalculateDirSize(fsRoot string, path string) (int64, error) {
 		}
 		return nil
 	})
-	return totalSize, err
+	if err != nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
+		return totalSize, err
+	}
+	return totalSize, nil
 }
