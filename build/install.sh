@@ -124,7 +124,12 @@ fi
 proxy_url() {
     local url="$1"
     if [[ -n "$GITHUB_PROXY" ]]; then
-        echo "${GITHUB_PROXY%/}/${url}"
+        local prefix="${GITHUB_PROXY%/}"
+        if [[ "$url" == "$prefix"/* ]]; then
+            echo "$url"
+        else
+            echo "${prefix}/${url}"
+        fi
     else
         echo "$url"
     fi
