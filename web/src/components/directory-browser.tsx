@@ -212,7 +212,13 @@ export function DirectoryBrowser({
       });
       try {
         const resp = await dirSizeAgent(agentId, { path });
-        if (resp.error) {
+        if (resp.size > 0) {
+          setDirSizes((prev) => {
+            const next = new Map(prev);
+            next.set(path, resp.size);
+            return next;
+          });
+        } else if (resp.error) {
           setDirSizes((prev) => {
             const next = new Map(prev);
             next.set(path, "error");
@@ -221,7 +227,7 @@ export function DirectoryBrowser({
         } else {
           setDirSizes((prev) => {
             const next = new Map(prev);
-            next.set(path, resp.size);
+            next.set(path, 0);
             return next;
           });
         }

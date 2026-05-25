@@ -944,7 +944,6 @@ func (h *Handler) handleDirSizeReq(msg protocol.Message) {
 	}
 	if sizeErr != nil {
 		payload.Error = sizeErr.Error()
-		payload.Size = 0
 	}
 
 	resp, err := protocol.NewMessage(protocol.TypeDirSizeResp, payload)
