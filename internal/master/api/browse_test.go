@@ -156,6 +156,90 @@ func createBrowseAgent(t *testing.T, database *db.Database, status string) db.Ag
 	return agent
 }
 
+func TestDirSizeHappyRelay(t *testing.T) {
+	setup := setupBrowseAPI(t)
+	agent := createBrowseAgent(t, setup.database, "online")
+	setup.hub.Add(agent.ID, nil)
+
+	setup.handler.dirSizeTimeout = time.Second
+	setup.handler.sendAndWait = func(agentID string, msg protocol.Message, timeout time.Duration) (<-chan protocol.Message, error) {
+		assert.Equal(t, agent.ID, agentID)
+		assert.Equal(t, protocol.TypeDirSizeReq, msg.Type)
+		assert.Equal(t, time.Second, timeout)
+		req, err := protocol.ParsePayload[protocol.DirSizeReqPayload](&msg)
+		require.NoError(t, err)
+		assert.Equal(t, "/home/data", req.Path)
+
+		resp, err := protocol.NewMessage(protocol.TypeDirSizeResp, protocol.DirSizeRespPayload{
+			Path: "/home/data",
+			Size: 1073741824,
+		})
+		require.NoError(t, err)
+		resp.ID = msg.ID
+
+		ch := make(chan protocol.Message, 1)
+		ch <- *resp
+		close(ch)
+		return ch, nil
+	}
+
+	w := postBrowseJSON(t, setup.router, "/api/agents/"+agent.ID+"/dir-size", map[string]any{
+		"path": "/home/data",
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	raw := parseJSON(t, w)
+	assert.Equal(t, true, raw["ok"])
+	data, err := json.Marshal(raw["data"])
+	require.NoError(t, err)
+	var body protocol.DirSizeRespPayload
+	require.NoError(t, json.Unmarshal(data, &body))
+	assert.Equal(t, "/home/data", body.Path)
+	assert.Equal(t, int64(1073741824), body.Size)
+}
+
+func TestDirSizeAgentOffline(t *testing.T) {
+	setup := setupBrowseAPI(t)
+	agent := createBrowseAgent(t, setup.database, "offline")
+
+	w := postBrowseJSON(t, setup.router, "/api/agents/"+agent.ID+"/dir-size", map[string]any{
+		"path": "/home",
+	})
+
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	body := parseJSON(t, w)
+	assert.Equal(t, false, body["ok"])
+	assert.Equal(t, "agent offline", body["error"])
+}
+
+func TestDirSizeRequiresPath(t *testing.T) {
+	setup := setupBrowseAPI(t)
+	agent := createBrowseAgent(t, setup.database, "online")
+	setup.hub.Add(agent.ID, nil)
+
+	w := postBrowseJSON(t, setup.router, "/api/agents/"+agent.ID+"/dir-size", map[string]any{})
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestDirSizeTimeout(t *testing.T) {
+	setup := setupBrowseAPI(t)
+	agent := createBrowseAgent(t, setup.database, "online")
+	setup.hub.Add(agent.ID, nil)
+	setup.handler.dirSizeTimeout = time.Second
+	setup.handler.sendAndWait = func(string, protocol.Message, time.Duration) (<-chan protocol.Message, error) {
+		ch := make(chan protocol.Message)
+		close(ch)
+		return ch, nil
+	}
+
+	w := postBrowseJSON(t, setup.router, "/api/agents/"+agent.ID+"/dir-size", map[string]any{
+		"path": "/home",
+	})
+
+	require.Equal(t, http.StatusGatewayTimeout, w.Code)
+}
+
 func postBrowseJSON(t *testing.T, router http.Handler, path string, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 

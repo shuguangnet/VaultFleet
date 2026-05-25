@@ -13,12 +13,14 @@ import (
 )
 
 const browseRequestTimeout = 15 * time.Second
+const dirSizeRequestTimeout = 30 * time.Second
 
 type BrowseHandler struct {
 	DB  *db.Database
 	Hub BrowseHub
 
-	timeout     time.Duration
+	timeout        time.Duration
+	dirSizeTimeout time.Duration
 	sendAndWait func(agentID string, msg protocol.Message, timeout time.Duration) (<-chan protocol.Message, error)
 }
 
@@ -32,6 +34,10 @@ type browseAgentRequest struct {
 	Depth int    `json:"depth"`
 }
 
+type dirSizeRequest struct {
+	Path string `json:"path" binding:"required"`
+}
+
 func NewBrowseHandler(database *db.Database, hub BrowseHub) *BrowseHandler {
 	handler := &BrowseHandler{
 		DB:      database,
@@ -41,11 +47,13 @@ func NewBrowseHandler(database *db.Database, hub BrowseHub) *BrowseHandler {
 	handler.sendAndWait = func(agentID string, msg protocol.Message, timeout time.Duration) (<-chan protocol.Message, error) {
 		return handler.Hub.SendAndWait(agentID, msg, timeout)
 	}
+	handler.dirSizeTimeout = dirSizeRequestTimeout
 	return handler
 }
 
 func RegisterBrowseRoutes(rg *gin.RouterGroup, h *BrowseHandler) {
 	rg.POST("/agents/:id/browse", h.BrowseAgent)
+	rg.POST("/agents/:id/dir-size", h.DirSize)
 }
 
 func (h *BrowseHandler) BrowseAgent(c *gin.Context) {
@@ -97,6 +105,66 @@ func (h *BrowseHandler) BrowseAgent(c *gin.Context) {
 			return
 		}
 		payload, err := protocol.ParsePayload[protocol.DirBrowseRespPayload](&resp)
+		if err != nil {
+			writeErrorResponse(c, http.StatusBadGateway, "invalid agent response")
+			return
+		}
+		writeDataResponse(c, http.StatusOK, payload)
+	case <-c.Request.Context().Done():
+		writeErrorResponse(c, http.StatusGatewayTimeout, "request cancelled")
+	}
+}
+
+func (h *BrowseHandler) DirSize(c *gin.Context) {
+	agentID := c.Param("id")
+	if !h.agentExists(c, agentID) {
+		return
+	}
+	if h.Hub == nil || !h.Hub.IsOnline(agentID) {
+		writeErrorResponse(c, http.StatusBadGateway, "agent offline")
+		return
+	}
+
+	var request dirSizeRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		writeErrorResponse(c, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	msg, err := protocol.NewMessage(protocol.TypeDirSizeReq, protocol.DirSizeReqPayload{
+		Path: request.Path,
+	})
+	if err != nil {
+		writeErrorResponse(c, http.StatusInternalServerError, "encode dir size request")
+		return
+	}
+
+	timeout := h.dirSizeTimeout
+	if timeout == 0 {
+		timeout = dirSizeRequestTimeout
+	}
+
+	wait := h.sendAndWait
+	if wait == nil && h.Hub != nil {
+		wait = h.Hub.SendAndWait
+	}
+	if wait == nil {
+		writeErrorResponse(c, http.StatusBadGateway, "agent offline")
+		return
+	}
+	respCh, err := wait(agentID, *msg, timeout)
+	if err != nil {
+		writeErrorResponse(c, http.StatusBadGateway, "agent offline")
+		return
+	}
+
+	select {
+	case resp, ok := <-respCh:
+		if !ok {
+			writeErrorResponse(c, http.StatusGatewayTimeout, "timeout waiting for agent response")
+			return
+		}
+		payload, err := protocol.ParsePayload[protocol.DirSizeRespPayload](&resp)
 		if err != nil {
 			writeErrorResponse(c, http.StatusBadGateway, "invalid agent response")
 			return
