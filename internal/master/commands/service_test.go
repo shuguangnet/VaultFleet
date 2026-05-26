@@ -230,6 +230,7 @@ func assertConcurrentDispatchSendsLongCommandAtMostOnce(
 	var historyDuringSend db.TaskHistory
 	if assert.NoError(t, database.DB.First(&historyDuringSend, "command_id = ?", command.ID).Error) {
 		assert.Equal(t, TaskStatusRunning, historyDuringSend.Status)
+		assert.NotNil(t, historyDuringSend.StartedAt, "started_at should be set when task transitions to running")
 	}
 
 	secondErr := make(chan error, 1)

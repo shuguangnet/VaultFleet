@@ -742,6 +742,7 @@ func (s *Service) recordDispatchSuccessForCommand(ctx context.Context, command d
 			Where("command_id = ? AND status = ?", command.ID, TaskStatusPending).
 			Updates(map[string]any{
 				"status":     TaskStatusRunning,
+				"started_at": &now,
 				"updated_at": now,
 			}).Error
 	})
@@ -783,6 +784,7 @@ func (s *Service) recordDispatchFailure(ctx context.Context, command db.AgentCom
 			Where("command_id = ? AND status = ?", command.ID, TaskStatusRunning).
 			Updates(map[string]any{
 				"status":     TaskStatusPending,
+				"started_at": nil,
 				"updated_at": now,
 			}).Error
 	})

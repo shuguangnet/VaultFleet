@@ -128,7 +128,7 @@ func TestRestoreSendsMessageAndRecordsRunningTask(t *testing.T) {
 	assert.Equal(t, messageID, history.MessageID)
 	assert.Equal(t, "snap-1", history.SnapshotID)
 	assert.Equal(t, command.ID, history.CommandID)
-	assert.Nil(t, history.StartedAt)
+	assert.NotNil(t, history.StartedAt)
 	assert.Nil(t, history.FinishedAt)
 }
 
