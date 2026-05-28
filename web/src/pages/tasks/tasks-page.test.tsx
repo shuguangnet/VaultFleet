@@ -14,6 +14,7 @@ describe("task progress helpers", () => {
     expect(formatBytes(1536)).toBe("1.5 KB");
     expect(formatBytes(2 * 1024 * 1024)).toBe("2.0 MB");
     expect(formatBytes(3 * 1024 * 1024 * 1024)).toBe("3.00 GB");
+    expect(formatBytes(4 * 1024 * 1024 * 1024 * 1024)).toBe("4.00 TB");
   });
 
   it("formats upload speed only when positive", () => {
@@ -111,10 +112,16 @@ describe("task progress helpers", () => {
 
     rerender(<>{renderTaskMetricContent(task({ status: "success", duration_ms: 1530, repo_size: 5 * 1024 * 1024 }))}</>);
     expect(screen.getByText("1s")).toBeInTheDocument();
-    expect(screen.getByText("5.00 MB")).toBeInTheDocument();
+    expect(screen.getByText("5.0 MB")).toBeInTheDocument();
 
     rerender(<>{renderTaskMetricContent(task({ status: "success", duration_ms: 1530, repo_size: 4096 }))}</>);
-    expect(screen.getByText("0.00 MB")).toBeInTheDocument();
+    expect(screen.getByText("4.0 KB")).toBeInTheDocument();
+
+    rerender(<>{renderTaskMetricContent(task({ status: "success", duration_ms: 1530, repo_size: 3 * 1024 * 1024 * 1024 }))}</>);
+    expect(screen.getByText("3.00 GB")).toBeInTheDocument();
+
+    rerender(<>{renderTaskMetricContent(task({ status: "success", duration_ms: 1530, repo_size: 4 * 1024 * 1024 * 1024 * 1024 }))}</>);
+    expect(screen.getByText("4.00 TB")).toBeInTheDocument();
   });
 
   it("renders a cancel button for active tasks when a cancel callback is provided", async () => {

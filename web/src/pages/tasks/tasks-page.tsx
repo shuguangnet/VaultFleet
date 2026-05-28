@@ -302,7 +302,8 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  if (bytes < 1024 * 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  return `${(bytes / 1024 / 1024 / 1024 / 1024).toFixed(2)} TB`;
 }
 
 export function formatSpeed(bytesPerSec: number): string {
@@ -350,7 +351,7 @@ export function renderTaskMetricContent(task: TaskHistory, onCancel?: (taskId: s
     <div className="flex min-h-8 flex-col justify-center">
       <span>{task.duration_ms ? formatDuration(task.duration_ms) : "-"}</span>
       {task.repo_size ? (
-        <span className="text-muted-foreground">{(task.repo_size / 1024 / 1024).toFixed(2)} MB</span>
+        <span className="text-muted-foreground">{formatBytes(task.repo_size)}</span>
       ) : null}
     </div>
   );

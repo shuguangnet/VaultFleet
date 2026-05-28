@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { safeFormatDate } from "@/lib/date";
+import { formatBytes } from "@/pages/tasks/tasks-page";
 
 const COMMAND_TYPE_LABELS: Record<string, string> = {
   backup_now: "手动备份",
@@ -322,7 +323,7 @@ export function NodeDetailPage() {
                               {t.repo_size !== undefined && (
                                 <div className="flex items-center gap-2">
                                   <span className="font-semibold w-24">仓库大小:</span>
-                                  <span>{(t.repo_size / 1024 / 1024).toFixed(2)} MB</span>
+                                  <span>{formatBytes(t.repo_size)}</span>
                                 </div>
                               )}
                               {t.error_log && (
