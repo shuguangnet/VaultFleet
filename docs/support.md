@@ -5,6 +5,8 @@
 这份文档说明如何向 VaultFleet 提交问题，以及提交前应该收集哪些日志。VaultFleet 不会连接、
 读取或保存你的 GitHub 账号。提交 issue 时使用的是你浏览器里已经登录的 GitHub 账号。
 
+如果你认为问题涉及安全漏洞、凭据泄露、越权访问、路径穿越、远程代码执行或备份数据泄露，请不要提交公开 issue。请按 [Security Policy](../SECURITY.md) 处理。
+
 ## 选择反馈类型
 
 - 可稳定复现的程序缺陷，请提交 [Bug report](https://github.com/momo-z/VaultFleet/issues/new?template=bug_report.yml)。
@@ -107,6 +109,8 @@ endpoint: https://<redacted>.example.com
 This document explains how to report VaultFleet issues and what logs to collect first.
 VaultFleet does not connect to, read, or store your GitHub account. GitHub issues are
 submitted with the GitHub account already signed in through your browser.
+
+If the issue involves a security vulnerability, credential exposure, authorization bypass, path traversal, remote code execution, or backup data exposure, do not open a public issue. Follow the [Security Policy](../SECURITY.md).
 
 ## Choose The Issue Type
 
