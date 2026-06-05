@@ -77,6 +77,12 @@ func (r ResticRunner) baseArgs() []string {
 	return args
 }
 
+// Read-only repo access should not leave backend locks behind if the process is interrupted.
+func (r ResticRunner) baseReadOnlyArgs() []string {
+	args := []string{"--no-lock"}
+	return append(args, r.baseArgs()...)
+}
+
 func (r ResticRunner) rcloneServeArgs() string {
 	args := "serve restic --stdio --config " + r.RcloneConfPath
 	extraArgs := r.normalizedRcloneExtraArgs()
@@ -236,13 +242,13 @@ func (r ResticRunner) buildForgetCmdContext(ctx context.Context, retention Reten
 
 func (r ResticRunner) buildSnapshotsCmdContext(ctx context.Context) *exec.Cmd {
 	args := []string{"snapshots", "--json"}
-	args = append(args, r.baseArgs()...)
+	args = append(args, r.baseReadOnlyArgs()...)
 	return r.command(ctx, args...)
 }
 
 func (r ResticRunner) buildLsSnapshotCmdContext(ctx context.Context, snapshotID string, paths ...string) *exec.Cmd {
 	args := []string{"ls", snapshotID, "--json"}
-	args = append(args, r.baseArgs()...)
+	args = append(args, r.baseReadOnlyArgs()...)
 	for _, p := range paths {
 		if p != "" {
 			args = append(args, p)
@@ -253,7 +259,7 @@ func (r ResticRunner) buildLsSnapshotCmdContext(ctx context.Context, snapshotID 
 
 func (r ResticRunner) buildStatsCmdContext(ctx context.Context) *exec.Cmd {
 	args := []string{"stats", "--mode", "raw-data", "--json"}
-	args = append(args, r.baseArgs()...)
+	args = append(args, r.baseReadOnlyArgs()...)
 	return r.command(ctx, args...)
 }
 
@@ -262,7 +268,7 @@ func (r ResticRunner) buildRestoreCmdWithIncludesContext(ctx context.Context, sn
 	for _, p := range includePaths {
 		args = append(args, "--include", p)
 	}
-	args = append(args, r.baseArgs()...)
+	args = append(args, r.baseReadOnlyArgs()...)
 	return r.command(ctx, args...)
 }
 
