@@ -129,6 +129,11 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
+
       - name: Resolve release tag
         id: release_tag
         run: |
@@ -154,7 +159,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release view "${{ steps.release_tag.outputs.tag }}" >/dev/null 2>&1 || \
-            gh release create "${{ steps.release_tag.outputs.tag }}" --target "${{ github.event.inputs.ref || github.sha }}" --title "${{ steps.release_tag.outputs.tag }}" --notes "Automated agent asset release"
+            gh release create "${{ steps.release_tag.outputs.tag }}" --target "${{ github.sha }}" --title "${{ steps.release_tag.outputs.tag }}" --notes "Automated agent asset release"
           gh release upload "${{ steps.release_tag.outputs.tag }}" \
             dist/vaultfleet-agent-linux-amd64 \
             dist/vaultfleet-agent-linux-arm64 \
