@@ -344,6 +344,8 @@ func notificationName(name string, notificationType string) string {
 		return "Telegram"
 	case "webhook":
 		return "Webhook"
+	case "email":
+		return "Email"
 	default:
 		return notificationType
 	}
@@ -463,6 +465,10 @@ func redactNotificationConfig(notificationType string, config map[string]any) ma
 				headers[key] = redactedSecretValue
 			}
 		}
+	case "email":
+		if _, ok := redacted["smtp_password"]; ok {
+			redacted["smtp_password"] = redactedSecretValue
+		}
 	}
 	return redacted
 }
@@ -498,6 +504,12 @@ func preserveNotificationRedactedSecrets(notificationType string, currentJSON st
 				if currentValue, ok := currentHeaders[key]; ok {
 					nextHeaders[key] = currentValue
 				}
+			}
+		}
+	case "email":
+		if merged["smtp_password"] == redactedSecretValue {
+			if currentValue, ok := currentConfig["smtp_password"]; ok {
+				merged["smtp_password"] = currentValue
 			}
 		}
 	}

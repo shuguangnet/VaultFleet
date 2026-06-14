@@ -121,7 +121,7 @@ func TestCreateNotificationConfigValidatesTypeAndRequiredConfig(t *testing.T) {
 		{
 			name: "unknown type",
 			body: map[string]any{
-				"type":   "email",
+				"type":   "sms",
 				"config": map[string]any{},
 				"events": []string{"backup_failed"},
 			},
@@ -207,6 +207,48 @@ func TestCreateNotificationConfigValidatesTypeAndRequiredConfig(t *testing.T) {
 			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 		})
 	}
+}
+
+func TestEmailNotificationConfigEncryptsAndRedactsSMTPPassword(t *testing.T) {
+	setup := setupNotificationAPI(t)
+
+	w := postAnyJSON(t, setup.router, "/api/notifications", map[string]any{
+		"name": "Ops Email",
+		"type": "email",
+		"config": map[string]any{
+			"smtp_host":        "smtp.example.test",
+			"smtp_port":        587,
+			"smtp_security":    "starttls",
+			"smtp_username":    "ops@example.test",
+			"smtp_password":    "smtp-secret",
+			"from":             "ops@example.test",
+			"from_name":        "VaultFleet",
+			"to":               []string{"admin@example.test"},
+			"cc":               []string{"cc@example.test"},
+			"subject_template": "[VaultFleet] {{.Title}}",
+			"body_template":    "{{.Body}}",
+			"body_format":      "text",
+		},
+		"events": []string{"backup_failed"},
+	})
+
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	envelope := parseJSON(t, w)
+	assert.Equal(t, true, envelope["ok"])
+	body := requireMap(t, envelope["data"])
+	assert.Equal(t, "Ops Email", body["name"])
+	assert.Equal(t, "email", body["type"])
+	config := requireMap(t, body["config"])
+	assert.Equal(t, "smtp.example.test", config["smtp_host"])
+	assert.Equal(t, float64(587), config["smtp_port"])
+	assert.Equal(t, redactedSecretValue, config["smtp_password"])
+
+	var stored db.NotificationConfig
+	require.NoError(t, setup.database.DB.First(&stored, "id = ?", body["id"]).Error)
+	assert.NotContains(t, stored.Config, "smtp-secret")
+	plaintext, err := db.Decrypt(stored.Config, setup.database.MasterKey)
+	require.NoError(t, err)
+	assert.Contains(t, plaintext, `"smtp_password":"smtp-secret"`)
 }
 
 func TestListAndGetNotificationConfigsReturnEventArrays(t *testing.T) {
@@ -394,6 +436,51 @@ func TestUpdateWebhookNotificationConfigPreservesRedactedURLAndSecrets(t *testin
 	plaintext, err := db.Decrypt(stored.Config, setup.database.MasterKey)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"url":"https://hooks.example.test/secret-path?token=abc123","headers":{"Authorization":"Bearer old-secret","X-Trace":"new-trace"}}`, plaintext)
+}
+
+func TestUpdateEmailNotificationConfigPreservesRedactedSMTPPassword(t *testing.T) {
+	setup := setupNotificationAPI(t)
+	created := createNotificationConfigViaAPI(t, setup.router, "email", map[string]any{
+		"smtp_host":        "smtp.example.test",
+		"smtp_port":        587,
+		"smtp_security":    "starttls",
+		"smtp_username":    "ops@example.test",
+		"smtp_password":    "old-secret",
+		"from":             "ops@example.test",
+		"to":               []string{"admin@example.test"},
+		"subject_template": "{{.Title}}",
+		"body_template":    "{{.Body}}",
+		"body_format":      "text",
+	}, []string{"backup_failed"})
+	id := created["id"].(string)
+
+	w := putJSON(t, setup.router, "/api/notifications/"+id, map[string]any{
+		"config": map[string]any{
+			"smtp_host":        "smtp2.example.test",
+			"smtp_port":        465,
+			"smtp_security":    "tls",
+			"smtp_username":    "ops@example.test",
+			"smtp_password":    redactedSecretValue,
+			"from":             "ops@example.test",
+			"to":               []string{"admin@example.test", "backup@example.test"},
+			"subject_template": "{{.Title}}",
+			"body_template":    "{{.Body}}",
+			"body_format":      "text",
+		},
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	config := requireMap(t, body["config"])
+	assert.Equal(t, redactedSecretValue, config["smtp_password"])
+	assert.Equal(t, "smtp2.example.test", config["smtp_host"])
+
+	var stored db.NotificationConfig
+	require.NoError(t, setup.database.DB.First(&stored, "id = ?", id).Error)
+	plaintext, err := db.Decrypt(stored.Config, setup.database.MasterKey)
+	require.NoError(t, err)
+	assert.Contains(t, plaintext, `"smtp_password":"old-secret"`)
+	assert.Contains(t, plaintext, `"smtp_host":"smtp2.example.test"`)
 }
 
 func TestUpdateNotificationConfigValidationAndNotFound(t *testing.T) {
