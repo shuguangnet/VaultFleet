@@ -1,0 +1,12 @@
+{
+  "id": "push-dockerhub-image",
+  "title": "推送 VaultFleet Docker 镜像到 Docker Hub malabary",
+  "status": "blocked",
+  "complexity": "S",
+  "risk": "medium",
+  "domain": "devops",
+  "currentPhase": "completed",
+  "nextAction": "等待可用 Docker CLI/daemon 后登录、构建并推送",
+  "createdAt": "2026-06-14T00:00:00Z",
+  "branch": "main"
+}
