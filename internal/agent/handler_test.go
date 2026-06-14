@@ -2227,6 +2227,7 @@ func TestHandlerDirBrowseReqSendsErrorPayload(t *testing.T) {
 
 func TestRunRestoreAppliesRcloneArgs(t *testing.T) {
 	configDir := t.TempDir()
+	writeResticPassword(t, configDir, "test-password")
 	argsFile := writeAgentFakeRestic(t, configDir, "")
 
 	err := runRestore(context.Background(), executor.ExecutorConfig{
@@ -2241,6 +2242,7 @@ func TestRunRestoreAppliesRcloneArgs(t *testing.T) {
 
 func TestRunSnapshotListAppliesRcloneArgs(t *testing.T) {
 	configDir := t.TempDir()
+	writeResticPassword(t, configDir, "test-password")
 	argsFile := writeAgentFakeRestic(t, configDir, "[]\n")
 
 	_, err := runSnapshotList(context.Background(), executor.ExecutorConfig{
@@ -2255,6 +2257,7 @@ func TestRunSnapshotListAppliesRcloneArgs(t *testing.T) {
 
 func TestRunSnapshotBrowseAppliesRcloneArgs(t *testing.T) {
 	configDir := t.TempDir()
+	writeResticPassword(t, configDir, "test-password")
 	argsFile := writeAgentFakeRestic(t, configDir, "")
 
 	_, err := runSnapshotBrowse(context.Background(), executor.ExecutorConfig{
@@ -2441,6 +2444,11 @@ func rcloneConfValue(t *testing.T, config string, key string) string {
 	}
 	t.Fatalf("config key %q not found in %q", key, config)
 	return ""
+}
+
+func writeResticPassword(t *testing.T, dir string, password string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".restic-password"), []byte(password), 0o600))
 }
 
 func writeAgentFakeRestic(t *testing.T, dir string, stdout string) string {
