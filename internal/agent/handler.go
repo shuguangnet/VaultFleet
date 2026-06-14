@@ -341,12 +341,18 @@ func (h *Handler) stagePolicyFiles(pushedPolicy *protocol.PolicyPushPayload) (*s
 		return nil, err
 	}
 
+	if pushedPolicy.PlainBackup {
+		staged.passwordPath = filepath.Join(h.configDir, ".restic-password")
+		return staged, nil
+	}
+
 	passwordPath, err := writeSecureTempFile(h.configDir, ".restic-password.*", []byte(pushedPolicy.ResticPassword))
 	if err != nil {
 		staged.cleanup()
 		return nil, err
 	}
 	staged.passwordPath = passwordPath
+
 	return staged, nil
 }
 
@@ -390,6 +396,13 @@ func (s *stagedPolicyFiles) commit(configDir string) error {
 		return err
 	}
 	s.rclonePath = ""
+	if s.passwordPath == passwordTarget {
+		if err := os.Remove(passwordTarget); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		s.passwordPath = ""
+		return nil
+	}
 	if err := os.Rename(s.passwordPath, passwordTarget); err != nil {
 		return err
 	}
@@ -814,12 +827,13 @@ func toExecutorRetention(retention protocol.RetentionPolicy) executor.RetentionP
 
 func executorConfigForPolicy(configDir string, policyPayload *protocol.PolicyPushPayload) executor.ExecutorConfig {
 	return executor.ExecutorConfig{
-		ConfigDir:  configDir,
-		RepoPath:   policyPayload.Storage.RepoPath,
-		BackupDirs: append([]string(nil), policyPayload.BackupDirs...),
-		Excludes:   append([]string(nil), policyPayload.ExcludePatterns...),
-		Retention:  toExecutorRetention(policyPayload.Retention),
-		RcloneArgs: copyStringMap(policyPayload.Storage.RcloneArgs),
+		ConfigDir:   configDir,
+		RepoPath:    policyPayload.Storage.RepoPath,
+		BackupDirs:  append([]string(nil), policyPayload.BackupDirs...),
+		Excludes:    append([]string(nil), policyPayload.ExcludePatterns...),
+		Retention:   toExecutorRetention(policyPayload.Retention),
+		RcloneArgs:  copyStringMap(policyPayload.Storage.RcloneArgs),
+		PlainBackup: policyPayload.PlainBackup,
 	}
 }
 
@@ -861,7 +875,8 @@ func runBackupWithProgress(ctx context.Context, cfg executor.ExecutorConfig, pro
 
 func runRestore(ctx context.Context, cfg executor.ExecutorConfig, snapshotID string, target string, includePaths []string) error {
 	passwordFile := filepath.Join(cfg.ConfigDir, ".restic-password")
-	if !executor.HasPasswordFile(passwordFile) {
+	usePlain := cfg.PlainBackup || !executor.HasPasswordFile(passwordFile)
+	if usePlain {
 		runner := executor.PlainRunner{
 			RcloneConfPath:  filepath.Join(cfg.ConfigDir, "rclone.conf"),
 			RepoPath:        cfg.RepoPath,
