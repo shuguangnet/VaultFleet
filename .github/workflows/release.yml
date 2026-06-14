@@ -149,18 +149,14 @@ jobs:
           cd dist
           sha256sum vaultfleet-agent-* > checksums.txt
 
-      - name: Ensure release exists
+      - name: Ensure release exists and upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release view "${{ steps.release_tag.outputs.tag }}" >/dev/null 2>&1 || \
-            gh release create "${{ steps.release_tag.outputs.tag }}" --title "${{ steps.release_tag.outputs.tag }}" --notes "Automated agent asset release"
-
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.release_tag.outputs.tag }}
-          files: |
-            dist/vaultfleet-agent-linux-amd64
-            dist/vaultfleet-agent-linux-arm64
-            dist/checksums.txt
+            gh release create "${{ steps.release_tag.outputs.tag }}" --target "${{ github.event.inputs.ref || github.sha }}" --title "${{ steps.release_tag.outputs.tag }}" --notes "Automated agent asset release"
+          gh release upload "${{ steps.release_tag.outputs.tag }}" \
+            dist/vaultfleet-agent-linux-amd64 \
+            dist/vaultfleet-agent-linux-arm64 \
+            dist/checksums.txt \
+            --clobber
