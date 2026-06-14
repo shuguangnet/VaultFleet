@@ -1,0 +1,12 @@
+{
+  "id": "add-unsaved-notification-test",
+  "title": "支持通知渠道保存前测试发送",
+  "status": "completed",
+  "complexity": "M",
+  "risk": "medium",
+  "domain": "fullstack",
+  "currentPhase": "completed",
+  "nextAction": "归档任务",
+  "createdAt": "2026-06-14T00:00:00Z",
+  "branch": "main"
+}
