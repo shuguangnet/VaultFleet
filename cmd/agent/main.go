@@ -30,6 +30,7 @@ type AgentConfig struct {
 	AgentToken  string `yaml:"agent_token"`
 	AutoUpdate  *bool  `yaml:"auto_update,omitempty"`
 	GitHubProxy string `yaml:"github_proxy,omitempty"`
+	GitHubRepo  string `yaml:"github_repo,omitempty"`
 }
 
 func main() {
@@ -96,10 +97,14 @@ func runClient(ctx context.Context, cfg *AgentConfig) error {
 	if cfg.AutoUpdate == nil || *cfg.AutoUpdate {
 		execPath, err := os.Executable()
 		if err == nil {
+			githubRepo := cfg.GitHubRepo
+			if githubRepo == "" {
+				githubRepo = "shuguangnet/VaultFleet"
+			}
 			updater = selfupdate.NewUpdater(selfupdate.Config{
 				CurrentVersion: version,
 				BinaryPath:     execPath,
-				GitHubRepo:     "momo-z/VaultFleet",
+				GitHubRepo:     githubRepo,
 				GitHubProxy:    cfg.GitHubProxy,
 				Arch:           runtime.GOARCH,
 			})

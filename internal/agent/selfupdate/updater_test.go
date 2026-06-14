@@ -119,14 +119,14 @@ func TestUpdateSkipsWhenAlreadyInProgress(t *testing.T) {
 
 func TestBuildDownloadURL(t *testing.T) {
 	u := NewUpdater(Config{Arch: "arm64"})
-	url := u.buildDownloadURL("momo-z/VaultFleet", "v1.0.0")
-	assert.Equal(t, "https://github.com/momo-z/VaultFleet/releases/download/v1.0.0/vaultfleet-agent-linux-arm64", url)
+	url := u.buildDownloadURL("shuguangnet/VaultFleet", "v1.0.0")
+	assert.Equal(t, "https://github.com/shuguangnet/VaultFleet/releases/download/v1.0.0/vaultfleet-agent-linux-arm64", url)
 }
 
 func TestBuildDownloadURLWithProxy(t *testing.T) {
 	u := NewUpdater(Config{Arch: "amd64", GitHubProxy: "https://proxy.example.com"})
-	url := u.buildDownloadURL("momo-z/VaultFleet", "v1.0.0")
-	assert.Equal(t, "https://proxy.example.com/https://github.com/momo-z/VaultFleet/releases/download/v1.0.0/vaultfleet-agent-linux-amd64", url)
+	url := u.buildDownloadURL("shuguangnet/VaultFleet", "v1.0.0")
+	assert.Equal(t, "https://proxy.example.com/https://github.com/shuguangnet/VaultFleet/releases/download/v1.0.0/vaultfleet-agent-linux-amd64", url)
 }
 
 func TestConcurrentUpdateCallsAreSafe(t *testing.T) {

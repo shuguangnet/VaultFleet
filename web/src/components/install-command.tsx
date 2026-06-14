@@ -12,7 +12,7 @@ interface InstallCommandProps {
 }
 
 const GITHUB_RAW_URL =
-  "https://raw.githubusercontent.com/momo-z/VaultFleet/main/build/install.sh";
+  "https://raw.githubusercontent.com/shuguangnet/VaultFleet/main/internal/master/api/assets/install.sh";
 
 export function InstallCommand({ enrollToken }: InstallCommandProps) {
   const [scriptSource, setScriptSource] = useState<ScriptSource>("github");

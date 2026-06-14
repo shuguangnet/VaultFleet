@@ -95,11 +95,12 @@ func TestAgentConfigAutoUpdateDefault(t *testing.T) {
 func TestAgentConfigAutoUpdateDisabled(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "agent.yaml")
-	require.NoError(t, os.WriteFile(configPath, []byte("server: https://master\nagent_id: a1\nagent_token: tok\nauto_update: false\ngithub_proxy: https://proxy.example.com\n"), 0600))
+	require.NoError(t, os.WriteFile(configPath, []byte("server: https://master\nagent_id: a1\nagent_token: tok\nauto_update: false\ngithub_proxy: https://proxy.example.com\ngithub_repo: shuguangnet/VaultFleet\n"), 0600))
 
 	cfg, err := loadConfig(configPath)
 	require.NoError(t, err)
 	require.NotNil(t, cfg.AutoUpdate)
 	assert.False(t, *cfg.AutoUpdate)
 	assert.Equal(t, "https://proxy.example.com", cfg.GitHubProxy)
+	assert.Equal(t, "shuguangnet/VaultFleet", cfg.GitHubRepo)
 }

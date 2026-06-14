@@ -6,7 +6,7 @@ ENROLL_TOKEN=""
 AGENT_URL=""
 AGENT_SHA256=""
 GITHUB_PROXY=""
-GITHUB_REPO="momo-z/VaultFleet"
+GITHUB_REPO="shuguangnet/VaultFleet"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/vaultfleet"
 RESTIC_VERSION="0.17.3"
@@ -18,7 +18,7 @@ RCLONE_SHA256_AMD64="7d69057e69385f6514a9684c7eaa424d972096b130284bb34dd967c4ed4
 RCLONE_SHA256_ARM64="1b08be34622f1f9bb9b069a85d036bba822b690790215c18a9418dbaf19505fe"
 
 usage() {
-    echo "Usage: $0 --server <master-url> --token <enroll-token> [--github-proxy <proxy-url>] [--agent-url <agent-binary-url>] [--agent-sha256 <sha256>]"
+    echo "Usage: $0 --server <master-url> --token <enroll-token> [--github-repo <owner/repo>] [--github-proxy <proxy-url>] [--agent-url <agent-binary-url>] [--agent-sha256 <sha256>]"
     exit 1
 }
 
@@ -71,6 +71,11 @@ while [[ $# -gt 0 ]]; do
         --agent-url)
             [[ $# -ge 2 && "$2" != --* ]] || usage
             AGENT_URL="$2"
+            shift 2
+            ;;
+        --github-repo)
+            [[ $# -ge 2 && "$2" != --* ]] || usage
+            GITHUB_REPO="$2"
             shift 2
             ;;
         --github-proxy)
@@ -228,6 +233,9 @@ echo "==> Enrolling agent with master..."
 
 if [[ -n "$GITHUB_PROXY" ]]; then
     echo "github_proxy: \"${GITHUB_PROXY}\"" >> "${CONFIG_DIR}/agent.yaml"
+fi
+if [[ -n "$GITHUB_REPO" ]]; then
+    echo "github_repo: \"${GITHUB_REPO}\"" >> "${CONFIG_DIR}/agent.yaml"
 fi
 
 if command -v systemctl &>/dev/null; then
