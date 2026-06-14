@@ -1,0 +1,12 @@
+{
+  "id": "build-email-notification-docker",
+  "title": "提交邮件通知实现并构建 Docker 镜像",
+  "status": "blocked",
+  "complexity": "S",
+  "risk": "low",
+  "domain": "devops",
+  "currentPhase": "review",
+  "nextAction": "等待可用 Docker CLI/daemon 后构建镜像",
+  "createdAt": "2026-06-14T00:00:00Z",
+  "branch": "main"
+}
