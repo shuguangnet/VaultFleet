@@ -1,0 +1,12 @@
+{
+  "id": "add-email-notifications",
+  "title": "实现邮件通知类型、SMTP 配置和通知模板",
+  "status": "completed",
+  "complexity": "M",
+  "risk": "medium",
+  "domain": "fullstack",
+  "currentPhase": "completed",
+  "nextAction": "归档任务",
+  "createdAt": "2026-06-14T00:00:00Z",
+  "branch": "main"
+}
