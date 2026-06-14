@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,8 +14,12 @@ import (
 )
 
 func TestNewExecutorBuildsRunnerAndCopiesConfig(t *testing.T) {
+	cfgDir := t.TempDir()
+	os.MkdirAll(cfgDir, 0o700)
+	os.WriteFile(filepath.Join(cfgDir, ".restic-password"), []byte("secret"), 0o600)
+
 	cfg := ExecutorConfig{
-		ConfigDir:  "/var/lib/vaultfleet",
+		ConfigDir:  cfgDir,
 		RepoPath:   "repo/agent-1",
 		BackupDirs: []string{"/home/alice", "/etc"},
 		Excludes:   []string{"*.tmp"},
@@ -57,8 +62,12 @@ func TestNewExecutorBuildsRunnerAndCopiesConfig(t *testing.T) {
 }
 
 func TestNewExecutorPassesRcloneArgsToRunner(t *testing.T) {
+	cfgDir := t.TempDir()
+	os.MkdirAll(cfgDir, 0o700)
+	os.WriteFile(filepath.Join(cfgDir, ".restic-password"), []byte("secret"), 0o600)
+
 	cfg := ExecutorConfig{
-		ConfigDir: "/var/lib/vaultfleet",
+		ConfigDir: cfgDir,
 		RepoPath:  "repo/agent-1",
 		RcloneArgs: map[string]string{
 			"transfers": "2",
@@ -82,6 +91,43 @@ func TestNewExecutorPassesRcloneArgsToRunner(t *testing.T) {
 	cfg.RcloneArgs["transfers"] = "99"
 	if runner.RcloneExtraArgs["transfers"] != "2" {
 		t.Fatalf("RcloneExtraArgs were not copied: %#v", runner.RcloneExtraArgs)
+	}
+}
+
+func TestNewExecutorUsesPlainRunnerWhenNoPasswordFile(t *testing.T) {
+	cfg := ExecutorConfig{
+		ConfigDir:  t.TempDir(),
+		RepoPath:   "repo/agent-1",
+		BackupDirs: []string{"/data"},
+	}
+
+	executor := NewExecutor(cfg)
+
+	if executor.restic == nil {
+		t.Fatal("NewExecutor() runner is nil")
+	}
+	runner, ok := executor.restic.(PlainRunner)
+	if !ok {
+		t.Fatalf("NewExecutor() runner type = %T, want PlainRunner", executor.restic)
+	}
+	if runner.RepoPath != cfg.RepoPath {
+		t.Fatalf("RepoPath = %q, want %q", runner.RepoPath, cfg.RepoPath)
+	}
+}
+
+func TestNewExecutorUsesPlainRunnerWhenPasswordFileIsEmpty(t *testing.T) {
+	cfgDir := t.TempDir()
+	os.WriteFile(filepath.Join(cfgDir, ".restic-password"), []byte("  \n  "), 0o600)
+
+	cfg := ExecutorConfig{
+		ConfigDir: cfgDir,
+		RepoPath:  "repo/agent-1",
+	}
+
+	executor := NewExecutor(cfg)
+
+	if _, ok := executor.restic.(PlainRunner); !ok {
+		t.Fatalf("NewExecutor() runner type = %T, want PlainRunner (empty password)", executor.restic)
 	}
 }
 

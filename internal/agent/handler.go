@@ -860,9 +860,18 @@ func runBackupWithProgress(ctx context.Context, cfg executor.ExecutorConfig, pro
 }
 
 func runRestore(ctx context.Context, cfg executor.ExecutorConfig, snapshotID string, target string, includePaths []string) error {
+	passwordFile := filepath.Join(cfg.ConfigDir, ".restic-password")
+	if !executor.HasPasswordFile(passwordFile) {
+		runner := executor.PlainRunner{
+			RcloneConfPath:  filepath.Join(cfg.ConfigDir, "rclone.conf"),
+			RepoPath:        cfg.RepoPath,
+			RcloneExtraArgs: copyStringMap(cfg.RcloneArgs),
+		}
+		return runner.RestoreSnapshot(ctx, snapshotID, target, includePaths)
+	}
 	runner := executor.ResticRunner{
 		RcloneConfPath:  filepath.Join(cfg.ConfigDir, "rclone.conf"),
-		PasswordFile:    filepath.Join(cfg.ConfigDir, ".restic-password"),
+		PasswordFile:    passwordFile,
 		RepoPath:        cfg.RepoPath,
 		RcloneExtraArgs: copyStringMap(cfg.RcloneArgs),
 	}
@@ -870,9 +879,18 @@ func runRestore(ctx context.Context, cfg executor.ExecutorConfig, snapshotID str
 }
 
 func runSnapshotList(ctx context.Context, cfg executor.ExecutorConfig) ([]executor.SnapshotInfo, error) {
+	passwordFile := filepath.Join(cfg.ConfigDir, ".restic-password")
+	if !executor.HasPasswordFile(passwordFile) {
+		runner := executor.PlainRunner{
+			RcloneConfPath:  filepath.Join(cfg.ConfigDir, "rclone.conf"),
+			RepoPath:        cfg.RepoPath,
+			RcloneExtraArgs: copyStringMap(cfg.RcloneArgs),
+		}
+		return runner.ListSnapshots(ctx)
+	}
 	runner := executor.ResticRunner{
 		RcloneConfPath:  filepath.Join(cfg.ConfigDir, "rclone.conf"),
-		PasswordFile:    filepath.Join(cfg.ConfigDir, ".restic-password"),
+		PasswordFile:    passwordFile,
 		RepoPath:        cfg.RepoPath,
 		RcloneExtraArgs: copyStringMap(cfg.RcloneArgs),
 	}
@@ -880,9 +898,18 @@ func runSnapshotList(ctx context.Context, cfg executor.ExecutorConfig) ([]execut
 }
 
 func runSnapshotBrowse(ctx context.Context, cfg executor.ExecutorConfig, snapshotID string, path string) ([]executor.SnapshotFileEntry, error) {
+	passwordFile := filepath.Join(cfg.ConfigDir, ".restic-password")
+	if !executor.HasPasswordFile(passwordFile) {
+		runner := executor.PlainRunner{
+			RcloneConfPath:  filepath.Join(cfg.ConfigDir, "rclone.conf"),
+			RepoPath:        cfg.RepoPath,
+			RcloneExtraArgs: copyStringMap(cfg.RcloneArgs),
+		}
+		return runner.LsSnapshot(ctx, snapshotID, path)
+	}
 	runner := executor.ResticRunner{
 		RcloneConfPath:  filepath.Join(cfg.ConfigDir, "rclone.conf"),
-		PasswordFile:    filepath.Join(cfg.ConfigDir, ".restic-password"),
+		PasswordFile:    passwordFile,
 		RepoPath:        cfg.RepoPath,
 		RcloneExtraArgs: copyStringMap(cfg.RcloneArgs),
 	}

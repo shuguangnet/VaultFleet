@@ -2,7 +2,9 @@ package executor
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"vaultfleet/pkg/protocol"
@@ -84,17 +86,43 @@ type Executor struct {
 }
 
 func NewExecutor(cfg ExecutorConfig) *Executor {
-	return &Executor{
-		restic: ResticRunner{
-			RcloneConfPath:  filepath.Join(cfg.ConfigDir, "rclone.conf"),
-			PasswordFile:    filepath.Join(cfg.ConfigDir, ".restic-password"),
+	rcloneConfPath := filepath.Join(cfg.ConfigDir, "rclone.conf")
+	passwordFile := filepath.Join(cfg.ConfigDir, ".restic-password")
+	rcloneArgs := copyStringMap(cfg.RcloneArgs)
+
+	var runner resticExecutor
+	if HasPasswordFile(passwordFile) {
+		runner = ResticRunner{
+			RcloneConfPath:  rcloneConfPath,
+			PasswordFile:    passwordFile,
 			RepoPath:        cfg.RepoPath,
-			RcloneExtraArgs: copyStringMap(cfg.RcloneArgs),
-		},
+			RcloneExtraArgs: rcloneArgs,
+		}
+	} else {
+		runner = PlainRunner{
+			RcloneConfPath:  rcloneConfPath,
+			RepoPath:        cfg.RepoPath,
+			RcloneExtraArgs: rcloneArgs,
+		}
+	}
+
+	return &Executor{
+		restic:     runner,
 		backupDirs: append([]string(nil), cfg.BackupDirs...),
 		excludes:   append([]string(nil), cfg.Excludes...),
 		retention:  cfg.Retention,
 	}
+}
+
+// HasPasswordFile returns true if the restic password file exists and
+// contains a non-empty password. This is used to decide between
+// encrypted restic backups and plain rclone backups.
+func HasPasswordFile(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return len(strings.TrimSpace(string(data))) > 0
 }
 
 func copyStringMap(values map[string]string) map[string]string {
