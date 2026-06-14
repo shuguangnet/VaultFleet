@@ -5,14 +5,22 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
-
+    inputs:
+      publish_tag:
+        description: "Release tag to publish agent assets to"
+        required: false
+        default: "agent-latest"
+      ref:
+        description: "Git ref to build (branch, tag, or SHA)"
+        required: false
+        default: "main"
 permissions:
   contents: write
   packages: write
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: momo-z/vaultfleet
+  IMAGE_NAME: shuguangnet/vaultfleet
 
 jobs:
   test:
@@ -21,6 +29,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -38,6 +48,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -77,7 +89,7 @@ jobs:
     name: Build Agent (${{ matrix.goarch }})
     needs: test
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     strategy:
       matrix:
         include:
@@ -88,6 +100,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -99,7 +113,7 @@ jobs:
         run: |
           mkdir -p dist
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-            go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o dist/vaultfleet-agent-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/agent
+            go build -ldflags="-s -w -X main.version=${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || github.sha }}" -o dist/vaultfleet-agent-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/agent
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -111,8 +125,16 @@ jobs:
     name: Publish Agent release assets
     needs: release-agent
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
+      - name: Resolve release tag
+        id: release_tag
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.inputs.publish_tag || 'agent-latest' }}" >> "$GITHUB_OUTPUT"
+          fi
       - name: Download all agent artifacts
         uses: actions/download-artifact@v4
         with:
@@ -125,9 +147,17 @@ jobs:
           cd dist
           sha256sum vaultfleet-agent-* > checksums.txt
 
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "${{ steps.release_tag.outputs.tag }}" >/dev/null 2>&1 || \
+            gh release create "${{ steps.release_tag.outputs.tag }}" --title "${{ steps.release_tag.outputs.tag }}" --notes "Automated agent asset release"
+
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.release_tag.outputs.tag }}
           files: |
             dist/vaultfleet-agent-linux-amd64
             dist/vaultfleet-agent-linux-arm64
