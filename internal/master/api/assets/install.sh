@@ -19,6 +19,7 @@ RCLONE_SHA256_ARM64="1b08be34622f1f9bb9b069a85d036bba822b690790215c18a9418dbaf19
 
 usage() {
     echo "Usage: $0 --server <master-url> --token <enroll-token> [--github-repo <owner/repo>] [--github-proxy <proxy-url>] [--agent-url <agent-binary-url>] [--agent-sha256 <sha256>]"
+    echo "       Default agent binary source: <master-url>/download/agent-linux-<arch>"
     exit 1
 }
 
@@ -141,7 +142,7 @@ proxy_url() {
 }
 
 if [[ -z "$AGENT_URL" ]]; then
-    AGENT_URL=$(proxy_url "https://github.com/${GITHUB_REPO}/releases/latest/download/vaultfleet-agent-linux-${ARCH}")
+    AGENT_URL="${MASTER_URL%/}/download/agent-linux-${ARCH}"
 fi
 if [[ -n "$AGENT_SHA256" && ! "$AGENT_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
     echo "Agent SHA256 must be a 64-character hex digest"
