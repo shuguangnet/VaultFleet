@@ -311,7 +311,7 @@ func (h *NotificationHandler) sendTestNotification(c *gin.Context, notifier noti
 			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "request cancelled"})
 			return
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": "send notification failed"})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "send notification failed", "detail": err.Error()})
 		return
 	}
 

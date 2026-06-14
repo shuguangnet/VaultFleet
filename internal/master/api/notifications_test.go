@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 
@@ -638,6 +639,22 @@ func TestTestNotificationConfigReturnsSendAndNotFoundErrors(t *testing.T) {
 
 	w = postAnyJSON(t, setup.router, "/api/notifications/missing/test", map[string]any{})
 	require.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestTestNotificationConfigReturnsSanitizedSendDetail(t *testing.T) {
+	setup := setupNotificationAPI(t)
+	created := createNotificationConfigViaAPI(t, setup.router, "email", validEmailNotificationConfig("smtp.example.test", "smtp-secret"), []string{"backup_failed"})
+	setup.handler.notifierFactory = func(string, json.RawMessage) (notify.Notifier, error) {
+		return &apiRecordingNotifier{err: errors.New("connect smtp server: dial tcp smtp.example.test:587: connection refused")}, nil
+	}
+
+	w := postAnyJSON(t, setup.router, "/api/notifications/"+created["id"].(string)+"/test", map[string]any{})
+
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	body := parseJSON(t, w)
+	assert.Equal(t, "send notification failed", body["error"])
+	assert.Contains(t, body["detail"], "connect smtp server")
+	assert.NotContains(t, w.Body.String(), "smtp-secret")
 }
 
 func createNotificationConfigViaAPI(t *testing.T, router http.Handler, notificationType string, config map[string]any, events []string) map[string]any {

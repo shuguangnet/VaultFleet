@@ -1,0 +1,12 @@
+{
+  "id": "fix-email-test-error-detail",
+  "title": "修复邮件通知测试发送失败诊断不足",
+  "status": "completed",
+  "complexity": "M",
+  "risk": "medium",
+  "domain": "backend",
+  "currentPhase": "completed",
+  "nextAction": "归档任务",
+  "createdAt": "2026-06-14T14:05:20Z",
+  "branch": "main"
+}
