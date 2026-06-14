@@ -1,0 +1,12 @@
+{
+  "id": "update-readme-dockerhub-deployment",
+  "title": "将 README 部署说明改为 malabary Docker Hub 镜像",
+  "status": "completed",
+  "complexity": "S",
+  "risk": "low",
+  "domain": "devops",
+  "currentPhase": "completed",
+  "nextAction": "归档任务",
+  "createdAt": "2026-06-14T00:00:00Z",
+  "branch": "main"
+}
