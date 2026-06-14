@@ -549,6 +549,83 @@ func TestTestNotificationConfigSendsSampleNotification(t *testing.T) {
 	assert.NotEmpty(t, msg.Body)
 }
 
+func TestTestUnsavedNotificationConfigSendsSampleAndDoesNotPersist(t *testing.T) {
+	setup := setupNotificationAPI(t)
+	recorder := &apiRecordingNotifier{}
+	setup.handler.notifierFactory = func(notificationType string, raw json.RawMessage) (notify.Notifier, error) {
+		assert.Equal(t, "email", notificationType)
+		assert.JSONEq(t, `{"smtp_host":"smtp.example.test","smtp_port":587,"smtp_security":"starttls","smtp_username":"ops@example.test","smtp_password":"draft-secret","from":"ops@example.test","to":["admin@example.test"],"subject_template":"{{.Title}}","body_template":"{{.Body}}","body_format":"text"}`, string(raw))
+		return recorder, nil
+	}
+
+	w := postAnyJSON(t, setup.router, "/api/notifications/test", map[string]any{
+		"type":   "email",
+		"config": validEmailNotificationConfig("smtp.example.test", "draft-secret"),
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assert.Equal(t, true, body["ok"])
+	require.Len(t, recorder.sent, 1)
+	assert.Equal(t, "Test Notification", recorder.sent[0].Title)
+
+	var count int64
+	require.NoError(t, setup.database.DB.Model(&db.NotificationConfig{}).Count(&count).Error)
+	assert.Equal(t, int64(0), count)
+}
+
+func TestTestDraftNotificationConfigPreservesRedactedEmailPasswordAndDoesNotPersist(t *testing.T) {
+	setup := setupNotificationAPI(t)
+	created := createNotificationConfigViaAPI(t, setup.router, "email", validEmailNotificationConfig("smtp.example.test", "old-secret"), []string{"backup_failed"})
+	id := created["id"].(string)
+	recorder := &apiRecordingNotifier{}
+	setup.handler.notifierFactory = func(notificationType string, raw json.RawMessage) (notify.Notifier, error) {
+		assert.Equal(t, "email", notificationType)
+		assert.JSONEq(t, `{"smtp_host":"smtp2.example.test","smtp_port":465,"smtp_security":"tls","smtp_username":"ops@example.test","smtp_password":"old-secret","from":"ops@example.test","to":["admin@example.test"],"subject_template":"{{.Title}}","body_template":"{{.Body}}","body_format":"text"}`, string(raw))
+		return recorder, nil
+	}
+
+	w := postAnyJSON(t, setup.router, "/api/notifications/"+id+"/test-config", map[string]any{
+		"type": "email",
+		"config": map[string]any{
+			"smtp_host":        "smtp2.example.test",
+			"smtp_port":        465,
+			"smtp_security":    "tls",
+			"smtp_username":    "ops@example.test",
+			"smtp_password":    redactedSecretValue,
+			"from":             "ops@example.test",
+			"to":               []string{"admin@example.test"},
+			"subject_template": "{{.Title}}",
+			"body_template":    "{{.Body}}",
+			"body_format":      "text",
+		},
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Len(t, recorder.sent, 1)
+
+	var stored db.NotificationConfig
+	require.NoError(t, setup.database.DB.First(&stored, "id = ?", id).Error)
+	plaintext, err := db.Decrypt(stored.Config, setup.database.MasterKey)
+	require.NoError(t, err)
+	assert.Contains(t, plaintext, `"smtp_host":"smtp.example.test"`)
+	assert.Contains(t, plaintext, `"smtp_password":"old-secret"`)
+	assert.NotContains(t, plaintext, "smtp2.example.test")
+}
+
+func TestTestUnsavedNotificationConfigValidatesConfig(t *testing.T) {
+	setup := setupNotificationAPI(t)
+
+	w := postAnyJSON(t, setup.router, "/api/notifications/test", map[string]any{
+		"type": "email",
+		"config": map[string]any{
+			"smtp_host": "smtp.example.test",
+		},
+	})
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestTestNotificationConfigReturnsSendAndNotFoundErrors(t *testing.T) {
 	setup := setupNotificationAPI(t)
 	created := createNotificationConfigViaAPI(t, setup.router, "webhook", map[string]any{"url": "https://hooks.example.test"}, []string{"backup_failed"})
@@ -597,4 +674,19 @@ func (n *apiRecordingNotifier) Send(_ context.Context, msg notify.NotifyMessage)
 
 func (n *apiRecordingNotifier) Type() string {
 	return "recording"
+}
+
+func validEmailNotificationConfig(host string, password string) map[string]any {
+	return map[string]any{
+		"smtp_host":        host,
+		"smtp_port":        587,
+		"smtp_security":    "starttls",
+		"smtp_username":    "ops@example.test",
+		"smtp_password":    password,
+		"from":             "ops@example.test",
+		"to":               []string{"admin@example.test"},
+		"subject_template": "{{.Title}}",
+		"body_template":    "{{.Body}}",
+		"body_format":      "text",
+	}
 }

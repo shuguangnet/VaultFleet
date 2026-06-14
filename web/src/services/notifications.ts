@@ -7,3 +7,6 @@ export const getNotification = (id: string) => apiGet<NotificationConfig>(`/api/
 export const updateNotification = (id: string, body: Partial<NotificationInput>) => apiPut<NotificationConfig>(`/api/notifications/${id}`, body);
 export const deleteNotification = (id: string) => apiDelete(`/api/notifications/${id}`);
 export const testNotification = (id: string) => apiPost<{ ok: true }>(`/api/notifications/${id}/test`);
+export const testNotificationConfig = (body: NotificationInput) => apiPost<{ ok: true }>("/api/notifications/test", body);
+export const testNotificationDraft = (id: string, body: Partial<NotificationInput>) =>
+  apiPost<{ ok: true }>(`/api/notifications/${id}/test-config`, body);

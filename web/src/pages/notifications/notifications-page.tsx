@@ -6,6 +6,8 @@ import {
   updateNotification,
   deleteNotification,
   testNotification,
+  testNotificationConfig,
+  testNotificationDraft,
 } from "@/services/notifications";
 import { NotificationConfig, NotificationInput } from "@/types/notification";
 import { Button } from "@/components/ui/button";
@@ -150,6 +152,16 @@ export function NotificationsPage() {
     },
   });
 
+  const testConfigMutation = useMutation({
+    mutationFn: () => editingId ? testNotificationDraft(editingId, formData) : testNotificationConfig(formData),
+    onSuccess: () => {
+      toast.success("测试消息已发送");
+    },
+    onError: (error: any) => {
+      toast.error("发送测试消息失败", { description: error.message });
+    },
+  });
+
   const handleEdit = (n: NotificationConfig) => {
     setEditingId(n.id);
     setFormData({
@@ -173,6 +185,7 @@ export function NotificationsPage() {
       });
       createMutation.reset();
       updateMutation.reset();
+      testConfigMutation.reset();
     }
   };
 
@@ -451,9 +464,19 @@ export function NotificationsPage() {
               </div>
 
               <div className="fixed bottom-0 right-0 left-0 bg-background border-t p-4 lg:left-auto lg:w-[var(--radix-sheet-width)]">
-                 <Button type="submit" className="w-full" disabled={createMutation.isPending || updateMutation.isPending}>
+                <div className="grid grid-cols-2 gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => testConfigMutation.mutate()}
+                    disabled={testConfigMutation.isPending || createMutation.isPending || updateMutation.isPending}
+                  >
+                    {testConfigMutation.isPending ? "正在测试..." : "测试当前配置"}
+                  </Button>
+                  <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending || testConfigMutation.isPending}>
                   {createMutation.isPending || updateMutation.isPending ? "正在保存..." : "保存通知配置"}
-                </Button>
+                  </Button>
+                </div>
               </div>
             </form>
           </SheetContent>

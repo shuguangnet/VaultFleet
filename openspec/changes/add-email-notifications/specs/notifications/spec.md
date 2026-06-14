@@ -31,3 +31,20 @@ VaultFleet SHALL allow configuring subject and body templates for email notifica
 - **GIVEN** a template references notification fields such as title, level, agent name, timestamp, and body
 - **WHEN** an email notification is sent
 - **THEN** those fields are rendered into the outgoing email
+
+### Requirement: Notification Draft Testing
+
+VaultFleet SHALL allow operators to test a notification channel using the current form configuration before saving it.
+
+#### Scenario: Test unsaved email configuration
+
+- **GIVEN** an operator has entered valid SMTP, recipient, and template settings in the notification form
+- **WHEN** the operator tests the current configuration
+- **THEN** VaultFleet sends a test notification without persisting the draft configuration
+
+#### Scenario: Test edited email configuration with redacted password
+
+- **GIVEN** an existing email notification config has an encrypted SMTP password
+- **AND** the operator edits the notification while leaving the redacted password placeholder unchanged
+- **WHEN** the operator tests the current configuration
+- **THEN** VaultFleet uses the existing SMTP password for the test without persisting the draft configuration
