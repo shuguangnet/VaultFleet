@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,33 @@ func TestServedInstallerMatchesBuildInstaller(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, strings.TrimSpace(string(buildScript)), strings.TrimSpace(agentInstallScript))
+}
+
+func TestDownloadRoutesFetchesAgentFromReleaseWhenLocalMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dataDir := t.TempDir()
+	original := agentReleaseBaseURL
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/agent-linux-amd64" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte("downloaded-agent"))
+	}))
+	defer server.Close()
+	agentReleaseBaseURL = server.URL
+	defer func() { agentReleaseBaseURL = original }()
+
+	router := gin.New()
+	RegisterDownloadRoutes(router, dataDir)
+
+	w := getJSON(t, router, "/download/agent-linux-amd64")
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "downloaded-agent", w.Body.String())
+
+	cached, err := os.ReadFile(filepath.Join(dataDir, "downloads", "agent-linux-amd64"))
+	require.NoError(t, err)
+	assert.Equal(t, "downloaded-agent", string(cached))
 }
 
 func TestDownloadRoutesRejectMissingOrUnsafeAgentPath(t *testing.T) {
