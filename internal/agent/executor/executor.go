@@ -2,7 +2,10 @@ package executor
 
 import (
 	"context"
+	"log"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"vaultfleet/pkg/protocol"
@@ -44,12 +47,13 @@ func (r TaskResult) ToProtocol(agentID string, startedAt time.Time) protocol.Tas
 }
 
 type ExecutorConfig struct {
-	ConfigDir  string
-	RepoPath   string
-	BackupDirs []string
-	Excludes   []string
-	Retention  RetentionPolicy
-	RcloneArgs map[string]string
+	ConfigDir   string
+	RepoPath    string
+	BackupDirs  []string
+	Excludes    []string
+	Retention   RetentionPolicy
+	RcloneArgs  map[string]string
+	PlainBackup bool
 }
 
 type BackupProgress struct {
@@ -84,17 +88,49 @@ type Executor struct {
 }
 
 func NewExecutor(cfg ExecutorConfig) *Executor {
-	return &Executor{
-		restic: ResticRunner{
-			RcloneConfPath:  filepath.Join(cfg.ConfigDir, "rclone.conf"),
-			PasswordFile:    filepath.Join(cfg.ConfigDir, ".restic-password"),
+	rcloneConfPath := filepath.Join(cfg.ConfigDir, "rclone.conf")
+	passwordFile := filepath.Join(cfg.ConfigDir, ".restic-password")
+	rcloneArgs := copyStringMap(cfg.RcloneArgs)
+
+	// Use explicit PlainBackup flag from the policy if set.
+	// Otherwise fall back to checking the password file on disk.
+	usePlain := cfg.PlainBackup || !HasPasswordFile(passwordFile)
+
+	var runner resticExecutor
+	if usePlain {
+		log.Printf("using plain rclone backup (no encryption)")
+		runner = PlainRunner{
+			RcloneConfPath:  rcloneConfPath,
 			RepoPath:        cfg.RepoPath,
-			RcloneExtraArgs: copyStringMap(cfg.RcloneArgs),
-		},
+			RcloneExtraArgs: rcloneArgs,
+		}
+	} else {
+		log.Printf("using encrypted restic backup")
+		runner = ResticRunner{
+			RcloneConfPath:  rcloneConfPath,
+			PasswordFile:    passwordFile,
+			RepoPath:        cfg.RepoPath,
+			RcloneExtraArgs: rcloneArgs,
+		}
+	}
+
+	return &Executor{
+		restic:     runner,
 		backupDirs: append([]string(nil), cfg.BackupDirs...),
 		excludes:   append([]string(nil), cfg.Excludes...),
 		retention:  cfg.Retention,
 	}
+}
+
+// HasPasswordFile returns true if the restic password file exists and
+// contains a non-empty password. This is used to decide between
+// encrypted restic backups and plain rclone backups.
+func HasPasswordFile(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return len(strings.TrimSpace(string(data))) > 0
 }
 
 func copyStringMap(values map[string]string) map[string]string {

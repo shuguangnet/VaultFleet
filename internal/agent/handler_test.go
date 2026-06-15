@@ -148,6 +148,40 @@ func TestHandlePolicyPushPreservesLegacyObscuredSFTPPassword(t *testing.T) {
 	assert.Equal(t, "clear-sftp-password", revealed)
 }
 
+func TestHandlePolicyPushPlainBackupRemovesExistingPasswordFile(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	configDir := filepath.Join(t.TempDir(), "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ".restic-password"), []byte("old-secret"), 0o600))
+
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   configDir,
+		Scheduler:   &recordingScheduler{},
+		SendFunc:    (&sentMessages{}).send,
+	})
+
+	msg, err := protocol.NewMessage(protocol.TypePolicyPush, protocol.PolicyPushPayload{
+		AgentID:        "agent-1",
+		PlainBackup:    true,
+		ResticPassword: "",
+		Storage: protocol.StorageConfig{
+			RcloneType: "s3",
+			RcloneConfig: map[string]string{
+				"provider": "Other",
+			},
+			RepoPath: "bucket/plain-agent",
+		},
+		BackupDirs: []string{"/opt/backup"},
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	_, statErr := os.Stat(filepath.Join(configDir, ".restic-password"))
+	assert.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
 func TestNewHandlerRestoresSavedPolicySchedule(t *testing.T) {
 	store := policy.NewStore(t.TempDir())
 	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{
@@ -2227,6 +2261,7 @@ func TestHandlerDirBrowseReqSendsErrorPayload(t *testing.T) {
 
 func TestRunRestoreAppliesRcloneArgs(t *testing.T) {
 	configDir := t.TempDir()
+	writeResticPassword(t, configDir, "test-password")
 	argsFile := writeAgentFakeRestic(t, configDir, "")
 
 	err := runRestore(context.Background(), executor.ExecutorConfig{
@@ -2241,6 +2276,7 @@ func TestRunRestoreAppliesRcloneArgs(t *testing.T) {
 
 func TestRunSnapshotListAppliesRcloneArgs(t *testing.T) {
 	configDir := t.TempDir()
+	writeResticPassword(t, configDir, "test-password")
 	argsFile := writeAgentFakeRestic(t, configDir, "[]\n")
 
 	_, err := runSnapshotList(context.Background(), executor.ExecutorConfig{
@@ -2255,6 +2291,7 @@ func TestRunSnapshotListAppliesRcloneArgs(t *testing.T) {
 
 func TestRunSnapshotBrowseAppliesRcloneArgs(t *testing.T) {
 	configDir := t.TempDir()
+	writeResticPassword(t, configDir, "test-password")
 	argsFile := writeAgentFakeRestic(t, configDir, "")
 
 	_, err := runSnapshotBrowse(context.Background(), executor.ExecutorConfig{
@@ -2441,6 +2478,11 @@ func rcloneConfValue(t *testing.T, config string, key string) string {
 	}
 	t.Fatalf("config key %q not found in %q", key, config)
 	return ""
+}
+
+func writeResticPassword(t *testing.T, dir string, password string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".restic-password"), []byte(password), 0o600))
 }
 
 func writeAgentFakeRestic(t *testing.T, dir string, stdout string) string {

@@ -186,6 +186,7 @@ type PolicyPushPayload struct {
 	AgentID         string          `json:"agent_id"`
 	Storage         StorageConfig   `json:"storage"`
 	ResticPassword  string          `json:"restic_password"`
+	PlainBackup     bool            `json:"plain_backup,omitempty"`
 	BackupDirs      []string        `json:"backup_dirs"`
 	ExcludePatterns []string        `json:"exclude_patterns"`
 	Schedule        string          `json:"schedule"`
