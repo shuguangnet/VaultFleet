@@ -49,7 +49,11 @@ func TestDownloadRoutesFetchesAgentFromReleaseWhenLocalMissing(t *testing.T) {
 	dataDir := t.TempDir()
 	original := agentReleaseBaseURL
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/agent-linux-amd64" {
+		if r.URL.Path == "/agent-linux-amd64" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Path != "/vaultfleet-agent-linux-amd64" {
 			http.NotFound(w, r)
 			return
 		}

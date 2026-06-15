@@ -15,6 +15,11 @@ import (
 
 var agentReleaseBaseURL = "https://github.com/shuguangnet/VaultFleet/releases/download/agent-latest"
 
+var agentReleaseCandidates = map[string][]string{
+	"agent-linux-amd64": {"agent-linux-amd64", "vaultfleet-agent-linux-amd64"},
+	"agent-linux-arm64": {"agent-linux-arm64", "vaultfleet-agent-linux-arm64"},
+}
+
 func RegisterDownloadRoutes(r *gin.Engine, dataDir string) {
 	r.GET("/install.sh", func(c *gin.Context) {
 		c.Data(http.StatusOK, "text/x-shellscript; charset=utf-8", []byte(agentInstallScript))
@@ -42,39 +47,55 @@ func ensureAgentDownload(dataDir, name string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
-	url := fmt.Sprintf("%s/%s", agentReleaseBaseURL, name)
+	for _, releaseName := range releaseNamesForAgent(name) {
+		if err := downloadAgentReleaseAsset(path, releaseName); err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("download %s: no matching release asset", name)
+}
+
+func downloadAgentReleaseAsset(path, releaseName string) error {
+	url := fmt.Sprintf("%s/%s", agentReleaseBaseURL, releaseName)
 	client := &http.Client{Timeout: 2 * time.Minute}
 	resp, err := client.Get(url)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("download %s: http %d", name, resp.StatusCode)
+		return fmt.Errorf("download %s: http %d", releaseName, resp.StatusCode)
 	}
 	tmp := path + ".tmp"
 	file, err := os.Create(tmp)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if _, err := io.Copy(file, resp.Body); err != nil {
 		file.Close()
 		_ = os.Remove(tmp)
-		return "", err
+		return err
 	}
 	if err := file.Close(); err != nil {
 		_ = os.Remove(tmp)
-		return "", err
+		return err
 	}
 	if err := os.Chmod(tmp, 0o755); err != nil {
 		_ = os.Remove(tmp)
-		return "", err
+		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
-		return "", err
+		return err
 	}
-	return path, nil
+	return nil
+}
+
+func releaseNamesForAgent(name string) []string {
+	if names, ok := agentReleaseCandidates[name]; ok && len(names) > 0 {
+		return names
+	}
+	return []string{name}
 }
 
 func allowedAgentDownloadName(name string) bool {
