@@ -27,10 +27,15 @@ func TestNewNotifierFromConfigBuildsTelegramAndWebhook(t *testing.T) {
 	wh, err := NewNotifierFromConfig("webhook", whConfig)
 	require.NoError(t, err)
 	assert.Equal(t, "webhook", wh.Type())
+
+	emailConfig := json.RawMessage(`{"smtp_host":"smtp.example.test","smtp_port":587,"smtp_security":"starttls","smtp_username":"ops@example.test","smtp_password":"secret","from":"ops@example.test","to":["admin@example.test"],"subject_template":"{{.Title}}","body_template":"{{.Body}}","body_format":"text"}`)
+	email, err := NewNotifierFromConfig("email", emailConfig)
+	require.NoError(t, err)
+	assert.Equal(t, "email", email.Type())
 }
 
 func TestNewNotifierFromConfigRejectsUnknownOrInvalidConfig(t *testing.T) {
-	_, err := NewNotifierFromConfig("email", json.RawMessage(`{}`))
+	_, err := NewNotifierFromConfig("sms", json.RawMessage(`{}`))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown notification type")
 
@@ -41,6 +46,10 @@ func TestNewNotifierFromConfigRejectsUnknownOrInvalidConfig(t *testing.T) {
 	_, err = NewNotifierFromConfig("webhook", json.RawMessage(`{"headers":{"X-Test":"value"}}`))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "url")
+
+	_, err = NewNotifierFromConfig("email", json.RawMessage(`{"smtp_host":"smtp.example.test"}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "smtp_port")
 }
 
 func TestNewNotifierFromConfigRejectsUnknownFieldsInvalidHeadersAndWebhookURL(t *testing.T) {

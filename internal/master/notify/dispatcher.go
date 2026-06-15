@@ -249,6 +249,15 @@ func NewNotifierFromConfig(notificationType string, raw json.RawMessage) (Notifi
 			return nil, err
 		}
 		return NewWebhookNotifier(config), nil
+	case "email":
+		var config EmailConfig
+		if err := decodeStrictJSON(raw, &config); err != nil {
+			return nil, fmt.Errorf("decode email config: %w", err)
+		}
+		if err := ValidateEmailConfig(config); err != nil {
+			return nil, err
+		}
+		return NewEmailNotifier(config), nil
 	default:
 		return nil, fmt.Errorf("unknown notification type %q", notificationType)
 	}
