@@ -38,6 +38,14 @@ const (
 	CapabilitySnapshotBrowse            = "snapshot_browse"
 	CapabilityRestoreIncludePaths       = "restore_include_paths"
 	CapabilityPolicyPlaintextRclonePass = "policy_plaintext_rclone_pass"
+	CapabilityArchiveBackup             = "archive_backup"
+)
+
+const (
+	BackupModeSnapshot = "snapshot"
+	BackupModeArchive  = "archive"
+	ArchiveFormatZip   = "zip"
+	ArchiveFormatTarGz = "tar.gz"
 )
 
 // Message is the shared WebSocket envelope used by master and agents.
@@ -110,16 +118,22 @@ type PolicyAckPayload struct {
 
 // TaskResultPayload reports completion metadata for backup, restore, or maintenance work.
 type TaskResultPayload struct {
-	AgentID    string         `json:"agent_id"`
-	TaskType   string         `json:"task_type"`
-	Status     string         `json:"status"`
-	SnapshotID string         `json:"snapshot_id,omitempty"`
-	DurationMs int64          `json:"duration_ms"`
-	RepoSize   int64          `json:"repo_size"`
-	ErrorLog   string         `json:"error_log,omitempty"`
-	StartedAt  time.Time      `json:"started_at"`
-	FinishedAt time.Time      `json:"finished_at"`
-	Snapshots  []SnapshotInfo `json:"snapshots,omitempty"`
+	AgentID             string         `json:"agent_id"`
+	TaskType            string         `json:"task_type"`
+	Status              string         `json:"status"`
+	SnapshotID          string         `json:"snapshot_id,omitempty"`
+	BackupMode          string         `json:"backup_mode,omitempty"`
+	ArchiveFormat       string         `json:"archive_format,omitempty"`
+	ArtifactPath        string         `json:"artifact_path,omitempty"`
+	ArtifactName        string         `json:"artifact_name,omitempty"`
+	ArtifactSize        int64          `json:"artifact_size,omitempty"`
+	ArtifactContentType string         `json:"artifact_content_type,omitempty"`
+	DurationMs          int64          `json:"duration_ms"`
+	RepoSize            int64          `json:"repo_size"`
+	ErrorLog            string         `json:"error_log,omitempty"`
+	StartedAt           time.Time      `json:"started_at"`
+	FinishedAt          time.Time      `json:"finished_at"`
+	Snapshots           []SnapshotInfo `json:"snapshots,omitempty"`
 }
 
 // BackupProgressPayload reports incremental backup progress from an agent.
@@ -187,6 +201,8 @@ type PolicyPushPayload struct {
 	Storage         StorageConfig   `json:"storage"`
 	ResticPassword  string          `json:"restic_password"`
 	PlainBackup     bool            `json:"plain_backup,omitempty"`
+	BackupMode      string          `json:"backup_mode,omitempty"`
+	ArchiveFormat   string          `json:"archive_format,omitempty"`
 	BackupDirs      []string        `json:"backup_dirs"`
 	ExcludePatterns []string        `json:"exclude_patterns"`
 	Schedule        string          `json:"schedule"`
