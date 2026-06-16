@@ -3,7 +3,10 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -31,25 +34,31 @@ type CommandHub interface {
 }
 
 type taskResponse struct {
-	ID            string                          `json:"id"`
-	AgentID       string                          `json:"agent_id"`
-	Type          string                          `json:"type"`
-	Status        string                          `json:"status"`
-	SnapshotID    string                          `json:"snapshot_id"`
-	MessageID     string                          `json:"message_id,omitempty"`
-	CommandID     string                          `json:"command_id,omitempty"`
-	PolicyID      string                          `json:"policy_id,omitempty"`
-	StorageID     string                          `json:"storage_id,omitempty"`
-	StartedAt     *time.Time                      `json:"started_at"`
-	FinishedAt    *time.Time                      `json:"finished_at"`
-	DurationMs    int64                           `json:"duration_ms"`
-	RepoSize      int64                           `json:"repo_size"`
-	RepoSizeBytes int64                           `json:"repository_size_bytes"`
-	ErrorLog      string                          `json:"error_log,omitempty"`
-	Error         string                          `json:"error,omitempty"`
-	Progress      *protocol.BackupProgressPayload `json:"progress,omitempty"`
-	CreatedAt     time.Time                       `json:"created_at"`
-	UpdatedAt     time.Time                       `json:"updated_at"`
+	ID                  string                          `json:"id"`
+	AgentID             string                          `json:"agent_id"`
+	Type                string                          `json:"type"`
+	Status              string                          `json:"status"`
+	SnapshotID          string                          `json:"snapshot_id"`
+	ArtifactPath        string                          `json:"artifact_path,omitempty"`
+	ArtifactName        string                          `json:"artifact_name,omitempty"`
+	ArtifactSize        int64                           `json:"artifact_size,omitempty"`
+	ArtifactContentType string                          `json:"artifact_content_type,omitempty"`
+	BackupMode          string                          `json:"backup_mode,omitempty"`
+	ArchiveFormat       string                          `json:"archive_format,omitempty"`
+	MessageID           string                          `json:"message_id,omitempty"`
+	CommandID           string                          `json:"command_id,omitempty"`
+	PolicyID            string                          `json:"policy_id,omitempty"`
+	StorageID           string                          `json:"storage_id,omitempty"`
+	StartedAt           *time.Time                      `json:"started_at"`
+	FinishedAt          *time.Time                      `json:"finished_at"`
+	DurationMs          int64                           `json:"duration_ms"`
+	RepoSize            int64                           `json:"repo_size"`
+	RepoSizeBytes       int64                           `json:"repository_size_bytes"`
+	ErrorLog            string                          `json:"error_log,omitempty"`
+	Error               string                          `json:"error,omitempty"`
+	Progress            *protocol.BackupProgressPayload `json:"progress,omitempty"`
+	CreatedAt           time.Time                       `json:"created_at"`
+	UpdatedAt           time.Time                       `json:"updated_at"`
 }
 
 func NewTaskHandler(database *db.Database, hub CommandHub) *TaskHandler {
@@ -58,6 +67,7 @@ func NewTaskHandler(database *db.Database, hub CommandHub) *TaskHandler {
 
 func RegisterTaskRoutes(rg *gin.RouterGroup, h *TaskHandler) {
 	rg.GET("/tasks", h.List)
+	rg.GET("/tasks/:id/download", h.DownloadArtifact)
 	rg.POST("/tasks/:id/cancel", h.CancelTask)
 	rg.POST("/agents/:id/backup-now", h.BackupNow)
 }
@@ -164,6 +174,55 @@ func (h *TaskHandler) CancelTask(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"ok": true, "message": "cancel requested"})
 }
 
+func (h *TaskHandler) DownloadArtifact(c *gin.Context) {
+	taskID := c.Param("id")
+	var history db.TaskHistory
+	if err := h.DB.DB.First(&history, "id = ?", taskID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "task not found"})
+		return
+	}
+	if history.ArtifactPath == "" || history.ArtifactName == "" {
+		c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "task artifact not found"})
+		return
+	}
+	artifactPath, err := resolveArtifactPath(h.DB, history.ArtifactPath)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "task artifact not found"})
+		return
+	}
+	c.Header("Content-Disposition", "attachment; filename=\""+history.ArtifactName+"\"")
+	if history.ArtifactContentType != "" {
+		c.Header("Content-Type", history.ArtifactContentType)
+		c.File(artifactPath)
+		return
+	}
+	c.File(artifactPath)
+}
+
+func resolveArtifactPath(database *db.Database, storedPath string) (string, error) {
+	if storedPath == "" {
+		return "", fmt.Errorf("empty artifact path")
+	}
+	if filepath.IsAbs(storedPath) {
+		if _, err := os.Stat(storedPath); err != nil {
+			return "", err
+		}
+		return storedPath, nil
+	}
+	if database == nil {
+		return "", fmt.Errorf("database unavailable")
+	}
+	baseDir := filepath.Dir(database.DSN)
+	if baseDir == "" {
+		baseDir = "."
+	}
+	candidate := filepath.Join(baseDir, storedPath)
+	if _, err := os.Stat(candidate); err != nil {
+		return "", err
+	}
+	return candidate, nil
+}
+
 func (h *TaskHandler) commandService() *commands.Service {
 	if h.Commands != nil {
 		return h.Commands
@@ -238,23 +297,29 @@ func parseTaskLimit(raw string) int {
 
 func newTaskResponse(history db.TaskHistory) taskResponse {
 	return taskResponse{
-		ID:            history.ID,
-		AgentID:       history.AgentID,
-		Type:          history.Type,
-		Status:        history.Status,
-		SnapshotID:    history.SnapshotID,
-		MessageID:     history.MessageID,
-		CommandID:     history.CommandID,
-		PolicyID:      history.PolicyID,
-		StorageID:     history.StorageID,
-		StartedAt:     history.StartedAt,
-		FinishedAt:    history.FinishedAt,
-		DurationMs:    history.DurationMs,
-		RepoSize:      history.RepoSize,
-		RepoSizeBytes: history.RepoSize,
-		ErrorLog:      history.ErrorLog,
-		Error:         history.ErrorLog,
-		CreatedAt:     history.CreatedAt,
-		UpdatedAt:     history.UpdatedAt,
+		ID:                  history.ID,
+		AgentID:             history.AgentID,
+		Type:                history.Type,
+		Status:              history.Status,
+		SnapshotID:          history.SnapshotID,
+		ArtifactPath:        history.ArtifactPath,
+		ArtifactName:        history.ArtifactName,
+		ArtifactSize:        history.ArtifactSize,
+		ArtifactContentType: history.ArtifactContentType,
+		BackupMode:          history.BackupMode,
+		ArchiveFormat:       history.ArchiveFormat,
+		MessageID:           history.MessageID,
+		CommandID:           history.CommandID,
+		PolicyID:            history.PolicyID,
+		StorageID:           history.StorageID,
+		StartedAt:           history.StartedAt,
+		FinishedAt:          history.FinishedAt,
+		DurationMs:          history.DurationMs,
+		RepoSize:            history.RepoSize,
+		RepoSizeBytes:       history.RepoSize,
+		ErrorLog:            history.ErrorLog,
+		Error:               history.ErrorLog,
+		CreatedAt:           history.CreatedAt,
+		UpdatedAt:           history.UpdatedAt,
 	}
 }
