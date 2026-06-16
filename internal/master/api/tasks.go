@@ -212,7 +212,7 @@ func resolveArtifactPath(database *db.Database, storedPath string) (string, erro
 	if database == nil {
 		return "", fmt.Errorf("database unavailable")
 	}
-	baseDir := filepath.Dir(database.DSN)
+	baseDir := database.DataDir
 	if baseDir == "" {
 		baseDir = "."
 	}

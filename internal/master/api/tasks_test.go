@@ -246,7 +246,7 @@ func TestCancelCompletedTaskReturnsConflict(t *testing.T) {
 func TestDownloadArtifactResolvesRelativePathFromDataDir(t *testing.T) {
 	setup := setupTasksAPI(t)
 	agent := createTasksTestAgent(t, setup.database, "online")
-	artifactDir := filepath.Join(filepath.Dir(setup.database.DSN), "artifacts")
+	artifactDir := filepath.Join(setup.database.DataDir, "artifacts")
 	require.NoError(t, os.MkdirAll(artifactDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(artifactDir, "archive.tar.gz"), []byte("archive-bytes"), 0o644))
 	history := db.TaskHistory{
