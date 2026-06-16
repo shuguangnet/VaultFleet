@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
-
-	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -381,6 +384,10 @@ func recordTaskResult(database *db.Database, agentID string, messageID string, r
 	if agentID == "" {
 		agentID = result.AgentID
 	}
+	localizedResult, err := localizeTaskResultArtifact(database, agentID, result)
+	if err != nil {
+		return err
+	}
 	if messageID != "" {
 		linked, err := commandLinkedTaskHistoryExists(database.DB, agentID, messageID)
 		if err != nil {
@@ -390,34 +397,119 @@ func recordTaskResult(database *db.Database, agentID string, messageID string, r
 			return nil
 		}
 	}
-	if result.TaskType == "restore" {
-		return completeRestoreTaskResult(database, agentID, messageID, result)
+	if localizedResult.TaskType == "restore" {
+		return completeRestoreTaskResult(database, agentID, messageID, localizedResult)
 	}
-	if result.TaskType == "backup" && result.Status == "success" && len(result.Snapshots) > 0 {
+	if localizedResult.TaskType == "backup" && localizedResult.Status == "success" && len(localizedResult.Snapshots) > 0 {
 		return database.DB.Transaction(func(tx *gorm.DB) error {
-			if err := createTaskHistory(tx, agentID, messageID, result); err != nil {
+			if err := createTaskHistory(tx, agentID, messageID, localizedResult); err != nil {
 				return err
 			}
-			return upsertSnapshotsDB(tx, agentID, result.Snapshots)
+			return upsertSnapshotsDB(tx, agentID, localizedResult.Snapshots)
 		})
 	}
-	return createTaskHistory(database.DB, agentID, messageID, result)
+	return createTaskHistory(database.DB, agentID, messageID, localizedResult)
+}
+
+func localizeTaskResultArtifact(database *db.Database, agentID string, result protocol.TaskResultPayload) (protocol.TaskResultPayload, error) {
+	if database == nil {
+		return result, errors.New("database not configured")
+	}
+	if !strings.EqualFold(strings.TrimSpace(result.BackupMode), protocol.BackupModeArchive) {
+		return result, nil
+	}
+	if result.ArtifactPath == "" {
+		return result, nil
+	}
+
+	sourcePath := filepath.Clean(result.ArtifactPath)
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		return result, fmt.Errorf("stat artifact: %w", err)
+	}
+	if info.IsDir() {
+		return result, fmt.Errorf("artifact path is directory: %s", sourcePath)
+	}
+
+	artifactName := strings.TrimSpace(result.ArtifactName)
+	if artifactName == "" {
+		artifactName = filepath.Base(sourcePath)
+		result.ArtifactName = artifactName
+	}
+	artifactDir := filepath.Join(database.DataDir, "artifacts", safeArtifactPathComponent(agentID))
+	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
+		return result, fmt.Errorf("create artifact dir: %w", err)
+	}
+	destPath := filepath.Join(artifactDir, artifactName)
+	if err := copyFile(sourcePath, destPath); err != nil {
+		return result, fmt.Errorf("copy artifact: %w", err)
+	}
+	relPath, err := filepath.Rel(database.DataDir, destPath)
+	if err != nil {
+		return result, fmt.Errorf("relativize artifact: %w", err)
+	}
+	result.ArtifactPath = filepath.ToSlash(relPath)
+	result.ArtifactSize = info.Size()
+	return result, nil
+}
+
+func safeArtifactPathComponent(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "unknown-agent"
+	}
+	replacer := strings.NewReplacer("/", "_", `\\`, "_", ":", "_", "..", "_")
+	cleaned := replacer.Replace(trimmed)
+	if cleaned == "" {
+		return "unknown-agent"
+	}
+	return cleaned
+}
+
+func copyFile(sourcePath string, destPath string) error {
+	sourceFile, err := os.Open(sourcePath)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = destFile.Close()
+	}()
+
+	if _, err := io.Copy(destFile, sourceFile); err != nil {
+		return err
+	}
+	if err := destFile.Sync(); err != nil {
+		return err
+	}
+	return destFile.Close()
 }
 
 func createTaskHistory(gormDB *gorm.DB, agentID string, messageID string, result protocol.TaskResultPayload) error {
 	startedAt := result.StartedAt
 	finishedAt := result.FinishedAt
 	history := db.TaskHistory{
-		AgentID:    agentID,
-		Type:       result.TaskType,
-		Status:     result.Status,
-		SnapshotID: result.SnapshotID,
-		MessageID:  messageID,
-		StartedAt:  &startedAt,
-		FinishedAt: &finishedAt,
-		DurationMs: result.DurationMs,
-		RepoSize:   result.RepoSize,
-		ErrorLog:   result.ErrorLog,
+		AgentID:             agentID,
+		Type:                result.TaskType,
+		Status:              result.Status,
+		SnapshotID:          result.SnapshotID,
+		ArtifactPath:        result.ArtifactPath,
+		ArtifactName:        result.ArtifactName,
+		ArtifactSize:        result.ArtifactSize,
+		ArtifactContentType: result.ArtifactContentType,
+		BackupMode:          result.BackupMode,
+		ArchiveFormat:       result.ArchiveFormat,
+		MessageID:           messageID,
+		StartedAt:           &startedAt,
+		FinishedAt:          &finishedAt,
+		DurationMs:          result.DurationMs,
+		RepoSize:            result.RepoSize,
+		ErrorLog:            result.ErrorLog,
 	}
 	if result.StartedAt.IsZero() {
 		history.StartedAt = nil
@@ -458,16 +550,22 @@ func completeRestoreTaskResult(database *db.Database, agentID string, messageID 
 	}
 
 	history := db.TaskHistory{
-		AgentID:    agentID,
-		Type:       result.TaskType,
-		Status:     result.Status,
-		SnapshotID: result.SnapshotID,
-		MessageID:  messageID,
-		StartedAt:  &startedAt,
-		FinishedAt: &finishedAt,
-		DurationMs: result.DurationMs,
-		RepoSize:   result.RepoSize,
-		ErrorLog:   result.ErrorLog,
+		AgentID:             agentID,
+		Type:                result.TaskType,
+		Status:              result.Status,
+		SnapshotID:          result.SnapshotID,
+		ArtifactPath:        result.ArtifactPath,
+		ArtifactName:        result.ArtifactName,
+		ArtifactSize:        result.ArtifactSize,
+		ArtifactContentType: result.ArtifactContentType,
+		BackupMode:          result.BackupMode,
+		ArchiveFormat:       result.ArchiveFormat,
+		MessageID:           messageID,
+		StartedAt:           &startedAt,
+		FinishedAt:          &finishedAt,
+		DurationMs:          result.DurationMs,
+		RepoSize:            result.RepoSize,
+		ErrorLog:            result.ErrorLog,
 	}
 	if result.StartedAt.IsZero() {
 		history.StartedAt = nil

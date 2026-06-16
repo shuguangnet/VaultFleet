@@ -60,6 +60,8 @@ type BackupPolicy struct {
 	ID              string    `gorm:"type:text;primaryKey" json:"id"`
 	AgentID         string    `gorm:"type:text;index;not null" json:"agent_id"`
 	StorageID       string    `gorm:"type:text;not null" json:"storage_id"`
+	BackupMode      string    `gorm:"type:text;default:snapshot" json:"backup_mode"`
+	ArchiveFormat   string    `gorm:"type:text" json:"archive_format"`
 	RepoPath        string    `gorm:"type:text" json:"repo_path"`
 	ResticPassword  string    `gorm:"type:text" json:"-"`
 	BackupDirs      string    `gorm:"type:text" json:"backup_dirs"`
@@ -108,22 +110,28 @@ func (c *AgentCommand) BeforeCreate(tx *gorm.DB) error {
 }
 
 type TaskHistory struct {
-	ID         string     `gorm:"type:text;primaryKey" json:"id"`
-	AgentID    string     `gorm:"type:text;index;not null" json:"agent_id"`
-	Type       string     `gorm:"type:text;not null" json:"type"`
-	Status     string     `gorm:"type:text;not null" json:"status"`
-	SnapshotID string     `gorm:"type:text" json:"snapshot_id"`
-	MessageID  string     `gorm:"type:text;index" json:"message_id,omitempty"`
-	CommandID  string     `gorm:"type:text;index" json:"command_id,omitempty"`
-	PolicyID   string     `gorm:"type:text;index" json:"policy_id,omitempty"`
-	StorageID  string     `gorm:"type:text;index" json:"storage_id,omitempty"`
-	StartedAt  *time.Time `json:"started_at"`
-	FinishedAt *time.Time `json:"finished_at"`
-	DurationMs int64      `json:"duration_ms"`
-	RepoSize   int64      `json:"repo_size"`
-	ErrorLog   string     `gorm:"type:text" json:"error_log"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	ID                  string     `gorm:"type:text;primaryKey" json:"id"`
+	AgentID             string     `gorm:"type:text;index;not null" json:"agent_id"`
+	Type                string     `gorm:"type:text;not null" json:"type"`
+	Status              string     `gorm:"type:text;not null" json:"status"`
+	SnapshotID          string     `gorm:"type:text" json:"snapshot_id"`
+	ArtifactPath        string     `gorm:"type:text" json:"artifact_path"`
+	ArtifactName        string     `gorm:"type:text" json:"artifact_name"`
+	ArtifactSize        int64      `json:"artifact_size"`
+	ArtifactContentType string     `gorm:"type:text" json:"artifact_content_type"`
+	BackupMode          string     `gorm:"type:text" json:"backup_mode"`
+	ArchiveFormat       string     `gorm:"type:text" json:"archive_format"`
+	MessageID           string     `gorm:"type:text;index" json:"message_id,omitempty"`
+	CommandID           string     `gorm:"type:text;index" json:"command_id,omitempty"`
+	PolicyID            string     `gorm:"type:text;index" json:"policy_id,omitempty"`
+	StorageID           string     `gorm:"type:text;index" json:"storage_id,omitempty"`
+	StartedAt           *time.Time `json:"started_at"`
+	FinishedAt          *time.Time `json:"finished_at"`
+	DurationMs          int64      `json:"duration_ms"`
+	RepoSize            int64      `json:"repo_size"`
+	ErrorLog            string     `gorm:"type:text" json:"error_log"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 func (th *TaskHistory) BeforeCreate(tx *gorm.DB) error {

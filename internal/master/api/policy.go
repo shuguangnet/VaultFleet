@@ -38,6 +38,8 @@ func NewPolicyHandler(database *db.Database, eventBus *events.Bus) *PolicyHandle
 type createPolicyRequest struct {
 	AgentID         string            `json:"agent_id" binding:"required"`
 	StorageID       string            `json:"storage_id" binding:"required"`
+	BackupMode      string            `json:"backup_mode"`
+	ArchiveFormat   string            `json:"archive_format"`
 	RepoPath        string            `json:"repo_path"`
 	ResticPassword  string            `json:"restic_password"`
 	BackupDirs      []string          `json:"backup_dirs" binding:"required"`
@@ -50,6 +52,8 @@ type createPolicyRequest struct {
 
 type updatePolicyRequest struct {
 	StorageID       string            `json:"storage_id"`
+	BackupMode      string            `json:"backup_mode"`
+	ArchiveFormat   string            `json:"archive_format"`
 	BackupDirs      []string          `json:"backup_dirs"`
 	ExcludePatterns []string          `json:"exclude_patterns"`
 	Schedule        string            `json:"schedule"`
@@ -62,6 +66,8 @@ type policyResponse struct {
 	ID              string            `json:"id"`
 	AgentID         string            `json:"agent_id"`
 	StorageID       string            `json:"storage_id"`
+	BackupMode      string            `json:"backup_mode"`
+	ArchiveFormat   string            `json:"archive_format,omitempty"`
 	RepoPath        string            `json:"repo_path"`
 	BackupDirs      []string          `json:"backup_dirs"`
 	ExcludePatterns []string          `json:"exclude_patterns"`
@@ -135,6 +141,8 @@ func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
 	policy := db.BackupPolicy{
 		AgentID:         request.AgentID,
 		StorageID:       request.StorageID,
+		BackupMode:      normalizeBackupMode(request.BackupMode),
+		ArchiveFormat:   normalizeArchiveFormat(request.ArchiveFormat),
 		RepoPath:        repoPath,
 		ResticPassword:  encryptedPassword,
 		BackupDirs:      backupDirs,
@@ -206,6 +214,12 @@ func (h *PolicyHandler) UpdatePolicy(c *gin.Context) {
 			return
 		}
 		policy.StorageID = request.StorageID
+	}
+	if request.BackupMode != "" {
+		policy.BackupMode = normalizeBackupMode(request.BackupMode)
+	}
+	if request.ArchiveFormat != "" {
+		policy.ArchiveFormat = normalizeArchiveFormat(request.ArchiveFormat)
 	}
 	if request.BackupDirs != nil {
 		backupDirs, ok := marshalPolicyJSON(c, request.BackupDirs)
@@ -370,6 +384,8 @@ func newPolicyResponse(policy db.BackupPolicy) (policyResponse, error) {
 		ID:              policy.ID,
 		AgentID:         policy.AgentID,
 		StorageID:       policy.StorageID,
+		BackupMode:      normalizeBackupMode(policy.BackupMode),
+		ArchiveFormat:   normalizeArchiveFormat(policy.ArchiveFormat),
 		RepoPath:        policy.RepoPath,
 		BackupDirs:      backupDirs,
 		ExcludePatterns: excludePatterns,
@@ -399,6 +415,28 @@ func normalizedPolicyTimeoutHours(timeoutHours int) int {
 		return defaultPolicyTimeoutHours
 	}
 	return timeoutHours
+}
+
+func normalizeBackupMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", protocol.BackupModeSnapshot:
+		return protocol.BackupModeSnapshot
+	case protocol.BackupModeArchive:
+		return protocol.BackupModeArchive
+	default:
+		return protocol.BackupModeSnapshot
+	}
+}
+
+func normalizeArchiveFormat(format string) string {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case protocol.ArchiveFormatZip:
+		return protocol.ArchiveFormatZip
+	case protocol.ArchiveFormatTarGz, "":
+		return protocol.ArchiveFormatTarGz
+	default:
+		return protocol.ArchiveFormatTarGz
+	}
 }
 
 func unmarshalPolicyRcloneArgs(raw string) (map[string]string, error) {

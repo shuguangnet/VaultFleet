@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -102,6 +104,67 @@ func TestTaskResultProcessorRecordsHistoryAndSnapshots(t *testing.T) {
 	require.NoError(t, database.DB.First(&snapshot, "agent_id = ? AND snapshot_id = ?", agent.ID, "snap-processor").Error)
 	assert.True(t, snapshot.Timestamp.Equal(finishedAt))
 	assert.JSONEq(t, `["/srv"]`, snapshot.Paths)
+}
+
+func TestTaskResultProcessorCopiesArchiveArtifactIntoMasterDataDir(t *testing.T) {
+	database, err := db.New(t.TempDir())
+	require.NoError(t, err)
+	agent := createSnapshotTestAgent(t, database, "online")
+	finishedAt := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	sourceDir := t.TempDir()
+	sourcePath := filepath.Join(sourceDir, "archive.tar.gz")
+	require.NoError(t, os.WriteFile(sourcePath, []byte("archive-payload"), 0o644))
+
+	msg, err := protocol.NewMessage(protocol.TypeTaskResult, protocol.TaskResultPayload{
+		AgentID:             agent.ID,
+		TaskType:            "backup",
+		Status:              "success",
+		BackupMode:          protocol.BackupModeArchive,
+		ArchiveFormat:       protocol.ArchiveFormatTarGz,
+		ArtifactPath:        sourcePath,
+		ArtifactName:        "archive.tar.gz",
+		ArtifactContentType: "application/gzip",
+		DurationMs:          1500,
+		StartedAt:           finishedAt.Add(-1500 * time.Millisecond),
+		FinishedAt:          finishedAt,
+	})
+	require.NoError(t, err)
+
+	processor := NewTaskResultProcessor(database)
+	require.NoError(t, processor(agent.ID, *msg))
+
+	var history db.TaskHistory
+	require.NoError(t, database.DB.First(&history, "agent_id = ? AND artifact_name = ?", agent.ID, "archive.tar.gz").Error)
+	assert.Equal(t, filepath.ToSlash(filepath.Join("artifacts", agent.ID, "archive.tar.gz")), history.ArtifactPath)
+	assert.Equal(t, int64(len("archive-payload")), history.ArtifactSize)
+
+	storedPath := filepath.Join(database.DataDir, filepath.FromSlash(history.ArtifactPath))
+	storedBytes, err := os.ReadFile(storedPath)
+	require.NoError(t, err)
+	assert.Equal(t, "archive-payload", string(storedBytes))
+}
+
+func TestTaskResultProcessorFailsArchiveResultWhenArtifactMissing(t *testing.T) {
+	database, err := db.New(t.TempDir())
+	require.NoError(t, err)
+	agent := createSnapshotTestAgent(t, database, "online")
+	msg, err := protocol.NewMessage(protocol.TypeTaskResult, protocol.TaskResultPayload{
+		AgentID:       agent.ID,
+		TaskType:      "backup",
+		Status:        "success",
+		BackupMode:    protocol.BackupModeArchive,
+		ArchiveFormat: protocol.ArchiveFormatTarGz,
+		ArtifactPath:  filepath.Join(t.TempDir(), "missing.tar.gz"),
+		ArtifactName:  "missing.tar.gz",
+	})
+	require.NoError(t, err)
+
+	processor := NewTaskResultProcessor(database)
+	require.Error(t, processor(agent.ID, *msg))
+
+	var historyCount int64
+	require.NoError(t, database.DB.Model(&db.TaskHistory{}).Where("agent_id = ?", agent.ID).Count(&historyCount).Error)
+	assert.Equal(t, int64(0), historyCount)
 }
 
 func TestTaskResultProcessorRollsBackBackupHistoryWhenSnapshotPersistenceFails(t *testing.T) {

@@ -1,7 +1,10 @@
 package executor
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -12,13 +15,19 @@ import (
 )
 
 type TaskResult struct {
-	Type       string         `json:"type"`
-	Status     string         `json:"status"`
-	DurationMs int64          `json:"duration_ms"`
-	SnapshotID string         `json:"snapshot_id,omitempty"`
-	RepoSize   int64          `json:"repo_size,omitempty"`
-	Snapshots  []SnapshotInfo `json:"snapshots,omitempty"`
-	ErrorLog   string         `json:"error_log,omitempty"`
+	Type                string         `json:"type"`
+	Status              string         `json:"status"`
+	DurationMs          int64          `json:"duration_ms"`
+	SnapshotID          string         `json:"snapshot_id,omitempty"`
+	BackupMode          string         `json:"backup_mode,omitempty"`
+	ArchiveFormat       string         `json:"archive_format,omitempty"`
+	ArtifactPath        string         `json:"artifact_path,omitempty"`
+	ArtifactName        string         `json:"artifact_name,omitempty"`
+	ArtifactSize        int64          `json:"artifact_size,omitempty"`
+	ArtifactContentType string         `json:"artifact_content_type,omitempty"`
+	RepoSize            int64          `json:"repo_size,omitempty"`
+	Snapshots           []SnapshotInfo `json:"snapshots,omitempty"`
+	ErrorLog            string         `json:"error_log,omitempty"`
 }
 
 func (r TaskResult) ToProtocol(agentID string, startedAt time.Time) protocol.TaskResultPayload {
@@ -33,27 +42,35 @@ func (r TaskResult) ToProtocol(agentID string, startedAt time.Time) protocol.Tas
 	}
 
 	return protocol.TaskResultPayload{
-		AgentID:    agentID,
-		TaskType:   r.Type,
-		Status:     r.Status,
-		SnapshotID: r.SnapshotID,
-		DurationMs: r.DurationMs,
-		RepoSize:   r.RepoSize,
-		ErrorLog:   r.ErrorLog,
-		StartedAt:  startedAt,
-		FinishedAt: startedAt.Add(time.Duration(r.DurationMs) * time.Millisecond),
-		Snapshots:  snapshots,
+		AgentID:             agentID,
+		TaskType:            r.Type,
+		Status:              r.Status,
+		SnapshotID:          r.SnapshotID,
+		BackupMode:          r.BackupMode,
+		ArchiveFormat:       r.ArchiveFormat,
+		ArtifactPath:        r.ArtifactPath,
+		ArtifactName:        r.ArtifactName,
+		ArtifactSize:        r.ArtifactSize,
+		ArtifactContentType: r.ArtifactContentType,
+		DurationMs:          r.DurationMs,
+		RepoSize:            r.RepoSize,
+		ErrorLog:            r.ErrorLog,
+		StartedAt:           startedAt,
+		FinishedAt:          startedAt.Add(time.Duration(r.DurationMs) * time.Millisecond),
+		Snapshots:           snapshots,
 	}
 }
 
 type ExecutorConfig struct {
-	ConfigDir   string
-	RepoPath    string
-	BackupDirs  []string
-	Excludes    []string
-	Retention   RetentionPolicy
-	RcloneArgs  map[string]string
-	PlainBackup bool
+	ConfigDir      string
+	RepoPath       string
+	BackupDirs     []string
+	Excludes       []string
+	Retention      RetentionPolicy
+	RcloneArgs     map[string]string
+	PlainBackup    bool
+	BackupMode     string
+	ArchiveFormat  string
 }
 
 type BackupProgress struct {
@@ -91,9 +108,6 @@ func NewExecutor(cfg ExecutorConfig) *Executor {
 	rcloneConfPath := filepath.Join(cfg.ConfigDir, "rclone.conf")
 	passwordFile := filepath.Join(cfg.ConfigDir, ".restic-password")
 	rcloneArgs := copyStringMap(cfg.RcloneArgs)
-
-	// Use explicit PlainBackup flag from the policy if set.
-	// Otherwise fall back to checking the password file on disk.
 	usePlain := cfg.PlainBackup || !HasPasswordFile(passwordFile)
 
 	var runner resticExecutor
@@ -122,9 +136,6 @@ func NewExecutor(cfg ExecutorConfig) *Executor {
 	}
 }
 
-// HasPasswordFile returns true if the restic password file exists and
-// contains a non-empty password. This is used to decide between
-// encrypted restic backups and plain rclone backups.
 func HasPasswordFile(path string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -146,13 +157,8 @@ func copyStringMap(values map[string]string) map[string]string {
 
 func (e *Executor) RunBackupJob(ctx context.Context) (result TaskResult) {
 	start := time.Now()
-	result = TaskResult{
-		Type:   "backup",
-		Status: "failed",
-	}
-	defer func() {
-		result.DurationMs = time.Since(start).Milliseconds()
-	}()
+	result = TaskResult{Type: "backup", Status: "failed", BackupMode: protocol.BackupModeSnapshot}
+	defer func() { result.DurationMs = time.Since(start).Milliseconds() }()
 
 	if err := e.restic.InitRepo(ctx); err != nil {
 		result.ErrorLog = "init: " + err.Error()
@@ -172,7 +178,6 @@ func (e *Executor) RunBackupJob(ctx context.Context) (result TaskResult) {
 		result.ErrorLog = "snapshots: " + err.Error()
 		return result
 	}
-
 	repoSize, err := e.restic.RepositorySize(ctx)
 	if err != nil {
 		result.ErrorLog = "stats: " + err.Error()
@@ -197,13 +202,8 @@ func (e *Executor) RunBackupJob(ctx context.Context) (result TaskResult) {
 
 func (e *Executor) RunBackupJobWithProgress(ctx context.Context, progressFn ProgressCallback) (result TaskResult) {
 	start := time.Now()
-	result = TaskResult{
-		Type:   "backup",
-		Status: "failed",
-	}
-	defer func() {
-		result.DurationMs = time.Since(start).Milliseconds()
-	}()
+	result = TaskResult{Type: "backup", Status: "failed", BackupMode: protocol.BackupModeSnapshot}
+	defer func() { result.DurationMs = time.Since(start).Milliseconds() }()
 
 	emitProgress(progressFn, "init", nil)
 	if err := e.restic.InitRepo(ctx); err != nil {
@@ -241,7 +241,6 @@ func (e *Executor) RunBackupJobWithProgress(ctx context.Context, progressFn Prog
 		result.ErrorLog = "snapshots: " + err.Error()
 		return result
 	}
-
 	repoSize, err := e.restic.RepositorySize(ctx)
 	if err != nil {
 		result.ErrorLog = "stats: " + err.Error()
@@ -262,6 +261,104 @@ func (e *Executor) RunBackupJobWithProgress(ctx context.Context, progressFn Prog
 		result.SnapshotID = latest.ID
 	}
 	return result
+}
+
+func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) {
+	_ = ctx
+	start := time.Now()
+	result = TaskResult{
+		Type:          "backup",
+		Status:        "failed",
+		BackupMode:    protocol.BackupModeArchive,
+		ArchiveFormat: normalizeArchiveFormat(cfg.ArchiveFormat),
+	}
+	defer func() { result.DurationMs = time.Since(start).Milliseconds() }()
+
+	artifactDir := filepath.Join(cfg.ConfigDir, "artifacts")
+	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
+		result.ErrorLog = "archive: " + err.Error()
+		return result
+	}
+
+	artifactName := "backup-" + time.Now().UTC().Format("20060102-150405") + ".tar.gz"
+	artifactPath := filepath.Join(artifactDir, artifactName)
+	if err := writeTarGzArchive(artifactPath, cfg.BackupDirs, cfg.Excludes); err != nil {
+		result.ErrorLog = "archive: " + err.Error()
+		return result
+	}
+	info, err := os.Stat(artifactPath)
+	if err != nil {
+		result.ErrorLog = "archive-stat: " + err.Error()
+		return result
+	}
+
+	result.Status = "success"
+	result.ArtifactPath = artifactPath
+	result.ArtifactName = artifactName
+	result.ArtifactSize = info.Size()
+	result.ArtifactContentType = "application/gzip"
+	result.RepoSize = info.Size()
+	return result
+}
+
+func normalizeArchiveFormat(format string) string {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case protocol.ArchiveFormatZip:
+		return protocol.ArchiveFormatZip
+	default:
+		return protocol.ArchiveFormatTarGz
+	}
+}
+
+func writeTarGzArchive(output string, dirs []string, excludes []string) error {
+	file, err := os.Create(output)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	gz := gzip.NewWriter(file)
+	defer gz.Close()
+	writer := tar.NewWriter(gz)
+	defer writer.Close()
+
+	for _, root := range dirs {
+		root = filepath.Clean(root)
+		if err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			for _, exclude := range excludes {
+				if exclude != "" && strings.Contains(path, exclude) {
+					if info.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+			}
+			header, err := tar.FileInfoHeader(info, "")
+			if err != nil {
+				return err
+			}
+			header.Name = strings.TrimPrefix(filepath.ToSlash(path), "/")
+			if err := writer.WriteHeader(header); err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() {
+				return nil
+			}
+			f, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			_, err = io.Copy(writer, f)
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func emitProgress(progressFn ProgressCallback, phase string, progress *BackupProgress) {

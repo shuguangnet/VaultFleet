@@ -3,6 +3,8 @@ package api
 import (
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -239,6 +241,52 @@ func TestCancelCompletedTaskReturnsConflict(t *testing.T) {
 
 	assert.Equal(t, http.StatusConflict, w.Code)
 	assert.Empty(t, setup.hub.sent)
+}
+
+func TestDownloadArtifactResolvesRelativePathFromDataDir(t *testing.T) {
+	setup := setupTasksAPI(t)
+	agent := createTasksTestAgent(t, setup.database, "online")
+	artifactDir := filepath.Join(filepath.Dir(setup.database.DSN), "artifacts")
+	require.NoError(t, os.MkdirAll(artifactDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(artifactDir, "archive.tar.gz"), []byte("archive-bytes"), 0o644))
+	history := db.TaskHistory{
+		AgentID:             agent.ID,
+		Type:                "backup",
+		Status:              commands.TaskStatusSuccess,
+		ArtifactPath:        filepath.Join("artifacts", "archive.tar.gz"),
+		ArtifactName:        "archive.tar.gz",
+		ArtifactContentType: "application/gzip",
+		CreatedAt:           time.Now(),
+	}
+	require.NoError(t, setup.database.DB.Create(&history).Error)
+
+	w := getJSON(t, setup.router, "/api/tasks/"+history.ID+"/download")
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "archive-bytes", w.Body.String())
+	assert.Equal(t, "application/gzip", w.Header().Get("Content-Type"))
+	assert.Contains(t, w.Header().Get("Content-Disposition"), `filename="archive.tar.gz"`)
+}
+
+func TestDownloadArtifactReturnsNotFoundWhenResolvedFileMissing(t *testing.T) {
+	setup := setupTasksAPI(t)
+	agent := createTasksTestAgent(t, setup.database, "online")
+	history := db.TaskHistory{
+		AgentID:      agent.ID,
+		Type:         "backup",
+		Status:       commands.TaskStatusSuccess,
+		ArtifactPath: filepath.Join("artifacts", "missing.tar.gz"),
+		ArtifactName: "missing.tar.gz",
+		CreatedAt:    time.Now(),
+	}
+	require.NoError(t, setup.database.DB.Create(&history).Error)
+
+	w := getJSON(t, setup.router, "/api/tasks/"+history.ID+"/download")
+
+	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assert.Equal(t, false, body["ok"])
+	assert.Equal(t, "task artifact not found", body["error"])
 }
 
 func TestListTasksFiltersAndLimitsHistory(t *testing.T) {

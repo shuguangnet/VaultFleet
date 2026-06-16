@@ -827,13 +827,15 @@ func toExecutorRetention(retention protocol.RetentionPolicy) executor.RetentionP
 
 func executorConfigForPolicy(configDir string, policyPayload *protocol.PolicyPushPayload) executor.ExecutorConfig {
 	return executor.ExecutorConfig{
-		ConfigDir:   configDir,
-		RepoPath:    policyPayload.Storage.RepoPath,
-		BackupDirs:  append([]string(nil), policyPayload.BackupDirs...),
-		Excludes:    append([]string(nil), policyPayload.ExcludePatterns...),
-		Retention:   toExecutorRetention(policyPayload.Retention),
-		RcloneArgs:  copyStringMap(policyPayload.Storage.RcloneArgs),
-		PlainBackup: policyPayload.PlainBackup,
+		ConfigDir:     configDir,
+		RepoPath:      policyPayload.Storage.RepoPath,
+		BackupDirs:    append([]string(nil), policyPayload.BackupDirs...),
+		Excludes:      append([]string(nil), policyPayload.ExcludePatterns...),
+		Retention:     toExecutorRetention(policyPayload.Retention),
+		RcloneArgs:    copyStringMap(policyPayload.Storage.RcloneArgs),
+		PlainBackup:   policyPayload.PlainBackup,
+		BackupMode:    policyPayload.BackupMode,
+		ArchiveFormat: policyPayload.ArchiveFormat,
 	}
 }
 
@@ -866,10 +868,16 @@ func copyStringMap(values map[string]string) map[string]string {
 }
 
 func runBackup(ctx context.Context, cfg executor.ExecutorConfig) executor.TaskResult {
+	if strings.EqualFold(strings.TrimSpace(cfg.BackupMode), protocol.BackupModeArchive) {
+		return executor.RunArchiveJob(ctx, cfg)
+	}
 	return executor.NewExecutor(cfg).RunBackupJob(ctx)
 }
 
 func runBackupWithProgress(ctx context.Context, cfg executor.ExecutorConfig, progressFn executor.ProgressCallback) executor.TaskResult {
+	if strings.EqualFold(strings.TrimSpace(cfg.BackupMode), protocol.BackupModeArchive) {
+		return executor.RunArchiveJob(ctx, cfg)
+	}
 	return executor.NewExecutor(cfg).RunBackupJobWithProgress(ctx, progressFn)
 }
 
