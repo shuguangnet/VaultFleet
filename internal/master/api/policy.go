@@ -13,6 +13,7 @@ import (
 
 	"vaultfleet/internal/master/db"
 	"vaultfleet/internal/master/events"
+	"vaultfleet/pkg/protocol"
 )
 
 type PolicyHandler struct {
