@@ -96,6 +96,39 @@ func TestCreatePolicyDefaultsTimeoutHours(t *testing.T) {
 	assert.Equal(t, 6, stored.TimeoutHours)
 }
 
+func TestCreatePolicySupportsArchiveBackupMode(t *testing.T) {
+	setup := setupTestPolicyAPI(t)
+	agent := createPolicyTestAgent(t, setup.database)
+	storage := createPolicyTestStorage(t, setup.database)
+
+	w := postAnyJSON(t, setup.router, "/api/policies", map[string]any{
+		"agent_id":       agent.ID,
+		"storage_id":     storage.ID,
+		"backup_mode":    "archive",
+		"archive_format": "zip",
+		"backup_dirs":    []string{"/etc", "/var/lib/app"},
+		"schedule":       "0 3 * * *",
+		"retention":      map[string]any{"keep_last": 3},
+	})
+
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assert.Equal(t, "archive", body["backup_mode"])
+	assert.Equal(t, "zip", body["archive_format"])
+
+	var stored db.BackupPolicy
+	require.NoError(t, setup.database.DB.First(&stored, "id = ?", body["id"]).Error)
+	assert.Equal(t, "archive", stored.BackupMode)
+	assert.Equal(t, "zip", stored.ArchiveFormat)
+
+	payload, err := policyPushPayload(setup.database, stored, storage)
+	require.NoError(t, err)
+	assert.Equal(t, "archive", payload.BackupMode)
+	assert.Equal(t, "zip", payload.ArchiveFormat)
+	assert.Empty(t, payload.ResticPassword)
+	assert.True(t, payload.PlainBackup)
+}
+
 func TestCreatePolicyPersistsTimeoutHours(t *testing.T) {
 	setup := setupTestPolicyAPI(t)
 	agent := createPolicyTestAgent(t, setup.database)

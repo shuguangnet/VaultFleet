@@ -390,6 +390,8 @@ func policyPushPayload(database *db.Database, policy db.BackupPolicy, storage db
 		},
 		ResticPassword:  resticPassword,
 		PlainBackup:     strings.TrimSpace(resticPassword) == "",
+		BackupMode:      normalizeBackupMode(policy.BackupMode),
+		ArchiveFormat:   normalizeArchiveFormat(policy.ArchiveFormat),
 		BackupDirs:      backupDirs,
 		ExcludePatterns: excludePatterns,
 		Schedule:        policy.Schedule,

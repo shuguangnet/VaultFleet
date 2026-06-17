@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { cancelTask, listTasks } from "@/services/tasks";
+import { cancelTask, listTasks, taskArtifactDownloadUrl } from "@/services/tasks";
 import { listAgents, backupNow } from "@/services/agents";
 import type { TaskHistory } from "@/types/task";
 import { StatusBadge } from "@/components/status-badge";
@@ -238,10 +238,12 @@ export function TasksPage() {
                             </div>
                             <div className="space-y-1">
                               <span className="text-muted-foreground">关联信息:</span>
-                              <div className="flex gap-2">
+                              <div className="flex flex-wrap gap-2">
                                 {task.policy_id && <span className="p-1 bg-indigo-50 text-indigo-700 rounded border border-indigo-100">策略:{task.policy_id.substring(0,8)}</span>}
                                 {task.storage_id && <span className="p-1 bg-slate-50 text-slate-700 rounded border border-slate-100">存储:{task.storage_id.substring(0,8)}</span>}
-                                {!task.policy_id && !task.storage_id && <span className="p-1 bg-muted text-muted-foreground rounded italic">无</span>}
+                                {task.backup_mode === "archive" && <span className="p-1 bg-amber-50 text-amber-700 rounded border border-amber-100">压缩包:{task.archive_format || "tar.gz"}</span>}
+                                {task.backup_mode === "snapshot" && <span className="p-1 bg-emerald-50 text-emerald-700 rounded border border-emerald-100">快照备份</span>}
+                                {!task.policy_id && !task.storage_id && !task.backup_mode && <span className="p-1 bg-muted text-muted-foreground rounded italic">无</span>}
                               </div>
                             </div>
                           </div>
@@ -258,8 +260,20 @@ export function TasksPage() {
                           )}
 
                           {!task.error_log && task.status === "success" && (
-                            <div className="flex items-center gap-2 text-green-600 text-xs">
-                              <Info className="h-3 w-3" /> 任务执行成功，未捕获到错误输出。
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-2 text-green-600 text-xs">
+                                <Info className="h-3 w-3" /> 任务执行成功，未捕获到错误输出。
+                              </div>
+                              {task.backup_mode === "archive" && task.artifact_name && (
+                                <div className="flex items-center gap-3 rounded-md border bg-amber-50/50 px-3 py-2 text-xs">
+                                  <span className="font-medium text-amber-800">压缩包已生成</span>
+                                  <span className="text-amber-700">{task.artifact_name}</span>
+                                  {task.artifact_size ? <span className="text-amber-700">{formatBytes(task.artifact_size)}</span> : null}
+                                  <Button asChild size="sm" variant="outline" className="h-7">
+                                    <a href={taskArtifactDownloadUrl(task.id)}>下载压缩包</a>
+                                  </Button>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>

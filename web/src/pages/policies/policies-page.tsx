@@ -102,6 +102,8 @@ export function defaultPolicyInput(): PolicyInput {
   return {
     agent_id: "",
     storage_id: "",
+    backup_mode: "snapshot",
+    archive_format: "tar.gz",
     repo_path: "",
     restic_password: "",
     backup_dirs: [],
@@ -238,6 +240,8 @@ export function PoliciesPage() {
     setFormData({
       agent_id: policy.agent_id,
       storage_id: policy.storage_id,
+      backup_mode: policy.backup_mode ?? "snapshot",
+      archive_format: policy.archive_format ?? "tar.gz",
       repo_path: repoSuffix,
       backup_dirs: policy.backup_dirs,
       exclude_patterns: policy.exclude_patterns,
@@ -373,9 +377,54 @@ export function PoliciesPage() {
                       value={formData.restic_password}
                       onChange={(e) => setFormData({ ...formData, restic_password: e.target.value })}
                       placeholder="留空则不加密"
+                      disabled={formData.backup_mode === "archive"}
                     />
+                    {formData.backup_mode === "archive" && (
+                      <p className="text-xs text-muted-foreground">压缩包备份直接生成归档文件，不使用 restic 仓库密码。</p>
+                    )}
                   </div>
                 )}
+
+                <div className="space-y-3 rounded-lg border p-4">
+                  <div className="space-y-1">
+                    <Label>备份模式</Label>
+                    <p className="text-xs text-muted-foreground">可选择标准快照仓库备份，或直接生成可下载压缩包。</p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      className={`rounded-lg border p-3 text-left transition-colors ${formData.backup_mode === "snapshot" ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-border hover:border-muted-foreground/30"}`}
+                      onClick={() => setFormData({ ...formData, backup_mode: "snapshot" })}
+                    >
+                      <div className="text-sm font-medium">快照仓库</div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">适合长期增量备份与恢复浏览。</div>
+                    </button>
+                    <button
+                      type="button"
+                      className={`rounded-lg border p-3 text-left transition-colors ${formData.backup_mode === "archive" ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-border hover:border-muted-foreground/30"}`}
+                      onClick={() => setFormData({ ...formData, backup_mode: "archive" })}
+                    >
+                      <div className="text-sm font-medium">压缩包归档</div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">每次备份生成一个可直接下载的压缩文件。</div>
+                    </button>
+                  </div>
+                  {formData.backup_mode === "archive" && (
+                    <div className="space-y-2">
+                      <Label>压缩格式</Label>
+                      <Select
+                        value={formData.archive_format || "tar.gz"}
+                        onValueChange={(val) => setFormData({ ...formData, archive_format: val as "tar.gz" | "zip" })}
+                      >
+                        <SelectTrigger><SelectValue placeholder="请选择压缩格式" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="tar.gz">tar.gz</SelectItem>
+                          <SelectItem value="zip">zip</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">生成后的压缩包会出现在备份历史中，可直接下载。</p>
+                    </div>
+                  )}
+                </div>
 
                 <div className="space-y-4">
                   <Label htmlFor="backup_dirs">备份目录</Label>

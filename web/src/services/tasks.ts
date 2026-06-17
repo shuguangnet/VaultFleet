@@ -5,6 +5,8 @@ export const listTasks = (filters: TaskFilters = {}) => apiGet<TaskHistory[]>(`/
 
 export const cancelTask = (taskId: string) => apiPost(`/api/tasks/${taskId}/cancel`, {});
 
+export const taskArtifactDownloadUrl = (taskId: string) => `/api/tasks/${taskId}/download`;
+
 function toQuery(filters: TaskFilters): string {
   const params = new URLSearchParams();
   if (filters.agent_id) params.set("agent_id", filters.agent_id);

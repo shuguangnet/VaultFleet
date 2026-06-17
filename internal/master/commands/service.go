@@ -322,13 +322,19 @@ func (s *Service) CompleteTaskResultWith(ctx context.Context, agentID string, me
 		}
 
 		taskUpdates := map[string]any{
-			"status":      result.Status,
-			"snapshot_id": result.SnapshotID,
-			"duration_ms": result.DurationMs,
-			"repo_size":   result.RepoSize,
-			"error_log":   result.ErrorLog,
-			"finished_at": finishedAt,
-			"updated_at":  now,
+			"status":                result.Status,
+			"snapshot_id":           result.SnapshotID,
+			"artifact_path":         result.ArtifactPath,
+			"artifact_name":         result.ArtifactName,
+			"artifact_size":         result.ArtifactSize,
+			"artifact_content_type": result.ArtifactContentType,
+			"backup_mode":           result.BackupMode,
+			"archive_format":        result.ArchiveFormat,
+			"duration_ms":           result.DurationMs,
+			"repo_size":             result.RepoSize,
+			"error_log":             result.ErrorLog,
+			"finished_at":           finishedAt,
+			"updated_at":            now,
 		}
 		if startedAt != nil {
 			taskUpdates["started_at"] = startedAt

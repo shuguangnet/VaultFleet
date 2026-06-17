@@ -20,6 +20,12 @@ export interface TaskHistory {
   command_id?: string;
   policy_id?: string;
   storage_id?: string;
+  backup_mode?: "snapshot" | "archive";
+  archive_format?: "tar.gz" | "zip";
+  artifact_path?: string;
+  artifact_name?: string;
+  artifact_size?: number;
+  artifact_content_type?: string;
   started_at?: string;
   finished_at?: string;
   repo_size?: number;

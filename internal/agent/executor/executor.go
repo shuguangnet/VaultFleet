@@ -2,6 +2,7 @@ package executor
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"context"
 	"io"
@@ -280,9 +281,9 @@ func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) 
 		return result
 	}
 
-	artifactName := "backup-" + time.Now().UTC().Format("20060102-150405") + ".tar.gz"
+	artifactName := "backup-" + time.Now().UTC().Format("20060102-150405") + archiveFileSuffix(result.ArchiveFormat)
 	artifactPath := filepath.Join(artifactDir, artifactName)
-	if err := writeTarGzArchive(artifactPath, cfg.BackupDirs, cfg.Excludes); err != nil {
+	if err := writeArchive(artifactPath, result.ArchiveFormat, cfg.BackupDirs, cfg.Excludes); err != nil {
 		result.ErrorLog = "archive: " + err.Error()
 		return result
 	}
@@ -296,7 +297,7 @@ func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) 
 	result.ArtifactPath = artifactPath
 	result.ArtifactName = artifactName
 	result.ArtifactSize = info.Size()
-	result.ArtifactContentType = "application/gzip"
+	result.ArtifactContentType = archiveContentType(result.ArchiveFormat)
 	result.RepoSize = info.Size()
 	return result
 }
@@ -308,6 +309,27 @@ func normalizeArchiveFormat(format string) string {
 	default:
 		return protocol.ArchiveFormatTarGz
 	}
+}
+
+func archiveFileSuffix(format string) string {
+	if normalizeArchiveFormat(format) == protocol.ArchiveFormatZip {
+		return ".zip"
+	}
+	return ".tar.gz"
+}
+
+func archiveContentType(format string) string {
+	if normalizeArchiveFormat(format) == protocol.ArchiveFormatZip {
+		return "application/zip"
+	}
+	return "application/gzip"
+}
+
+func writeArchive(output string, format string, dirs []string, excludes []string) error {
+	if normalizeArchiveFormat(format) == protocol.ArchiveFormatZip {
+		return writeZipArchive(output, dirs, excludes)
+	}
+	return writeTarGzArchive(output, dirs, excludes)
 }
 
 func writeTarGzArchive(output string, dirs []string, excludes []string) error {
@@ -353,6 +375,51 @@ func writeTarGzArchive(output string, dirs []string, excludes []string) error {
 			}
 			defer f.Close()
 			_, err = io.Copy(writer, f)
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeZipArchive(output string, dirs []string, excludes []string) error {
+	file, err := os.Create(output)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	writer := zip.NewWriter(file)
+	defer writer.Close()
+
+	for _, root := range dirs {
+		root = filepath.Clean(root)
+		if err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			for _, exclude := range excludes {
+				if exclude != "" && strings.Contains(path, exclude) {
+					if info.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+			}
+			if info.IsDir() {
+				return nil
+			}
+			entry, err := writer.Create(strings.TrimPrefix(filepath.ToSlash(path), "/"))
+			if err != nil {
+				return err
+			}
+			f, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			_, err = io.Copy(entry, f)
 			return err
 		}); err != nil {
 			return err

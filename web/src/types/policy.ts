@@ -1,7 +1,12 @@
+export type BackupMode = "snapshot" | "archive";
+export type ArchiveFormat = "tar.gz" | "zip";
+
 export interface BackupPolicy {
   id: string;
   agent_id: string;
   storage_id: string;
+  backup_mode: BackupMode;
+  archive_format?: ArchiveFormat;
   repo_path: string;
   backup_dirs: string[];
   exclude_patterns: string[];
@@ -26,6 +31,8 @@ export interface RetentionConfig {
 export interface PolicyInput {
   agent_id: string;
   storage_id: string;
+  backup_mode: BackupMode;
+  archive_format?: ArchiveFormat;
   repo_path: string;
   restic_password?: string;
   backup_dirs: string[];

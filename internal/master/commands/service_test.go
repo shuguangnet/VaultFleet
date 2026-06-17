@@ -697,6 +697,50 @@ func TestCompleteTaskResultCancelledMapsToCancelledCommand(t *testing.T) {
 	assert.True(t, history.FinishedAt.Equal(now))
 }
 
+func TestCompleteTaskResultPersistsArchiveMetadata(t *testing.T) {
+	database := setupCommandTestDB(t)
+	now := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
+	service := NewService(database, nil)
+	service.Now = func() time.Time { return now }
+	startedAt := now.Add(-2 * time.Minute)
+	command := createCommandForTest(t, service, "agent-1", protocol.TypeBackupNow)
+	require.NoError(t, database.DB.Model(&db.AgentCommand{}).Where("id = ?", command.ID).Update("status", CommandStatusRunning).Error)
+	require.NoError(t, database.DB.Model(&db.TaskHistory{}).Where("command_id = ?", command.ID).Update("status", TaskStatusRunning).Error)
+
+	completed, err := service.CompleteTaskResultWith(context.Background(), "agent-1", command.MessageID, protocol.TaskResultPayload{
+		AgentID:             "agent-1",
+		TaskType:            "backup",
+		Status:              TaskStatusSuccess,
+		BackupMode:          protocol.BackupModeArchive,
+		ArchiveFormat:       protocol.ArchiveFormatZip,
+		ArtifactPath:        "artifacts/backup-20260520-120000.zip",
+		ArtifactName:        "backup-20260520-120000.zip",
+		ArtifactSize:        4096,
+		ArtifactContentType: "application/zip",
+		RepoSize:            4096,
+		StartedAt:           startedAt,
+		FinishedAt:          now,
+	}, nil)
+
+	require.NoError(t, err)
+	assert.True(t, completed)
+
+	var history db.TaskHistory
+	require.NoError(t, database.DB.First(&history, "command_id = ?", command.ID).Error)
+	assert.Equal(t, TaskStatusSuccess, history.Status)
+	assert.Equal(t, protocol.BackupModeArchive, history.BackupMode)
+	assert.Equal(t, protocol.ArchiveFormatZip, history.ArchiveFormat)
+	assert.Equal(t, "artifacts/backup-20260520-120000.zip", history.ArtifactPath)
+	assert.Equal(t, "backup-20260520-120000.zip", history.ArtifactName)
+	assert.EqualValues(t, 4096, history.ArtifactSize)
+	assert.Equal(t, "application/zip", history.ArtifactContentType)
+	assert.EqualValues(t, 4096, history.RepoSize)
+	require.NotNil(t, history.StartedAt)
+	assert.True(t, history.StartedAt.Equal(startedAt))
+	require.NotNil(t, history.FinishedAt)
+	assert.True(t, history.FinishedAt.Equal(now))
+}
+
 func TestCancelCommandPendingMarksCancelledDirectly(t *testing.T) {
 	database := setupCommandTestDB(t)
 	now := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
