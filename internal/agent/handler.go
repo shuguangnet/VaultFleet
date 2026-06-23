@@ -554,11 +554,14 @@ func (h *Handler) handleBackupNow(msg protocol.Message) {
 		return
 	}
 
-	policyPayload, err := h.policyStore.LoadPolicy()
-	if err != nil {
-		log.Printf("load policy failed: %v", err)
-		h.sendTaskResultWithID(msg.ID, h.failedTaskResult(agentID, "load policy: "+err.Error(), time.Now()))
-		return
+	policyPayload := backupNow.Policy
+	if policyPayload == nil {
+		policyPayload, err = h.policyStore.LoadPolicy()
+		if err != nil {
+			log.Printf("load policy failed: %v", err)
+			h.sendTaskResultWithID(msg.ID, h.failedTaskResult(agentID, "load policy: "+err.Error(), time.Now()))
+			return
+		}
 	}
 	if agentID == "" {
 		agentID = policyPayload.AgentID

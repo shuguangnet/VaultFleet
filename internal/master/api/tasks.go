@@ -77,21 +77,33 @@ func (h *TaskHandler) BackupNow(c *gin.Context) {
 	if !agentExistsByID(c, h.DB, agentID) {
 		return
 	}
-
-	msg, err := protocol.NewMessage(protocol.TypeBackupNow, protocol.BackupNowPayload{AgentID: agentID})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "encode backup request"})
-		return
-	}
 	commandService := h.commandService()
 
 	var timeoutHours int
 	var policyID, storageID string
 	var policy db.BackupPolicy
-	if err := h.DB.DB.Where("agent_id = ?", agentID).First(&policy).Error; err == nil {
+	var backupPolicyPayload *protocol.PolicyPushPayload
+	if err := h.DB.DB.Where("agent_id = ?", agentID).Order("updated_at DESC").First(&policy).Error; err == nil {
 		timeoutHours = normalizedPolicyTimeoutHours(policy.TimeoutHours)
 		policyID = policy.ID
 		storageID = policy.StorageID
+		var storage db.StorageConfig
+		if err := h.DB.DB.First(&storage, "id = ?", policy.StorageID).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "load backup storage"})
+			return
+		}
+		payload, err := policyPushPayload(h.DB, policy, storage)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "build backup policy payload"})
+			return
+		}
+		backupPolicyPayload = &payload
+	}
+
+	msg, err := protocol.NewMessage(protocol.TypeBackupNow, protocol.BackupNowPayload{AgentID: agentID, Policy: backupPolicyPayload})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "encode backup request"})
+		return
 	}
 
 	command, err := commandService.CreateCommand(contextFromGin(c), commands.CreateCommandInput{

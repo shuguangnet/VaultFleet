@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -118,11 +119,94 @@ func TestBackupNowUsesPolicyTimeoutHours(t *testing.T) {
 	assert.Equal(t, now.Add(2*time.Hour), command.DeadlineAt.UTC())
 	assert.Equal(t, policy.ID, command.PolicyID)
 	assert.Equal(t, storage.ID, command.StorageID)
+}
+
+func TestBackupNowUsesLatestPolicyForAgent(t *testing.T) {
+	setup := setupTasksAPI(t)
+	agent := createTasksTestAgent(t, setup.database, "offline")
+	snapshotStorage := db.StorageConfig{Name: "Snapshot Storage", RcloneType: "s3"}
+	archiveStorage := db.StorageConfig{Name: "Archive Storage", RcloneType: "s3"}
+	require.NoError(t, setup.database.DB.Create(&snapshotStorage).Error)
+	require.NoError(t, setup.database.DB.Create(&archiveStorage).Error)
+
+	older := db.BackupPolicy{
+		AgentID:         agent.ID,
+		StorageID:       snapshotStorage.ID,
+		BackupMode:      protocol.BackupModeSnapshot,
+		ArchiveFormat:   protocol.ArchiveFormatTarGz,
+		RepoPath:        "vaultfleet/" + agent.ID,
+		BackupDirs:      `["/etc"]`,
+		ExcludePatterns: `[]`,
+		Schedule:        "0 2 * * *",
+		Retention:       `{"keep_last":3}`,
+		TimeoutHours:    2,
+	}
+	require.NoError(t, setup.database.DB.Create(&older).Error)
+	newer := db.BackupPolicy{
+		AgentID:         agent.ID,
+		StorageID:       archiveStorage.ID,
+		BackupMode:      protocol.BackupModeArchive,
+		ArchiveFormat:   protocol.ArchiveFormatZip,
+		RepoPath:        "vaultfleet/" + agent.ID,
+		BackupDirs:      `["/etc","/var/lib/app"]`,
+		ExcludePatterns: `[]`,
+		Schedule:        "0 3 * * *",
+		Retention:       `{"keep_last":5}`,
+		TimeoutHours:    4,
+	}
+	require.NoError(t, setup.database.DB.Create(&newer).Error)
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/backup-now", map[string]any{})
+
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	data := requireMap(t, body["data"])
+	var command db.AgentCommand
+	require.NoError(t, setup.database.DB.First(&command, "id = ?", data["command_id"]).Error)
+	assert.Equal(t, newer.ID, command.PolicyID)
+	assert.Equal(t, archiveStorage.ID, command.StorageID)
 
 	var history db.TaskHistory
 	require.NoError(t, setup.database.DB.First(&history, "command_id = ?", command.ID).Error)
-	assert.Equal(t, policy.ID, history.PolicyID)
-	assert.Equal(t, storage.ID, history.StorageID)
+	assert.Equal(t, newer.ID, history.PolicyID)
+	assert.Equal(t, archiveStorage.ID, history.StorageID)
+}
+
+func TestBackupNowIncludesLatestPolicyPayload(t *testing.T) {
+	setup := setupTasksAPI(t)
+	agent := createTasksTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+
+	storage := db.StorageConfig{Name: "Archive Storage", RcloneType: "s3"}
+	require.NoError(t, setup.database.DB.Create(&storage).Error)
+	policy := db.BackupPolicy{
+		AgentID:         agent.ID,
+		StorageID:       storage.ID,
+		BackupMode:      protocol.BackupModeArchive,
+		ArchiveFormat:   protocol.ArchiveFormatZip,
+		RepoPath:        "vaultfleet/" + agent.ID,
+		BackupDirs:      `["/etc"]`,
+		ExcludePatterns: `[]`,
+		Schedule:        "0 3 * * *",
+		Retention:       `{"keep_last":5}`,
+		TimeoutHours:    4,
+	}
+	require.NoError(t, setup.database.DB.Create(&policy).Error)
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/backup-now", map[string]any{})
+
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	require.Len(t, setup.hub.sent, 1)
+	payload, err := protocol.ParsePayload[protocol.BackupNowPayload](&setup.hub.sent[0].message)
+	require.NoError(t, err)
+	require.NotNil(t, payload.Policy)
+	assert.Equal(t, agent.ID, payload.Policy.AgentID)
+	assert.Equal(t, protocol.BackupModeArchive, payload.Policy.BackupMode)
+	assert.Equal(t, protocol.ArchiveFormatZip, payload.Policy.ArchiveFormat)
+
+	var backupDirs []string
+	require.NoError(t, json.Unmarshal([]byte(policy.BackupDirs), &backupDirs))
+	assert.Equal(t, backupDirs, payload.Policy.BackupDirs)
 }
 
 func TestCancelPendingTaskMarksCancelled(t *testing.T) {

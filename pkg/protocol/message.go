@@ -228,7 +228,8 @@ type RetentionPolicy struct {
 
 // BackupNowPayload requests an immediate backup run for an agent.
 type BackupNowPayload struct {
-	AgentID string `json:"agent_id"`
+	AgentID string             `json:"agent_id"`
+	Policy  *PolicyPushPayload `json:"policy,omitempty"`
 }
 
 // RestoreReqPayload requests a snapshot restore to a target path.

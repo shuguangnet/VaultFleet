@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -710,6 +712,61 @@ func TestHandleBackupNowLoadsPolicyRunsBackupAndSendsTaskResult(t *testing.T) {
 	assert.Equal(t, int64(4096), result.RepoSize)
 	assert.False(t, result.StartedAt.IsZero())
 	assert.Equal(t, result.StartedAt.Add(1500*time.Millisecond), result.FinishedAt)
+}
+
+func TestHandleBackupNowUsesInlinePolicyPayloadForArchive(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	configDir := t.TempDir()
+	backupDir := filepath.Join(t.TempDir(), "backup-src")
+	require.NoError(t, os.MkdirAll(backupDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(backupDir, "hello.txt"), []byte("vaultfleet"), 0o644))
+	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{
+		AgentID:       "agent-1",
+		Storage:       protocol.StorageConfig{RepoPath: "repo/agent-1"},
+		BackupMode:    protocol.BackupModeSnapshot,
+		ArchiveFormat: protocol.ArchiveFormatTarGz,
+		BackupDirs:    []string{backupDir},
+	}))
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   configDir,
+		SendFunc:    sent.send,
+	})
+	msg, err := protocol.NewMessage(protocol.TypeBackupNow, protocol.BackupNowPayload{
+		AgentID: "agent-1",
+		Policy: &protocol.PolicyPushPayload{
+			AgentID:         "agent-1",
+			PlainBackup:     true,
+			Storage:         protocol.StorageConfig{RepoPath: "repo/agent-1"},
+			BackupMode:      protocol.BackupModeArchive,
+			ArchiveFormat:   protocol.ArchiveFormatZip,
+			BackupDirs:      []string{backupDir},
+			ExcludePatterns: []string{},
+		},
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	resultMsg := waitForMessageType(t, sent, protocol.TypeTaskResult, time.Second)
+	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&resultMsg)
+	require.NoError(t, err)
+	assert.Equal(t, "success", result.Status)
+	assert.Equal(t, protocol.BackupModeArchive, result.BackupMode)
+	assert.Equal(t, protocol.ArchiveFormatZip, result.ArchiveFormat)
+	assert.Equal(t, "application/zip", result.ArtifactContentType)
+	assert.NotEmpty(t, result.ArtifactPath)
+
+	data, err := os.ReadFile(result.ArtifactPath)
+	require.NoError(t, err)
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	require.NoError(t, err)
+	var names []string
+	for _, file := range reader.File {
+		names = append(names, file.Name)
+	}
+	assert.Contains(t, names, strings.TrimPrefix(filepath.ToSlash(filepath.Join(backupDir, "hello.txt")), "/"))
 }
 
 func TestHandleBackupNowRefreshesRcloneConfWithObscuredSFTPPassword(t *testing.T) {
