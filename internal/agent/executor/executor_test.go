@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -210,6 +211,70 @@ func TestRunBackupJobFailureStopsAtStageAndReturnsErrorLog(t *testing.T) {
 		t.Fatalf("ErrorLog = %q, want backup stage and error", result.ErrorLog)
 	}
 	assertRunnerCalls(t, runner.calls, []string{"init", "backup"})
+}
+
+func TestRunArchiveJobUploadsArtifactToRemote(t *testing.T) {
+	configDir := t.TempDir()
+	backupDir := filepath.Join(t.TempDir(), "data")
+	if err := os.MkdirAll(backupDir, 0o755); err != nil {
+		t.Fatalf("mkdir backup dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(backupDir, "hello.txt"), []byte("hello archive"), 0o644); err != nil {
+		t.Fatalf("seed backup file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "rclone.conf"), []byte("[vaultfleet]\ntype = memory\n"), 0o600); err != nil {
+		t.Fatalf("write rclone config: %v", err)
+	}
+
+	logPath := filepath.Join(t.TempDir(), "rclone.log")
+	binDir := t.TempDir()
+	rclonePath := filepath.Join(binDir, "rclone")
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %s\nexit 0\n", shellQuoteForSh(logPath))
+	if err := os.WriteFile(rclonePath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake rclone: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	result := RunArchiveJob(context.Background(), ExecutorConfig{
+		ConfigDir:     configDir,
+		RepoPath:      "tenant/agent-1",
+		BackupDirs:    []string{backupDir},
+		ArchiveFormat: protocol.ArchiveFormatZip,
+	})
+
+	if result.Status != "success" {
+		t.Fatalf("Status = %q, want success; error log: %q", result.Status, result.ErrorLog)
+	}
+	if !strings.HasPrefix(result.ArtifactPath, "artifacts/") {
+		t.Fatalf("ArtifactPath = %q, want artifacts/...", result.ArtifactPath)
+	}
+	if !strings.HasSuffix(result.ArtifactName, ".zip") {
+		t.Fatalf("ArtifactName = %q, want .zip suffix", result.ArtifactName)
+	}
+	if result.ArtifactContentType != "application/zip" {
+		t.Fatalf("ArtifactContentType = %q, want application/zip", result.ArtifactContentType)
+	}
+	if result.ArtifactSize <= 0 {
+		t.Fatalf("ArtifactSize = %d, want positive", result.ArtifactSize)
+	}
+	localArtifact := filepath.Join(configDir, "artifacts", result.ArtifactName)
+	if _, err := os.Stat(localArtifact); err != nil {
+		t.Fatalf("local archive missing: %v", err)
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read fake rclone log: %v", err)
+	}
+	logLine := string(logged)
+	if !strings.Contains(logLine, "copyto ") {
+		t.Fatalf("rclone log = %q, want copyto invocation", logLine)
+	}
+	if !strings.Contains(logLine, localArtifact) {
+		t.Fatalf("rclone log = %q, want local artifact path", logLine)
+	}
+	if !strings.Contains(logLine, "vaultfleet:tenant/agent-1/"+filepath.ToSlash(result.ArtifactPath)) {
+		t.Fatalf("rclone log = %q, want remote artifact destination", logLine)
+	}
 }
 
 func TestRunBackupJobWithProgressReportsPhasesAndUsesProgressRunner(t *testing.T) {
@@ -565,4 +630,8 @@ func assertProtocolResult(t *testing.T, got, want protocol.TaskResultPayload) {
 	if !got.FinishedAt.Equal(want.FinishedAt) {
 		t.Fatalf("FinishedAt = %s, want %s", got.FinishedAt, want.FinishedAt)
 	}
+}
+
+func shellQuoteForSh(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }

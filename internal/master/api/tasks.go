@@ -2,20 +2,25 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"vaultfleet/internal/agent/executor"
 	"vaultfleet/internal/master/commands"
 	"vaultfleet/internal/master/db"
 	"vaultfleet/pkg/protocol"
+	"vaultfleet/pkg/rcloneobscure"
 )
 
 const defaultTaskListLimit = 50
@@ -197,7 +202,7 @@ func (h *TaskHandler) DownloadArtifact(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "task artifact not found"})
 		return
 	}
-	artifactPath, err := resolveArtifactPath(h.DB, history.ArtifactPath)
+	artifactPath, err := ensureTaskArtifactAvailable(h.DB, &history)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "task artifact not found"})
 		return
@@ -209,6 +214,24 @@ func (h *TaskHandler) DownloadArtifact(c *gin.Context) {
 		return
 	}
 	c.File(artifactPath)
+}
+
+func ensureTaskArtifactAvailable(database *db.Database, history *db.TaskHistory) (string, error) {
+	if history == nil {
+		return "", fmt.Errorf("task history unavailable")
+	}
+	artifactPath, err := resolveArtifactPath(database, history.ArtifactPath)
+	if err == nil {
+		artifactName := strings.TrimSpace(history.ArtifactName)
+		if artifactName == "" {
+			artifactName = filepath.Base(filepath.FromSlash(history.ArtifactPath))
+		}
+		standardRelPath := filepath.ToSlash(filepath.Join("artifacts", safeArtifactPathComponent(history.AgentID), artifactName))
+		if history.ArtifactPath == standardRelPath {
+			return artifactPath, nil
+		}
+	}
+	return repairTaskArtifact(database, history)
 }
 
 func resolveArtifactPath(database *db.Database, storedPath string) (string, error) {
@@ -228,11 +251,195 @@ func resolveArtifactPath(database *db.Database, storedPath string) (string, erro
 	if baseDir == "" {
 		baseDir = "."
 	}
-	candidate := filepath.Join(baseDir, storedPath)
+	candidate := filepath.Join(baseDir, filepath.FromSlash(storedPath))
 	if _, err := os.Stat(candidate); err != nil {
 		return "", err
 	}
 	return candidate, nil
+}
+
+func repairTaskArtifact(database *db.Database, history *db.TaskHistory) (string, error) {
+	if database == nil || history == nil {
+		return "", fmt.Errorf("database unavailable")
+	}
+	artifactName := strings.TrimSpace(history.ArtifactName)
+	if artifactName == "" {
+		artifactName = filepath.Base(filepath.FromSlash(history.ArtifactPath))
+	}
+	if artifactName == "." || artifactName == string(filepath.Separator) || artifactName == "" {
+		return "", fmt.Errorf("invalid artifact name")
+	}
+
+	stdRelPath := filepath.ToSlash(filepath.Join("artifacts", safeArtifactPathComponent(history.AgentID), artifactName))
+	stdAbsPath := filepath.Join(database.DataDir, filepath.FromSlash(stdRelPath))
+	if _, err := os.Stat(stdAbsPath); err == nil {
+		if history.ArtifactPath != stdRelPath {
+			_ = database.DB.Model(&db.TaskHistory{}).Where("id = ?", history.ID).Update("artifact_path", stdRelPath).Error
+			history.ArtifactPath = stdRelPath
+		}
+		return stdAbsPath, nil
+	}
+	if fetchedPath, err := fetchTaskArtifactFromStorage(database, history, artifactName, stdRelPath, stdAbsPath); err == nil {
+		return fetchedPath, nil
+	}
+
+	for _, candidate := range candidateArtifactPaths(database, history, artifactName) {
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(stdAbsPath), 0o755); err != nil {
+			return "", err
+		}
+		if err := copyFile(candidate, stdAbsPath); err != nil {
+			return "", err
+		}
+		if err := database.DB.Model(&db.TaskHistory{}).Where("id = ?", history.ID).Update("artifact_path", stdRelPath).Error; err != nil {
+			return "", err
+		}
+		history.ArtifactPath = stdRelPath
+		if history.ArtifactSize == 0 {
+			history.ArtifactSize = info.Size()
+			_ = database.DB.Model(&db.TaskHistory{}).Where("id = ?", history.ID).Update("artifact_size", info.Size()).Error
+		}
+		return stdAbsPath, nil
+	}
+	return "", fmt.Errorf("artifact not found")
+}
+
+func fetchTaskArtifactFromStorage(database *db.Database, history *db.TaskHistory, artifactName string, stdRelPath string, stdAbsPath string) (string, error) {
+	if database == nil || history == nil || strings.TrimSpace(history.StorageID) == "" {
+		return "", fmt.Errorf("storage unavailable")
+	}
+	var storage db.StorageConfig
+	if err := database.DB.First(&storage, "id = ?", history.StorageID).Error; err != nil {
+		return "", err
+	}
+	repoPath, err := repoPathForTaskHistory(database, history)
+	if err != nil {
+		return "", err
+	}
+	configValues := map[string]string{}
+	if strings.TrimSpace(storage.RcloneConfig) != "" {
+		if err := json.Unmarshal([]byte(storage.RcloneConfig), &configValues); err != nil {
+			return "", err
+		}
+	}
+	tempDir, err := os.MkdirTemp("", "vaultfleet-artifact-rclone-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tempDir)
+	confPath := filepath.Join(tempDir, "rclone.conf")
+	if err := writeArtifactRcloneConf(confPath, storage.RcloneType, configValues); err != nil {
+		return "", err
+	}
+	runner := executor.PlainRunner{RcloneConfPath: confPath, RepoPath: repoPath}
+	remoteArtifactPath := strings.TrimSpace(history.ArtifactPath)
+	if remoteArtifactPath == "" {
+		remoteArtifactPath = filepath.ToSlash(filepath.Join("artifacts", artifactName))
+	}
+	if err := runner.CopyFileFromRemote(context.Background(), remoteArtifactPath, stdAbsPath); err != nil {
+		return "", err
+	}
+	info, err := os.Stat(stdAbsPath)
+	if err != nil {
+		return "", err
+	}
+	updates := map[string]any{"artifact_path": stdRelPath}
+	if history.ArtifactSize == 0 {
+		updates["artifact_size"] = info.Size()
+		history.ArtifactSize = info.Size()
+	}
+	if err := database.DB.Model(&db.TaskHistory{}).Where("id = ?", history.ID).Updates(updates).Error; err != nil {
+		return "", err
+	}
+	history.ArtifactPath = stdRelPath
+	return stdAbsPath, nil
+}
+
+func repoPathForTaskHistory(database *db.Database, history *db.TaskHistory) (string, error) {
+	if history == nil {
+		return "", fmt.Errorf("task history unavailable")
+	}
+	if strings.TrimSpace(history.PolicyID) != "" {
+		var policy db.BackupPolicy
+		if err := database.DB.First(&policy, "id = ?", history.PolicyID).Error; err == nil && strings.TrimSpace(policy.RepoPath) != "" {
+			return strings.TrimSpace(policy.RepoPath), nil
+		}
+	}
+	if strings.TrimSpace(history.CommandID) != "" {
+		var command db.AgentCommand
+		if err := database.DB.First(&command, "id = ?", history.CommandID).Error; err == nil && strings.TrimSpace(command.PolicyID) != "" {
+			var policy db.BackupPolicy
+			if err := database.DB.First(&policy, "id = ?", command.PolicyID).Error; err == nil && strings.TrimSpace(policy.RepoPath) != "" {
+				return strings.TrimSpace(policy.RepoPath), nil
+			}
+		}
+	}
+	var latest db.BackupPolicy
+	if err := database.DB.Where("agent_id = ? AND storage_id = ?", history.AgentID, history.StorageID).Order("updated_at DESC").First(&latest).Error; err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(latest.RepoPath) == "" {
+		return "", fmt.Errorf("repo path unavailable")
+	}
+	return strings.TrimSpace(latest.RepoPath), nil
+}
+
+func writeArtifactRcloneConf(path string, rcloneType string, config map[string]string) error {
+	var builder strings.Builder
+	builder.WriteString("[vaultfleet]\n")
+	builder.WriteString("type = ")
+	builder.WriteString(rcloneType)
+	builder.WriteString("\n")
+	keys := make([]string, 0, len(config))
+	for key := range config {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if rcloneType == "s3" && key == "bucket" {
+			continue
+		}
+		value, err := rcloneobscure.ConfigValue(key, config[key], false)
+		if err != nil {
+			return err
+		}
+		builder.WriteString(key)
+		builder.WriteString(" = ")
+		builder.WriteString(value)
+		builder.WriteString("\n")
+	}
+	return os.WriteFile(path, []byte(builder.String()), 0o600)
+}
+
+func candidateArtifactPaths(database *db.Database, history *db.TaskHistory, artifactName string) []string {
+	seen := map[string]struct{}{}
+	appendUnique := func(paths []string, candidate string) []string {
+		if strings.TrimSpace(candidate) == "" {
+			return paths
+		}
+		candidate = filepath.Clean(candidate)
+		if _, ok := seen[candidate]; ok {
+			return paths
+		}
+		seen[candidate] = struct{}{}
+		return append(paths, candidate)
+	}
+
+	paths := make([]string, 0, 6)
+	if filepath.IsAbs(history.ArtifactPath) {
+		paths = appendUnique(paths, history.ArtifactPath)
+	}
+	if database != nil && database.DataDir != "" {
+		paths = appendUnique(paths, filepath.Join(database.DataDir, filepath.FromSlash(history.ArtifactPath)))
+		paths = appendUnique(paths, filepath.Join(database.DataDir, "artifacts", artifactName))
+		paths = appendUnique(paths, filepath.Join(database.DataDir, "artifacts", safeArtifactPathComponent(history.AgentID), artifactName))
+	}
+	paths = appendUnique(paths, filepath.Join("/etc/vaultfleet/artifacts", artifactName))
+	paths = appendUnique(paths, filepath.Join("/etc/vaultfleet/artifacts", safeArtifactPathComponent(history.AgentID), artifactName))
+	return paths
 }
 
 func (h *TaskHandler) commandService() *commands.Service {

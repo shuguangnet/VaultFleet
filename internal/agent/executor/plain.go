@@ -149,6 +149,33 @@ func (r PlainRunner) syncDir(ctx context.Context, dir string, excludes []string)
 	return nil
 }
 
+func (r PlainRunner) CopyFileToRemote(ctx context.Context, localPath string, remoteSubPath string) error {
+	args := r.rcloneBaseArgs()
+	args = append(args, "copyto", localPath, r.remoteArg(remoteSubPath))
+	cmd := r.command(ctx, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return commandError("rclone copyto "+localPath, stderr.String(), err)
+	}
+	return nil
+}
+
+func (r PlainRunner) CopyFileFromRemote(ctx context.Context, remoteSubPath string, localPath string) error {
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+		return err
+	}
+	args := r.rcloneBaseArgs()
+	args = append(args, "copyto", r.remoteArg(remoteSubPath), localPath)
+	cmd := r.command(ctx, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return commandError("rclone copyto "+remoteSubPath, stderr.String(), err)
+	}
+	return nil
+}
+
 func (r PlainRunner) writeBackupMarker(ctx context.Context, dirs []string) (string, error) {
 	marker := fmt.Sprintf(`{"timestamp":"%s","dirs":%s}`,
 		time.Now().UTC().Format(time.RFC3339),

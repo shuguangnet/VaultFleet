@@ -373,6 +373,111 @@ func TestDownloadArtifactReturnsNotFoundWhenResolvedFileMissing(t *testing.T) {
 	assert.Equal(t, "task artifact not found", body["error"])
 }
 
+func TestDownloadArtifactRepairsLegacyFlatArtifactPath(t *testing.T) {
+	setup := setupTasksAPI(t)
+	agent := createTasksTestAgent(t, setup.database, "online")
+	legacyDir := filepath.Join(setup.database.DataDir, "artifacts")
+	require.NoError(t, os.MkdirAll(legacyDir, 0o755))
+	legacyPath := filepath.Join(legacyDir, "archive.tar.gz")
+	require.NoError(t, os.WriteFile(legacyPath, []byte("legacy-archive"), 0o644))
+
+	history := db.TaskHistory{
+		AgentID:             agent.ID,
+		Type:                "backup",
+		Status:              commands.TaskStatusSuccess,
+		ArtifactPath:        filepath.Join("artifacts", "archive.tar.gz"),
+		ArtifactName:        "archive.tar.gz",
+		ArtifactContentType: "application/gzip",
+		CreatedAt:           time.Now(),
+	}
+	require.NoError(t, setup.database.DB.Create(&history).Error)
+
+	w := getJSON(t, setup.router, "/api/tasks/"+history.ID+"/download")
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "legacy-archive", w.Body.String())
+
+	var updated db.TaskHistory
+	require.NoError(t, setup.database.DB.First(&updated, "id = ?", history.ID).Error)
+	expectedRel := filepath.ToSlash(filepath.Join("artifacts", agent.ID, "archive.tar.gz"))
+	assert.Equal(t, expectedRel, updated.ArtifactPath)
+	storedBytes, err := os.ReadFile(filepath.Join(setup.database.DataDir, filepath.FromSlash(expectedRel)))
+	require.NoError(t, err)
+	assert.Equal(t, "legacy-archive", string(storedBytes))
+}
+
+func TestDownloadArtifactFetchesRemoteArchiveIntoStorageCache(t *testing.T) {
+	setup := setupTasksAPI(t)
+	agent := createTasksTestAgent(t, setup.database, "online")
+	storage := db.StorageConfig{
+		Name:       "Archive Storage",
+		RcloneType: "s3",
+		RcloneConfig: `{"provider":"Minio","access_key_id":"[REDACTED]","secret_access_key":"[REDACTED]","endpoint":"https://example.invalid"}`,
+	}
+	require.NoError(t, setup.database.DB.Create(&storage).Error)
+	policy := db.BackupPolicy{
+		AgentID:         agent.ID,
+		StorageID:       storage.ID,
+		BackupMode:      protocol.BackupModeArchive,
+		ArchiveFormat:   protocol.ArchiveFormatZip,
+		RepoPath:        "tenant/agent-remote",
+		BackupDirs:      `["/etc"]`,
+		ExcludePatterns: `[]`,
+		Schedule:        "0 3 * * *",
+		Retention:       `{"keep_last":5}`,
+	}
+	require.NoError(t, setup.database.DB.Create(&policy).Error)
+
+	remotePayload := "remote-archive-bytes"
+	logPath := filepath.Join(t.TempDir(), "rclone.log")
+	binDir := t.TempDir()
+	rclonePath := filepath.Join(binDir, "rclone")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + shQuote(logPath) + "\n" +
+		"if [ \"$3\" = copyto ]; then\n" +
+		"  mkdir -p \"$(dirname \"$5\")\"\n" +
+		"  printf %s " + shQuote(remotePayload) + " > \"$5\"\n" +
+		"fi\n" +
+		"exit 0\n"
+	require.NoError(t, os.WriteFile(rclonePath, []byte(script), 0o755))
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+oldPath)
+
+	history := db.TaskHistory{
+		AgentID:             agent.ID,
+		Type:                "backup",
+		Status:              commands.TaskStatusSuccess,
+		ArtifactPath:        "artifacts/backup-remote.zip",
+		ArtifactName:        "backup-remote.zip",
+		ArtifactContentType: "application/zip",
+		StorageID:           storage.ID,
+		PolicyID:            policy.ID,
+		BackupMode:          protocol.BackupModeArchive,
+		ArchiveFormat:       protocol.ArchiveFormatZip,
+		CreatedAt:           time.Now(),
+	}
+	require.NoError(t, setup.database.DB.Create(&history).Error)
+
+	w := getJSON(t, setup.router, "/api/tasks/"+history.ID+"/download")
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, remotePayload, w.Body.String())
+	assert.Equal(t, "application/zip", w.Header().Get("Content-Type"))
+
+	var updated db.TaskHistory
+	require.NoError(t, setup.database.DB.First(&updated, "id = ?", history.ID).Error)
+	expectedRel := filepath.ToSlash(filepath.Join("artifacts", agent.ID, "backup-remote.zip"))
+	assert.Equal(t, expectedRel, updated.ArtifactPath)
+	assert.Equal(t, int64(len(remotePayload)), updated.ArtifactSize)
+	cachedPath := filepath.Join(setup.database.DataDir, filepath.FromSlash(expectedRel))
+	cachedBytes, err := os.ReadFile(cachedPath)
+	require.NoError(t, err)
+	assert.Equal(t, remotePayload, string(cachedBytes))
+	logged, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(logged), "copyto vaultfleet:tenant/agent-remote/artifacts/backup-remote.zip ")
+}
+
 func TestListTasksFiltersAndLimitsHistory(t *testing.T) {
 	setup := setupTasksAPI(t)
 	agentA := createTasksTestAgent(t, setup.database, "online")
@@ -686,4 +791,8 @@ func seedCommandBackedTask(t *testing.T, database *db.Database, agentID string, 
 	}
 	require.NoError(t, database.DB.Create(&history).Error)
 	return history
+}
+
+func shQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }

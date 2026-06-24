@@ -78,6 +78,42 @@ func TestDatabaseInit_DeduplicatesLegacySnapshotsBeforeUniqueIndex(t *testing.T)
 	assert.Equal(t, "agent-2", snapshots[1].AgentID)
 }
 
+func TestDatabaseInit_MigratesLegacyTaskArtifactPathsAndIndexes(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	sqlDB, err := sql.Open("sqlite", filepath.Join(dir, "vaultfleet.db"))
+	require.NoError(t, err)
+	_, err = sqlDB.Exec(`
+		CREATE TABLE task_histories (
+			id text primary key,
+			agent_id text not null,
+			type text not null,
+			status text not null,
+			artifact_path text,
+			artifact_name text,
+			created_at datetime,
+			updated_at datetime
+		);
+		INSERT INTO task_histories (id, agent_id, type, status, artifact_path, artifact_name, created_at, updated_at)
+		VALUES ('task-1', 'agent-1', 'backup', 'success', '/etc/vaultfleet/artifacts/agent-1/archive.zip', 'archive.zip', '2026-06-23T16:19:56Z', '2026-06-23T16:19:57Z');
+	`)
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	database, err := New(dir)
+	require.NoError(t, err)
+
+	var history TaskHistory
+	require.NoError(t, database.DB.First(&history, "id = ?", "task-1").Error)
+	assert.Equal(t, "artifacts/agent-1/archive.zip", history.ArtifactPath)
+
+	var count int
+	require.NoError(t, database.DB.Raw(`SELECT count(*) FROM pragma_index_list('task_histories') WHERE name = ?`, "idx_task_histories_type_status_created_at").Scan(&count).Error)
+	assert.Equal(t, 1, count)
+	require.NoError(t, database.DB.Raw(`SELECT count(*) FROM pragma_index_list('task_histories') WHERE name = ?`, "idx_task_histories_artifact_name").Scan(&count).Error)
+	assert.Equal(t, 1, count)
+}
+
 func TestUserCRUD(t *testing.T) {
 	database := setupTestDB(t)
 

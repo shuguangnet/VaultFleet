@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -45,6 +46,12 @@ func New(dataDir string) (*Database, error) {
 	); err != nil {
 		return nil, fmt.Errorf("auto migrate: %w", err)
 	}
+	if err := migrateTaskHistoryArtifacts(gormDB); err != nil {
+		return nil, fmt.Errorf("migrate task history artifacts: %w", err)
+	}
+	if err := ensureTaskHistoryIndexes(gormDB); err != nil {
+		return nil, fmt.Errorf("ensure task history indexes: %w", err)
+	}
 
 	masterKey, err := InitMasterKey(dataDir)
 	if err != nil {
@@ -79,4 +86,59 @@ func dedupeLegacySnapshots(gormDB *gorm.DB) error {
 			WHERE rn = 1
 		)
 	`).Error
+}
+
+func migrateTaskHistoryArtifacts(gormDB *gorm.DB) error {
+	if !gormDB.Migrator().HasTable(&TaskHistory{}) {
+		return nil
+	}
+
+	return gormDB.Transaction(func(tx *gorm.DB) error {
+		rows, err := tx.Model(&TaskHistory{}).
+			Select("id", "artifact_path").
+			Where("artifact_path LIKE ?", "/etc/vaultfleet/artifacts/%").
+			Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var id string
+			var artifactPath string
+			if err := rows.Scan(&id, &artifactPath); err != nil {
+				return err
+			}
+
+			relPath := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(artifactPath)), "/etc/vaultfleet/")
+			if relPath == "" || relPath == artifactPath {
+				continue
+			}
+
+			if err := tx.Model(&TaskHistory{}).
+				Where("id = ?", id).
+				Update("artifact_path", relPath).Error; err != nil {
+				return err
+			}
+		}
+
+		return rows.Err()
+	})
+}
+
+func ensureTaskHistoryIndexes(gormDB *gorm.DB) error {
+	if !gormDB.Migrator().HasTable(&TaskHistory{}) {
+		return nil
+	}
+
+	statements := []string{
+		`CREATE INDEX IF NOT EXISTS idx_task_histories_type_status_created_at ON task_histories(type, status, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_histories_artifact_name ON task_histories(artifact_name)`,
+	}
+	for _, stmt := range statements {
+		if err := gormDB.Exec(stmt).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }

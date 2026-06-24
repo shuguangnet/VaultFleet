@@ -265,7 +265,6 @@ func (e *Executor) RunBackupJobWithProgress(ctx context.Context, progressFn Prog
 }
 
 func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) {
-	_ = ctx
 	start := time.Now()
 	result = TaskResult{
 		Type:          "backup",
@@ -287,6 +286,16 @@ func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) 
 		result.ErrorLog = "archive: " + err.Error()
 		return result
 	}
+	remoteArtifactPath := filepath.ToSlash(filepath.Join("artifacts", artifactName))
+	runner := PlainRunner{
+		RcloneConfPath:  filepath.Join(cfg.ConfigDir, "rclone.conf"),
+		RepoPath:        cfg.RepoPath,
+		RcloneExtraArgs: copyStringMap(cfg.RcloneArgs),
+	}
+	if err := runner.CopyFileToRemote(ctx, artifactPath, remoteArtifactPath); err != nil {
+		result.ErrorLog = "archive-upload: " + err.Error()
+		return result
+	}
 	info, err := os.Stat(artifactPath)
 	if err != nil {
 		result.ErrorLog = "archive-stat: " + err.Error()
@@ -294,7 +303,7 @@ func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) 
 	}
 
 	result.Status = "success"
-	result.ArtifactPath = artifactPath
+	result.ArtifactPath = remoteArtifactPath
 	result.ArtifactName = artifactName
 	result.ArtifactSize = info.Size()
 	result.ArtifactContentType = archiveContentType(result.ArchiveFormat)
