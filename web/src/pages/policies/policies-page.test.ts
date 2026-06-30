@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { cleanRcloneArgs, defaultPolicyInput, defaultRcloneArgs, submitRcloneArgs } from "./policies-page";
+import {
+  cleanRcloneArgs,
+  defaultPolicyInput,
+  defaultRcloneArgs,
+  normalizePolicyHook,
+  submitRcloneArgs,
+} from "./policies-page";
 
 describe("policy rclone args helpers", () => {
   it("returns WebDAV transfer defaults", () => {
@@ -39,10 +45,29 @@ describe("policy rclone args helpers", () => {
 
   it("sends an empty object to clear saved args when editing", () => {
     expect(submitRcloneArgs({ transfers: " ", timeout: "" }, true)).toEqual({});
-    expect(submitRcloneArgs({ transfers: " ", timeout: "" }, false)).toBeUndefined();
+    expect(
+      submitRcloneArgs({ transfers: " ", timeout: "" }, false),
+    ).toBeUndefined();
   });
 
   it("defaults policy task timeout to 6 hours", () => {
     expect(defaultPolicyInput().timeout_hours).toBe(6);
+  });
+
+  it("normalizes empty hooks to undefined", () => {
+    expect(
+      normalizePolicyHook({ command: "   ", timeout_seconds: 120 }),
+    ).toBeUndefined();
+  });
+
+  it("trims commands and omits zero timeout values", () => {
+    expect(
+      normalizePolicyHook({
+        command: "  docker exec db pg_dump  ",
+        timeout_seconds: 0,
+      }),
+    ).toEqual({
+      command: "docker exec db pg_dump",
+    });
   });
 });

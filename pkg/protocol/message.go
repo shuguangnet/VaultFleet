@@ -136,6 +136,12 @@ type TaskResultPayload struct {
 	Snapshots           []SnapshotInfo `json:"snapshots,omitempty"`
 }
 
+// PolicyHook defines an optional host-side command executed before or after backup.
+type PolicyHook struct {
+	Command        string `json:"command"`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+}
+
 // BackupProgressPayload reports incremental backup progress from an agent.
 type BackupProgressPayload struct {
 	AgentID     string  `json:"agent_id"`
@@ -205,6 +211,8 @@ type PolicyPushPayload struct {
 	ArchiveFormat   string          `json:"archive_format,omitempty"`
 	BackupDirs      []string        `json:"backup_dirs"`
 	ExcludePatterns []string        `json:"exclude_patterns"`
+	PreBackupHook   *PolicyHook     `json:"pre_backup_hook,omitempty"`
+	PostBackupHook  *PolicyHook     `json:"post_backup_hook,omitempty"`
 	Schedule        string          `json:"schedule"`
 	Retention       RetentionPolicy `json:"retention"`
 }

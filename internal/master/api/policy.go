@@ -45,6 +45,8 @@ type createPolicyRequest struct {
 	ResticPassword  string            `json:"restic_password"`
 	BackupDirs      []string          `json:"backup_dirs" binding:"required"`
 	ExcludePatterns []string          `json:"exclude_patterns"`
+	PreBackupHook   *policyHookInput  `json:"pre_backup_hook"`
+	PostBackupHook  *policyHookInput  `json:"post_backup_hook"`
 	Schedule        string            `json:"schedule" binding:"required"`
 	Retention       map[string]any    `json:"retention" binding:"required"`
 	RcloneArgs      map[string]string `json:"rclone_args"`
@@ -57,6 +59,8 @@ type updatePolicyRequest struct {
 	ArchiveFormat   string            `json:"archive_format"`
 	BackupDirs      []string          `json:"backup_dirs"`
 	ExcludePatterns []string          `json:"exclude_patterns"`
+	PreBackupHook   *policyHookInput  `json:"pre_backup_hook"`
+	PostBackupHook  *policyHookInput  `json:"post_backup_hook"`
 	Schedule        string            `json:"schedule"`
 	Retention       map[string]any    `json:"retention"`
 	RcloneArgs      map[string]string `json:"rclone_args"`
@@ -72,6 +76,8 @@ type policyResponse struct {
 	RepoPath        string            `json:"repo_path"`
 	BackupDirs      []string          `json:"backup_dirs"`
 	ExcludePatterns []string          `json:"exclude_patterns"`
+	PreBackupHook   *policyHookInput  `json:"pre_backup_hook,omitempty"`
+	PostBackupHook  *policyHookInput  `json:"post_backup_hook,omitempty"`
 	Schedule        string            `json:"schedule"`
 	Retention       map[string]any    `json:"retention"`
 	RcloneArgs      map[string]string `json:"rclone_args"`
@@ -80,6 +86,13 @@ type policyResponse struct {
 	CreatedAt       time.Time         `json:"created_at"`
 	UpdatedAt       time.Time         `json:"updated_at"`
 }
+
+type policyHookInput struct {
+	Command        string `json:"command"`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+}
+
+const maxPolicyHookTimeoutSeconds = 3600
 
 func RegisterPolicyRoutes(rg *gin.RouterGroup, h *PolicyHandler) {
 	rg.POST("/policies", h.CreatePolicy)
@@ -138,6 +151,22 @@ func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
 	if !ok {
 		return
 	}
+	preBackupHook, ok := validatePolicyHook(c, request.PreBackupHook)
+	if !ok {
+		return
+	}
+	postBackupHook, ok := validatePolicyHook(c, request.PostBackupHook)
+	if !ok {
+		return
+	}
+	preBackupHookRaw, ok := marshalOptionalPolicyHook(c, preBackupHook)
+	if !ok {
+		return
+	}
+	postBackupHookRaw, ok := marshalOptionalPolicyHook(c, postBackupHook)
+	if !ok {
+		return
+	}
 
 	policy := db.BackupPolicy{
 		AgentID:         request.AgentID,
@@ -148,6 +177,8 @@ func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
 		ResticPassword:  encryptedPassword,
 		BackupDirs:      backupDirs,
 		ExcludePatterns: excludePatterns,
+		PreBackupHook:   preBackupHookRaw,
+		PostBackupHook:  postBackupHookRaw,
 		Schedule:        request.Schedule,
 		Retention:       retention,
 		RcloneArgs:      rcloneArgs,
@@ -235,6 +266,28 @@ func (h *PolicyHandler) UpdatePolicy(c *gin.Context) {
 			return
 		}
 		policy.ExcludePatterns = excludePatterns
+	}
+	if request.PreBackupHook != nil {
+		preBackupHook, ok := validatePolicyHook(c, request.PreBackupHook)
+		if !ok {
+			return
+		}
+		preBackupHookRaw, ok := marshalOptionalPolicyHook(c, preBackupHook)
+		if !ok {
+			return
+		}
+		policy.PreBackupHook = preBackupHookRaw
+	}
+	if request.PostBackupHook != nil {
+		postBackupHook, ok := validatePolicyHook(c, request.PostBackupHook)
+		if !ok {
+			return
+		}
+		postBackupHookRaw, ok := marshalOptionalPolicyHook(c, postBackupHook)
+		if !ok {
+			return
+		}
+		policy.PostBackupHook = postBackupHookRaw
 	}
 	if request.Schedule != "" {
 		policy.Schedule = request.Schedule
@@ -380,6 +433,14 @@ func newPolicyResponse(policy db.BackupPolicy) (policyResponse, error) {
 	if err != nil {
 		return policyResponse{}, err
 	}
+	preBackupHook, err := unmarshalPolicyHook(policy.PreBackupHook)
+	if err != nil {
+		return policyResponse{}, err
+	}
+	postBackupHook, err := unmarshalPolicyHook(policy.PostBackupHook)
+	if err != nil {
+		return policyResponse{}, err
+	}
 
 	return policyResponse{
 		ID:              policy.ID,
@@ -390,6 +451,8 @@ func newPolicyResponse(policy db.BackupPolicy) (policyResponse, error) {
 		RepoPath:        policy.RepoPath,
 		BackupDirs:      backupDirs,
 		ExcludePatterns: excludePatterns,
+		PreBackupHook:   preBackupHook,
+		PostBackupHook:  postBackupHook,
 		Schedule:        policy.Schedule,
 		Retention:       retention,
 		RcloneArgs:      rcloneArgs,
@@ -398,6 +461,40 @@ func newPolicyResponse(policy db.BackupPolicy) (policyResponse, error) {
 		CreatedAt:       policy.CreatedAt,
 		UpdatedAt:       policy.UpdatedAt,
 	}, nil
+}
+
+func validatePolicyHook(c *gin.Context, hook *policyHookInput) (*policyHookInput, bool) {
+	if hook == nil {
+		return nil, true
+	}
+	command := strings.TrimSpace(hook.Command)
+	if command == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "hook command is required"})
+		return nil, false
+	}
+	if hook.TimeoutSeconds < 0 || hook.TimeoutSeconds > maxPolicyHookTimeoutSeconds {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "hook timeout_seconds must be between 0 and 3600"})
+		return nil, false
+	}
+	return &policyHookInput{Command: command, TimeoutSeconds: hook.TimeoutSeconds}, true
+}
+
+func marshalOptionalPolicyHook(c *gin.Context, hook *policyHookInput) (string, bool) {
+	if hook == nil {
+		return "", true
+	}
+	return marshalPolicyJSON(c, hook)
+}
+
+func unmarshalPolicyHook(raw string) (*policyHookInput, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var hook policyHookInput
+	if err := json.Unmarshal([]byte(raw), &hook); err != nil {
+		return nil, err
+	}
+	return &hook, nil
 }
 
 func validatePolicyTimeoutHours(c *gin.Context, timeoutHours *int) (int, bool) {

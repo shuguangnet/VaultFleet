@@ -333,9 +333,13 @@ func unavailableAgentWebSocket(database *db.Database) gin.HandlerFunc {
 }
 
 func policyPushPayload(database *db.Database, policy db.BackupPolicy, storage db.StorageConfig) (protocol.PolicyPushPayload, error) {
-	resticPassword, err := db.Decrypt(policy.ResticPassword, database.MasterKey)
-	if err != nil {
-		return protocol.PolicyPushPayload{}, err
+	resticPassword := ""
+	if strings.TrimSpace(policy.ResticPassword) != "" {
+		var err error
+		resticPassword, err = db.Decrypt(policy.ResticPassword, database.MasterKey)
+		if err != nil {
+			return protocol.PolicyPushPayload{}, err
+		}
 	}
 
 	rcloneConfig, err := decryptPolicyRcloneConfig(database, storage.RcloneConfig)
@@ -378,6 +382,14 @@ func policyPushPayload(database *db.Database, policy db.BackupPolicy, storage db
 	if err != nil {
 		return protocol.PolicyPushPayload{}, err
 	}
+	preBackupHook, err := unmarshalStoredPolicyHook(policy.PreBackupHook)
+	if err != nil {
+		return protocol.PolicyPushPayload{}, err
+	}
+	postBackupHook, err := unmarshalStoredPolicyHook(policy.PostBackupHook)
+	if err != nil {
+		return protocol.PolicyPushPayload{}, err
+	}
 
 	return protocol.PolicyPushPayload{
 		AgentID: policy.AgentID,
@@ -394,12 +406,29 @@ func policyPushPayload(database *db.Database, policy db.BackupPolicy, storage db
 		ArchiveFormat:   normalizeArchiveFormat(policy.ArchiveFormat),
 		BackupDirs:      backupDirs,
 		ExcludePatterns: excludePatterns,
+		PreBackupHook:   preBackupHook,
+		PostBackupHook:  postBackupHook,
 		Schedule:        policy.Schedule,
 		Retention:       retention,
 	}, nil
 }
 
+func unmarshalStoredPolicyHook(raw string) (*protocol.PolicyHook, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var hook protocol.PolicyHook
+	if err := json.Unmarshal([]byte(raw), &hook); err != nil {
+		return nil, err
+	}
+	return &hook, nil
+}
+
 func decryptPolicyRcloneConfig(database *db.Database, rawConfig string) (map[string]string, error) {
+	if strings.TrimSpace(rawConfig) == "" {
+		return map[string]string{}, nil
+	}
+
 	plaintext, err := db.Decrypt(rawConfig, database.MasterKey)
 	if err != nil {
 		return nil, err

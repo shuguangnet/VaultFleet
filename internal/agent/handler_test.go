@@ -56,6 +56,8 @@ func TestHandlePolicyPushSavesPolicyWritesConfigSchedulesBackupAndAcks(t *testin
 		ResticPassword:  "secret-password",
 		BackupDirs:      []string{"/srv"},
 		ExcludePatterns: []string{"*.tmp"},
+		PreBackupHook:   &protocol.PolicyHook{Command: "echo pre", TimeoutSeconds: 10},
+		PostBackupHook:  &protocol.PolicyHook{Command: "echo post", TimeoutSeconds: 15},
 		Schedule:        "0 4 * * *",
 		Retention:       protocol.RetentionPolicy{KeepLast: 3, KeepDaily: 7},
 	})
@@ -98,12 +100,77 @@ func TestHandlePolicyPushSavesPolicyWritesConfigSchedulesBackupAndAcks(t *testin
 	waitForMessageType(t, sent, protocol.TypeTaskResult, time.Second)
 	assert.Equal(t, int32(1), runnerCalls.Load())
 	assert.Equal(t, executor.ExecutorConfig{
-		ConfigDir:  configDir,
-		RepoPath:   "bucket/agent-1",
-		BackupDirs: []string{"/srv"},
-		Excludes:   []string{"*.tmp"},
-		Retention:  executor.RetentionPolicy{KeepLast: 3, KeepDaily: 7},
+		ConfigDir:      configDir,
+		RepoPath:       "bucket/agent-1",
+		BackupDirs:     []string{"/srv"},
+		Excludes:       []string{"*.tmp"},
+		Retention:      executor.RetentionPolicy{KeepLast: 3, KeepDaily: 7},
+		PreBackupHook:  &protocol.PolicyHook{Command: "echo pre", TimeoutSeconds: 10},
+		PostBackupHook: &protocol.PolicyHook{Command: "echo post", TimeoutSeconds: 15},
 	}, runnerConfig)
+}
+
+func TestRunBackupForPolicyFailsWhenPreHookFails(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	configDir := t.TempDir()
+	sent := &sentMessages{}
+	var runnerCalls atomic.Int32
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   configDir,
+		SendFunc:    sent.send,
+		BackupRunnerWithProgress: func(_ context.Context, _ executor.ExecutorConfig, _ executor.ProgressCallback) executor.TaskResult {
+			runnerCalls.Add(1)
+			return executor.TaskResult{Type: "backup", Status: "success", DurationMs: 5}
+		},
+	})
+
+	handler.runBackupForPolicy(context.Background(), "msg-1", "agent-1", &protocol.PolicyPushPayload{
+		AgentID:        "agent-1",
+		Storage:        protocol.StorageConfig{RcloneType: "s3", RcloneConfig: map[string]string{"provider": "Other"}, RepoPath: "bucket/agent-1"},
+		ResticPassword: "secret",
+		BackupDirs:     []string{"/srv"},
+		PreBackupHook:  &protocol.PolicyHook{Command: "exit 7", TimeoutSeconds: 5},
+	})
+
+	assert.Equal(t, int32(0), runnerCalls.Load())
+	messages := sent.snapshot()
+	require.Len(t, messages, 1)
+	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&messages[0])
+	require.NoError(t, err)
+	assert.Equal(t, "failed", result.Status)
+	assert.Contains(t, result.ErrorLog, "pre_backup_hook")
+}
+
+func TestRunBackupForPolicyFailsWhenPostHookFails(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	configDir := t.TempDir()
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   configDir,
+		SendFunc:    sent.send,
+		BackupRunnerWithProgress: func(_ context.Context, _ executor.ExecutorConfig, _ executor.ProgressCallback) executor.TaskResult {
+			return executor.TaskResult{Type: "backup", Status: "success", DurationMs: 5, SnapshotID: "snap-1"}
+		},
+	})
+
+	handler.runBackupForPolicy(context.Background(), "msg-1", "agent-1", &protocol.PolicyPushPayload{
+		AgentID:        "agent-1",
+		Storage:        protocol.StorageConfig{RcloneType: "s3", RcloneConfig: map[string]string{"provider": "Other"}, RepoPath: "bucket/agent-1"},
+		ResticPassword: "secret",
+		BackupDirs:     []string{"/srv"},
+		PostBackupHook: &protocol.PolicyHook{Command: "echo boom >&2; exit 3", TimeoutSeconds: 5},
+	})
+
+	messages := sent.snapshot()
+	require.Len(t, messages, 1)
+	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&messages[0])
+	require.NoError(t, err)
+	assert.Equal(t, "failed", result.Status)
+	assert.Equal(t, "snap-1", result.SnapshotID)
+	assert.Contains(t, result.ErrorLog, "post_backup_hook")
+	assert.Contains(t, result.ErrorLog, "boom")
 }
 
 func TestHandlePolicyPushPreservesLegacyObscuredSFTPPassword(t *testing.T) {
@@ -717,6 +784,12 @@ func TestHandleBackupNowLoadsPolicyRunsBackupAndSendsTaskResult(t *testing.T) {
 func TestHandleBackupNowUsesInlinePolicyPayloadForArchive(t *testing.T) {
 	store := policy.NewStore(t.TempDir())
 	configDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "rclone.log")
+	binDir := t.TempDir()
+	rclonePath := filepath.Join(binDir, "rclone")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + shellQuoteForShTest(logPath) + "\nexit 0\n"
+	require.NoError(t, os.WriteFile(rclonePath, []byte(script), 0o755))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	backupDir := filepath.Join(t.TempDir(), "backup-src")
 	require.NoError(t, os.MkdirAll(backupDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(backupDir, "hello.txt"), []byte("vaultfleet"), 0o644))
@@ -758,7 +831,7 @@ func TestHandleBackupNowUsesInlinePolicyPayloadForArchive(t *testing.T) {
 	assert.Equal(t, "application/zip", result.ArtifactContentType)
 	assert.NotEmpty(t, result.ArtifactPath)
 
-	data, err := os.ReadFile(result.ArtifactPath)
+	data, err := os.ReadFile(filepath.Join(configDir, result.ArtifactPath))
 	require.NoError(t, err)
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	require.NoError(t, err)
@@ -767,6 +840,10 @@ func TestHandleBackupNowUsesInlinePolicyPayloadForArchive(t *testing.T) {
 		names = append(names, file.Name)
 	}
 	assert.Contains(t, names, strings.TrimPrefix(filepath.ToSlash(filepath.Join(backupDir, "hello.txt")), "/"))
+}
+
+func shellQuoteForShTest(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func TestHandleBackupNowRefreshesRcloneConfWithObscuredSFTPPassword(t *testing.T) {

@@ -72,6 +72,8 @@ type ExecutorConfig struct {
 	PlainBackup    bool
 	BackupMode     string
 	ArchiveFormat  string
+	PreBackupHook  *protocol.PolicyHook
+	PostBackupHook *protocol.PolicyHook
 }
 
 type BackupProgress struct {

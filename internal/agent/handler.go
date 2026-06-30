@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -589,11 +590,22 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 		return
 	}
 	cfg := executorConfigForPolicy(h.configDir, policyPayload)
+	if err := runPolicyHook(ctx, h.configDir, cfg.PreBackupHook); err != nil {
+		log.Printf("pre-backup hook failed: %v", err)
+		h.sendTaskResultWithID(messageID, h.failedTaskResult(agentID, "pre_backup_hook: "+err.Error(), startedAt))
+		return
+	}
 	result := h.backupRunnerWithProgress(ctx, cfg, h.backupProgressCallback(messageID, agentID))
 	if ctx.Err() == context.Canceled {
 		result.Status = "cancelled"
 		if result.ErrorLog == "" {
 			result.ErrorLog = ctx.Err().Error()
+		}
+	} else if result.Status == "success" && cfg.PostBackupHook != nil {
+		if err := runPolicyHook(ctx, h.configDir, cfg.PostBackupHook); err != nil {
+			log.Printf("post-backup hook failed: %v", err)
+			result.Status = "failed"
+			result.ErrorLog = appendHookError(result.ErrorLog, "post_backup_hook: "+err.Error())
 		}
 	}
 	h.sendTaskResultWithID(messageID, result.ToProtocol(agentID, startedAt))
@@ -830,16 +842,75 @@ func toExecutorRetention(retention protocol.RetentionPolicy) executor.RetentionP
 
 func executorConfigForPolicy(configDir string, policyPayload *protocol.PolicyPushPayload) executor.ExecutorConfig {
 	return executor.ExecutorConfig{
-		ConfigDir:     configDir,
-		RepoPath:      policyPayload.Storage.RepoPath,
-		BackupDirs:    append([]string(nil), policyPayload.BackupDirs...),
-		Excludes:      append([]string(nil), policyPayload.ExcludePatterns...),
-		Retention:     toExecutorRetention(policyPayload.Retention),
-		RcloneArgs:    copyStringMap(policyPayload.Storage.RcloneArgs),
-		PlainBackup:   policyPayload.PlainBackup,
-		BackupMode:    policyPayload.BackupMode,
-		ArchiveFormat: policyPayload.ArchiveFormat,
+		ConfigDir:      configDir,
+		RepoPath:       policyPayload.Storage.RepoPath,
+		BackupDirs:     append([]string(nil), policyPayload.BackupDirs...),
+		Excludes:       append([]string(nil), policyPayload.ExcludePatterns...),
+		Retention:      toExecutorRetention(policyPayload.Retention),
+		RcloneArgs:     copyStringMap(policyPayload.Storage.RcloneArgs),
+		PlainBackup:    policyPayload.PlainBackup,
+		BackupMode:     policyPayload.BackupMode,
+		ArchiveFormat:  policyPayload.ArchiveFormat,
+		PreBackupHook:  clonePolicyHook(policyPayload.PreBackupHook),
+		PostBackupHook: clonePolicyHook(policyPayload.PostBackupHook),
 	}
+}
+
+func clonePolicyHook(hook *protocol.PolicyHook) *protocol.PolicyHook {
+	if hook == nil {
+		return nil
+	}
+	cloned := *hook
+	cloned.Command = strings.TrimSpace(cloned.Command)
+	return &cloned
+}
+
+func appendHookError(existing string, hookError string) string {
+	hookError = strings.TrimSpace(hookError)
+	if hookError == "" {
+		return existing
+	}
+	if strings.TrimSpace(existing) == "" {
+		return hookError
+	}
+	return existing + "\n" + hookError
+}
+
+func runPolicyHook(ctx context.Context, configDir string, hook *protocol.PolicyHook) error {
+	if hook == nil {
+		return nil
+	}
+	command := strings.TrimSpace(hook.Command)
+	if command == "" {
+		return errors.New("hook command is empty")
+	}
+
+	runCtx := ctx
+	var cancel context.CancelFunc
+	if hook.TimeoutSeconds > 0 {
+		runCtx, cancel = context.WithTimeout(ctx, time.Duration(hook.TimeoutSeconds)*time.Second)
+		defer cancel()
+	}
+
+	cmd := exec.CommandContext(runCtx, "sh", "-c", command)
+	if configDir != "" {
+		cmd.Dir = configDir
+	}
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(string(output))
+	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		if trimmed != "" {
+			return errors.New("timeout: " + trimmed)
+		}
+		return errors.New("timeout")
+	}
+	if trimmed != "" {
+		return errors.New(trimmed)
+	}
+	return err
 }
 
 func (h *Handler) ensureRcloneConf(policyPayload *protocol.PolicyPushPayload) error {

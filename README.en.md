@@ -20,6 +20,7 @@ Backup data does not pass through the Master. The Master manages the control pla
 - **One-time enrollment tokens** exchanged for long-lived Agent tokens after enrollment.
 - **restic encrypted repositories** with per-Agent repository passwords; Master-side secrets are encrypted with `/data/master.key`.
 - **Direct storage writes** through rclone to S3 / R2 / MinIO, WebDAV, SFTP, local paths, or other backends.
+- **Docker workload friendly** with support for mounted container data, `docker-compose.yml`, `.env`, and optional pre/post backup hooks for export or service control steps.
 - **Backup progress and cancellation** for long-running jobs, with policy-level timeout settings.
 - **Snapshot browsing and selective restore** for whole snapshots or selected paths.
 - **Diagnostics and notifications** through Telegram, Webhook, health checks, diagnostic bundles, and Agent log collection.
@@ -118,9 +119,44 @@ This stops the service and removes `vaultfleet-agent`, `restic`, `rclone`, and A
 2. Create a node, copy the generated install command, and wait for Agent enrollment.
 3. Create a backup policy with repository path, backup directories, excludes, cron schedule, retention, and timeout.
 4. Tune rclone transfer parameters when using WebDAV, AList proxies, or rate-limited storage.
-5. Track manual backups, scheduled backups, restore jobs, and running backup progress from task history; cancel running jobs when needed.
-6. Browse snapshots and restore either a full snapshot or selected paths.
-7. For cross-node restore, create a policy on the new node with the same storage and repository path.
+5. For Docker-hosted workloads, back up mounted data directories, bind mounts, `docker-compose.yml`, and `.env`, and use optional hooks when you need logical exports or a brief stop/start window.
+6. Track manual backups, scheduled backups, restore jobs, and running backup progress from task history; cancel running jobs when needed.
+7. Browse snapshots and restore either a full snapshot or selected paths.
+8. For cross-node restore, create a policy on the new node with the same storage and repository path.
+
+## Docker Workload Backup Notes
+
+Supported scope:
+
+- Mounted container data such as `/srv/app/data` or `/var/lib/postgresql/data`
+- Deployment files such as `docker-compose.yml` and `.env`
+- Export artifacts produced by pre-backup hooks
+
+Explicit non-goals:
+
+- `docker commit`, `docker save`, and image-layer backup workflows
+- Automatic reconstruction of containers, networks, port mappings, or Compose stacks
+
+Recommended pattern:
+
+```bash
+# Backup paths
+/srv/app/data
+/srv/app/docker-compose.yml
+/srv/app/.env
+
+# Example pre-backup hook
+docker exec db pg_dump -U app app >/srv/app/backup/db.sql
+
+# Example post-backup hook
+docker compose start app
+```
+
+Operational caveats:
+
+- Hooks run on the agent host, and hook failures fail the backup task.
+- For database containers, prefer logical exports or application-aware consistency steps over raw file copies alone.
+- If you stop services before backup, ensure your post-backup hook restores service availability.
 
 ## Architecture
 

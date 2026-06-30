@@ -334,6 +334,91 @@ func TestCreatePolicyWithProvidedRepoPathAndPassword(t *testing.T) {
 	assert.NotContains(t, stored.ResticPassword, "provided-secret")
 }
 
+func TestCreatePolicyWithHooks(t *testing.T) {
+	setup := setupTestPolicyAPI(t)
+	agent := createPolicyTestAgent(t, setup.database)
+	storage := createPolicyTestStorage(t, setup.database)
+
+	w := postAnyJSON(t, setup.router, "/api/policies", map[string]any{
+		"agent_id":    agent.ID,
+		"storage_id":  storage.ID,
+		"backup_dirs": []string{"/srv/app/data", "/srv/app/docker-compose.yml"},
+		"schedule":    "0 3 * * *",
+		"retention":   map[string]any{"keep_last": 3},
+		"pre_backup_hook": map[string]any{
+			"command":         "docker exec db pg_dump -U app app >/srv/app/backup/db.sql",
+			"timeout_seconds": 180,
+		},
+		"post_backup_hook": map[string]any{
+			"command":         "docker compose start app",
+			"timeout_seconds": 30,
+		},
+	})
+
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	pre := requireMap(t, body["pre_backup_hook"])
+	assert.Equal(t, "docker exec db pg_dump -U app app >/srv/app/backup/db.sql", pre["command"])
+	assert.Equal(t, float64(180), pre["timeout_seconds"])
+	post := requireMap(t, body["post_backup_hook"])
+	assert.Equal(t, "docker compose start app", post["command"])
+	assert.Equal(t, float64(30), post["timeout_seconds"])
+
+	var stored db.BackupPolicy
+	require.NoError(t, setup.database.DB.First(&stored, "id = ?", body["id"]).Error)
+	assert.JSONEq(t, `{"command":"docker exec db pg_dump -U app app >/srv/app/backup/db.sql","timeout_seconds":180}`, stored.PreBackupHook)
+	assert.JSONEq(t, `{"command":"docker compose start app","timeout_seconds":30}`, stored.PostBackupHook)
+
+	payload, err := policyPushPayload(setup.database, stored, storage)
+	require.NoError(t, err)
+	if assert.NotNil(t, payload.PreBackupHook) {
+		assert.Equal(t, 180, payload.PreBackupHook.TimeoutSeconds)
+	}
+	if assert.NotNil(t, payload.PostBackupHook) {
+		assert.Equal(t, "docker compose start app", payload.PostBackupHook.Command)
+	}
+}
+
+func TestCreatePolicyRejectsInvalidHooks(t *testing.T) {
+	tests := []struct {
+		name string
+		hook map[string]any
+		err  string
+	}{
+		{
+			name: "empty command",
+			hook: map[string]any{"command": "   "},
+			err:  "hook command",
+		},
+		{
+			name: "timeout too large",
+			hook: map[string]any{"command": "docker ps", "timeout_seconds": 3601},
+			err:  "timeout_seconds",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setup := setupTestPolicyAPI(t)
+			agent := createPolicyTestAgent(t, setup.database)
+			storage := createPolicyTestStorage(t, setup.database)
+
+			w := postAnyJSON(t, setup.router, "/api/policies", map[string]any{
+				"agent_id":        agent.ID,
+				"storage_id":      storage.ID,
+				"backup_dirs":     []string{"/etc"},
+				"schedule":        "0 3 * * *",
+				"retention":       map[string]any{"keep_last": 3},
+				"pre_backup_hook": tt.hook,
+			})
+
+			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+			body := parseJSON(t, w)
+			assert.Contains(t, body["error"], tt.err)
+		})
+	}
+}
+
 func TestCreatePolicyEmptyPasswordStoresEncryptedEmpty(t *testing.T) {
 	setup := setupTestPolicyAPI(t)
 	agent := createPolicyTestAgent(t, setup.database)
@@ -510,6 +595,35 @@ func TestUpdatePolicyTimeoutHours(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	body = parseJSON(t, w)
 	assert.Equal(t, float64(9), body["timeout_hours"])
+}
+
+func TestUpdatePolicyHooks(t *testing.T) {
+	setup := setupTestPolicyAPI(t)
+	agent := createPolicyTestAgent(t, setup.database)
+	storage := createPolicyTestStorage(t, setup.database)
+	created := createPolicy(t, setup.router, agent.ID, storage.ID)
+	id := created["id"].(string)
+
+	w := putJSON(t, setup.router, "/api/policies/"+id, map[string]any{
+		"pre_backup_hook": map[string]any{
+			"command":         "docker compose stop app",
+			"timeout_seconds": 45,
+		},
+		"post_backup_hook": map[string]any{
+			"command":         "docker compose start app",
+			"timeout_seconds": 45,
+		},
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	pre := requireMap(t, body["pre_backup_hook"])
+	assert.Equal(t, "docker compose stop app", pre["command"])
+
+	var stored db.BackupPolicy
+	require.NoError(t, setup.database.DB.First(&stored, "id = ?", id).Error)
+	assert.JSONEq(t, `{"command":"docker compose stop app","timeout_seconds":45}`, stored.PreBackupHook)
+	assert.JSONEq(t, `{"command":"docker compose start app","timeout_seconds":45}`, stored.PostBackupHook)
 }
 
 func TestUpdatePolicyRejectsInvalidTimeoutHours(t *testing.T) {

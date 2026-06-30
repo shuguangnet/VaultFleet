@@ -1,6 +1,11 @@
 export type BackupMode = "snapshot" | "archive";
 export type ArchiveFormat = "tar.gz" | "zip";
 
+export interface PolicyHook {
+  command: string;
+  timeout_seconds?: number;
+}
+
 export interface BackupPolicy {
   id: string;
   agent_id: string;
@@ -10,6 +15,8 @@ export interface BackupPolicy {
   repo_path: string;
   backup_dirs: string[];
   exclude_patterns: string[];
+  pre_backup_hook?: PolicyHook;
+  post_backup_hook?: PolicyHook;
   schedule: string;
   retention: RetentionConfig;
   synced: boolean;
@@ -37,6 +44,8 @@ export interface PolicyInput {
   restic_password?: string;
   backup_dirs: string[];
   exclude_patterns: string[];
+  pre_backup_hook?: PolicyHook;
+  post_backup_hook?: PolicyHook;
   schedule: string;
   retention: RetentionConfig;
   rclone_args?: Record<string, string>;

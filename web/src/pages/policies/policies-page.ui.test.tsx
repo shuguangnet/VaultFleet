@@ -1,9 +1,20 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { listAgents, backupNow } from "@/services/agents";
-import { createPolicy, deletePolicy, listPolicies, updatePolicy } from "@/services/policies";
+import {
+  createPolicy,
+  deletePolicy,
+  listPolicies,
+  updatePolicy,
+} from "@/services/policies";
 import { listStorage } from "@/services/storage";
 import { PoliciesPage } from "./policies-page";
 
@@ -79,7 +90,10 @@ describe("PoliciesPage rclone form state", () => {
     });
     vi.mocked(updatePolicy).mockResolvedValue({} as never);
     vi.mocked(deletePolicy).mockResolvedValue({} as never);
-    vi.mocked(backupNow).mockResolvedValue({ command_id: "cmd-1", message_id: "msg-1" });
+    vi.mocked(backupNow).mockResolvedValue({
+      command_id: "cmd-1",
+      message_id: "msg-1",
+    });
 
     render(
       <QueryClientProvider client={newTestQueryClient()}>
@@ -89,7 +103,9 @@ describe("PoliciesPage rclone form state", () => {
 
     await user.click(await screen.findByRole("button", { name: "添加策略" }));
     await user.click(screen.getAllByRole("combobox")[1]);
-    const webdavOption = (await screen.findAllByText("WebDAV Store")).find((el) => el.tagName !== "OPTION");
+    const webdavOption = (await screen.findAllByText("WebDAV Store")).find(
+      (el) => el.tagName !== "OPTION",
+    );
     expect(webdavOption).toBeDefined();
     await user.click(webdavOption!);
 
@@ -146,7 +162,10 @@ describe("PoliciesPage rclone form state", () => {
     });
     vi.mocked(updatePolicy).mockResolvedValue({} as never);
     vi.mocked(deletePolicy).mockResolvedValue({} as never);
-    vi.mocked(backupNow).mockResolvedValue({ command_id: "cmd-1", message_id: "msg-1" });
+    vi.mocked(backupNow).mockResolvedValue({
+      command_id: "cmd-1",
+      message_id: "msg-1",
+    });
 
     render(
       <QueryClientProvider client={newTestQueryClient()}>
@@ -165,7 +184,113 @@ describe("PoliciesPage rclone form state", () => {
     fireEvent.submit(screen.getByRole("form", { name: "备份策略表单" }));
 
     await waitFor(() => expect(createPolicy).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(createPolicy).mock.calls[0][0]).toEqual(expect.objectContaining({ timeout_hours: 12 }));
+    expect(vi.mocked(createPolicy).mock.calls[0][0]).toEqual(
+      expect.objectContaining({ timeout_hours: 12 }),
+    );
+  });
+
+  it("submits configured backup hooks and shows docker guidance", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listPolicies).mockResolvedValue([]);
+    vi.mocked(listAgents).mockResolvedValue([
+      {
+        id: "agent-1",
+        name: "node-1",
+        status: "online",
+        last_seen: "",
+        version: "",
+        hostname: "",
+        os: "",
+        arch: "",
+        created_at: "2026-05-25T00:00:00Z",
+      },
+    ]);
+    vi.mocked(listStorage).mockResolvedValue([
+      {
+        id: "storage-1",
+        name: "S3 Store",
+        rclone_type: "s3",
+        rclone_config: {},
+        created_at: "2026-05-25T00:00:00Z",
+        updated_at: "2026-05-25T00:00:00Z",
+      },
+    ]);
+    vi.mocked(createPolicy).mockResolvedValue({
+      id: "policy-1",
+      agent_id: "agent-1",
+      storage_id: "storage-1",
+      backup_mode: "snapshot",
+      repo_path: "vaultfleet/node-1",
+      backup_dirs: ["/srv/app/data"],
+      exclude_patterns: [],
+      pre_backup_hook: {
+        command: "docker exec db pg_dump",
+        timeout_seconds: 180,
+      },
+      post_backup_hook: {
+        command: "docker compose start app",
+        timeout_seconds: 30,
+      },
+      schedule: "0 2 * * *",
+      retention: {},
+      timeout_hours: 6,
+      synced: false,
+      created_at: "2026-05-25T00:00:00Z",
+      updated_at: "2026-05-25T00:00:00Z",
+    });
+    vi.mocked(updatePolicy).mockResolvedValue({} as never);
+    vi.mocked(deletePolicy).mockResolvedValue({} as never);
+    vi.mocked(backupNow).mockResolvedValue({
+      command_id: "cmd-1",
+      message_id: "msg-1",
+    });
+
+    render(
+      <QueryClientProvider client={newTestQueryClient()}>
+        <PoliciesPage />
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole("button", { name: "添加策略" }));
+    expect(
+      screen.getByText(/不备份镜像层，也不会自动重建容器/),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getAllByRole("combobox")[0]);
+    await user.click(await screen.findByRole("option", { name: "node-1" }));
+    await user.click(screen.getAllByRole("combobox")[1]);
+    await user.click(await screen.findByRole("option", { name: "S3 Store" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "备份目录" }),
+      "/srv/app/data",
+    );
+    await user.type(
+      screen.getByLabelText("备份前命令"),
+      "docker exec db pg_dump",
+    );
+    await user.clear(screen.getByLabelText("备份前命令超时（秒）"));
+    await user.type(screen.getByLabelText("备份前命令超时（秒）"), "180");
+    await user.type(
+      screen.getByLabelText("备份后命令"),
+      "docker compose start app",
+    );
+    await user.clear(screen.getByLabelText("备份后命令超时（秒）"));
+    await user.type(screen.getByLabelText("备份后命令超时（秒）"), "30");
+    fireEvent.submit(screen.getByRole("form", { name: "备份策略表单" }));
+
+    await waitFor(() => expect(createPolicy).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(createPolicy).mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        pre_backup_hook: {
+          command: "docker exec db pg_dump",
+          timeout_seconds: 180,
+        },
+        post_backup_hook: {
+          command: "docker compose start app",
+          timeout_seconds: 30,
+        },
+      }),
+    );
   });
 });
 

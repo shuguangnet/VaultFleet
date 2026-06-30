@@ -73,6 +73,8 @@ func TestPolicyPushPayload(t *testing.T) {
 		ResticPassword:  "secure-password",
 		BackupDirs:      []string{"/etc", "/home", "/opt/myapp/data"},
 		ExcludePatterns: []string{"*.log", "*.tmp", "node_modules"},
+		PreBackupHook:   &PolicyHook{Command: "docker exec db pg_dumpall >/backup/db.sql", TimeoutSeconds: 120},
+		PostBackupHook:  &PolicyHook{Command: "docker compose start app", TimeoutSeconds: 30},
 		Schedule:        "0 3 * * *",
 		Retention: RetentionPolicy{
 			KeepLast:    3,
@@ -95,6 +97,14 @@ func TestPolicyPushPayload(t *testing.T) {
 	assert.Equal(t, "secure-password", parsed.ResticPassword)
 	assert.Equal(t, []string{"/etc", "/home", "/opt/myapp/data"}, parsed.BackupDirs)
 	assert.Equal(t, []string{"*.log", "*.tmp", "node_modules"}, parsed.ExcludePatterns)
+	if assert.NotNil(t, parsed.PreBackupHook) {
+		assert.Equal(t, "docker exec db pg_dumpall >/backup/db.sql", parsed.PreBackupHook.Command)
+		assert.Equal(t, 120, parsed.PreBackupHook.TimeoutSeconds)
+	}
+	if assert.NotNil(t, parsed.PostBackupHook) {
+		assert.Equal(t, "docker compose start app", parsed.PostBackupHook.Command)
+		assert.Equal(t, 30, parsed.PostBackupHook.TimeoutSeconds)
+	}
 	assert.Equal(t, "0 3 * * *", parsed.Schedule)
 	assert.Equal(t, 3, parsed.Retention.KeepLast)
 	assert.Equal(t, 7, parsed.Retention.KeepDaily)

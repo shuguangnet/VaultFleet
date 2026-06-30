@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -410,8 +411,8 @@ func TestDownloadArtifactFetchesRemoteArchiveIntoStorageCache(t *testing.T) {
 	setup := setupTasksAPI(t)
 	agent := createTasksTestAgent(t, setup.database, "online")
 	storage := db.StorageConfig{
-		Name:       "Archive Storage",
-		RcloneType: "s3",
+		Name:         "Archive Storage",
+		RcloneType:   "s3",
 		RcloneConfig: `{"provider":"Minio","access_key_id":"[REDACTED]","secret_access_key":"[REDACTED]","endpoint":"https://example.invalid"}`,
 	}
 	require.NoError(t, setup.database.DB.Create(&storage).Error)

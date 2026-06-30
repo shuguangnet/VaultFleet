@@ -66,6 +66,8 @@ type BackupPolicy struct {
 	ResticPassword  string    `gorm:"type:text" json:"-"`
 	BackupDirs      string    `gorm:"type:text" json:"backup_dirs"`
 	ExcludePatterns string    `gorm:"type:text" json:"exclude_patterns"`
+	PreBackupHook   string    `gorm:"type:text" json:"pre_backup_hook"`
+	PostBackupHook  string    `gorm:"type:text" json:"post_backup_hook"`
 	Schedule        string    `gorm:"type:text" json:"schedule"`
 	Retention       string    `gorm:"type:text" json:"retention"`
 	RcloneArgs      string    `gorm:"type:text" json:"rclone_args"`

@@ -1,24 +1,62 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { listPolicies, createPolicy, updatePolicy, deletePolicy } from "@/services/policies";
+import {
+  listPolicies,
+  createPolicy,
+  updatePolicy,
+  deletePolicy,
+} from "@/services/policies";
 import { listAgents, backupNow } from "@/services/agents";
 import { listStorage } from "@/services/storage";
 
-import { BackupPolicy, PolicyInput, RetentionConfig } from "@/types/policy";
+import {
+  BackupPolicy,
+  PolicyHook,
+  PolicyInput,
+  RetentionConfig,
+} from "@/types/policy";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Settings2, Trash2, MoreHorizontal, Play, ChevronDown } from "lucide-react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Plus,
+  Settings2,
+  Trash2,
+  MoreHorizontal,
+  Play,
+  ChevronDown,
+} from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger, SheetFooter } from "@/components/ui/sheet";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+  SheetFooter,
+} from "@/components/ui/sheet";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -30,7 +68,19 @@ import { zhCN } from "date-fns/locale";
 import { toast } from "sonner";
 import { describeCron } from "@/lib/cron";
 
-const RETENTION_PRESETS: Record<string, { label: string; description: string; values: { keep_last: number; keep_daily: number; keep_weekly: number; keep_monthly: number } }> = {
+const RETENTION_PRESETS: Record<
+  string,
+  {
+    label: string;
+    description: string;
+    values: {
+      keep_last: number;
+      keep_daily: number;
+      keep_weekly: number;
+      keep_monthly: number;
+    };
+  }
+> = {
   basic: {
     label: "基础",
     description: "约 3 个月深度，适合非关键数据",
@@ -108,6 +158,8 @@ export function defaultPolicyInput(): PolicyInput {
     restic_password: "",
     backup_dirs: [],
     exclude_patterns: ["/tmp", "/proc", "/sys", "/dev"],
+    pre_backup_hook: { command: "", timeout_seconds: 300 },
+    post_backup_hook: { command: "", timeout_seconds: 300 },
     schedule: "0 2 * * *",
     retention: {
       keep_last: 10,
@@ -120,14 +172,31 @@ export function defaultPolicyInput(): PolicyInput {
   };
 }
 
+export function normalizePolicyHook(hook?: PolicyHook): PolicyHook | undefined {
+  if (!hook) return undefined;
+  const command = hook.command.trim();
+  if (!command) return undefined;
+  return {
+    command,
+    timeout_seconds:
+      hook.timeout_seconds && hook.timeout_seconds > 0
+        ? hook.timeout_seconds
+        : undefined,
+  };
+}
+
 export function defaultRcloneArgs(storageType: string): Record<string, string> {
   if (storageType.toLowerCase() !== "webdav") {
     return {};
   }
-  return Object.fromEntries(RCLONE_ARG_FIELDS.map((field) => [field.key, field.webdavValue]));
+  return Object.fromEntries(
+    RCLONE_ARG_FIELDS.map((field) => [field.key, field.webdavValue]),
+  );
 }
 
-export function cleanRcloneArgs(args?: Record<string, string>): Record<string, string> | undefined {
+export function cleanRcloneArgs(
+  args?: Record<string, string>,
+): Record<string, string> | undefined {
   const cleaned = Object.fromEntries(
     Object.entries(args ?? {})
       .map(([key, value]) => [key, value.trim()] as const)
@@ -136,7 +205,10 @@ export function cleanRcloneArgs(args?: Record<string, string>): Record<string, s
   return Object.keys(cleaned).length > 0 ? cleaned : undefined;
 }
 
-export function submitRcloneArgs(args: Record<string, string> | undefined, clearWhenEmpty: boolean): Record<string, string> | undefined {
+export function submitRcloneArgs(
+  args: Record<string, string> | undefined,
+  clearWhenEmpty: boolean,
+): Record<string, string> | undefined {
   const cleaned = cleanRcloneArgs(args);
   if (cleaned || !clearWhenEmpty) {
     return cleaned;
@@ -148,7 +220,12 @@ function detectRetentionPreset(retention: RetentionConfig): string {
   for (const [key, preset] of Object.entries(RETENTION_PRESETS)) {
     if (key === "custom") continue;
     const v = preset.values;
-    if ((retention.keep_last ?? 0) === v.keep_last && (retention.keep_daily ?? 0) === v.keep_daily && (retention.keep_weekly ?? 0) === v.keep_weekly && (retention.keep_monthly ?? 0) === v.keep_monthly) {
+    if (
+      (retention.keep_last ?? 0) === v.keep_last &&
+      (retention.keep_daily ?? 0) === v.keep_daily &&
+      (retention.keep_weekly ?? 0) === v.keep_weekly &&
+      (retention.keep_monthly ?? 0) === v.keep_monthly
+    ) {
       return key;
     }
   }
@@ -160,15 +237,28 @@ export function PoliciesPage() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [confirmBackupAgentId, setConfirmBackupAgentId] = useState<string | null>(null);
+  const [confirmBackupAgentId, setConfirmBackupAgentId] = useState<
+    string | null
+  >(null);
   const [retentionPreset, setRetentionPreset] = useState("standard");
   const [advancedTransferOpen, setAdvancedTransferOpen] = useState(false);
 
-  const [formData, setFormData] = useState<PolicyInput>(() => defaultPolicyInput());
+  const [formData, setFormData] = useState<PolicyInput>(() =>
+    defaultPolicyInput(),
+  );
 
-  const { data: policies, isLoading } = useQuery({ queryKey: ["policies"], queryFn: () => listPolicies() });
-  const { data: agents } = useQuery({ queryKey: ["agents"], queryFn: listAgents });
-  const { data: storageList } = useQuery({ queryKey: ["storage"], queryFn: listStorage });
+  const { data: policies, isLoading } = useQuery({
+    queryKey: ["policies"],
+    queryFn: () => listPolicies(),
+  });
+  const { data: agents } = useQuery({
+    queryKey: ["agents"],
+    queryFn: listAgents,
+  });
+  const { data: storageList } = useQuery({
+    queryKey: ["storage"],
+    queryFn: listStorage,
+  });
 
   const resetPolicyFormState = () => {
     setEditingId(null);
@@ -219,9 +309,11 @@ export function PoliciesPage() {
     mutationFn: (agentId: string) => backupNow(agentId),
     onSuccess: (data) => {
       setConfirmBackupAgentId(null);
-      const agent = agents?.find(a => a.id === confirmBackupAgentId);
+      const agent = agents?.find((a) => a.id === confirmBackupAgentId);
       if (agent?.status === "online") {
-        toast.success("备份命令已下发", { description: `Message ID: ${data.message_id}` });
+        toast.success("备份命令已下发", {
+          description: `Message ID: ${data.message_id}`,
+        });
       } else {
         toast.info("备份命令已排队", { description: "节点上线后将自动执行" });
       }
@@ -245,6 +337,14 @@ export function PoliciesPage() {
       repo_path: repoSuffix,
       backup_dirs: policy.backup_dirs,
       exclude_patterns: policy.exclude_patterns,
+      pre_backup_hook: policy.pre_backup_hook ?? {
+        command: "",
+        timeout_seconds: 300,
+      },
+      post_backup_hook: policy.post_backup_hook ?? {
+        command: "",
+        timeout_seconds: 300,
+      },
       schedule: policy.schedule,
       retention: policy.retention,
       rclone_args: policy.rclone_args || {},
@@ -270,6 +370,8 @@ export function PoliciesPage() {
       ...formData,
       repo_path: "vaultfleet/" + formData.repo_path,
       rclone_args: submitRcloneArgs(formData.rclone_args, !!editingId),
+      pre_backup_hook: normalizePolicyHook(formData.pre_backup_hook),
+      post_backup_hook: normalizePolicyHook(formData.post_backup_hook),
       timeout_hours: formData.timeout_hours || 6,
     };
     if (editingId) {
@@ -279,7 +381,7 @@ export function PoliciesPage() {
     }
   };
 
-  const selectedAgent = agents?.find(a => a.id === formData.agent_id);
+  const selectedAgent = agents?.find((a) => a.id === formData.agent_id);
   const isAgentOnline = selectedAgent?.status === "online";
 
   return (
@@ -300,304 +402,594 @@ export function PoliciesPage() {
               </SheetDescription>
             </SheetHeader>
 
-              <form aria-label="备份策略表单" onSubmit={handleSubmit} className="space-y-6 py-6 pb-20">
-                <ErrorPanel error={(createMutation.error || updateMutation.error) as any} />
-                
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>选择节点</Label>
-                    <Select
-                      value={formData.agent_id}
-                      onValueChange={(val) => {
-                        const agent = agents?.find(a => a.id === val);
-                        const updates: Partial<PolicyInput> = { agent_id: val };
-                        if (!editingId && agent) {
-                          updates.repo_path = agent.name;
-                        }
-                        setFormData({ ...formData, ...updates });
-                      }}
-                      disabled={!!editingId}
-                    >
-                      <SelectTrigger><SelectValue placeholder="请选择节点" /></SelectTrigger>
-                      <SelectContent>
-                        {agents?.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>选择存储</Label>
-                    <Select 
-                      value={formData.storage_id} 
-                      onValueChange={(val) => {
-                        const storage = storageList?.find(s => s.id === val);
-                        const updates: Partial<PolicyInput> = { storage_id: val };
-                        if (!editingId && !cleanRcloneArgs(formData.rclone_args) && storage) {
-                          const defaults = defaultRcloneArgs(storage.rclone_type);
-                          updates.rclone_args = defaults;
-                          if (Object.keys(defaults).length > 0) {
-                            setAdvancedTransferOpen(true);
-                          }
-                        }
-                        setFormData({ ...formData, ...updates });
-                      }}
-                      disabled={!!editingId}
-                    >
-                      <SelectTrigger><SelectValue placeholder="请选择存储" /></SelectTrigger>
-                      <SelectContent>
-                        {storageList?.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
+            <form
+              aria-label="备份策略表单"
+              onSubmit={handleSubmit}
+              className="space-y-6 py-6 pb-20"
+            >
+              <ErrorPanel
+                error={(createMutation.error || updateMutation.error) as any}
+              />
 
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="repo_path">仓库子路径</Label>
-                  <div className="flex">
-                    <span className="inline-flex items-center rounded-l-md border border-r-0 border-input bg-muted px-3 text-sm text-muted-foreground">
-                      vaultfleet/
-                    </span>
-                    <Input
-                      id="repo_path"
-                      className="rounded-l-none"
-                      value={formData.repo_path}
-                      onChange={(e) => setFormData({ ...formData, repo_path: e.target.value })}
-                      placeholder={selectedAgent?.name || "my-server"}
-                      disabled={!!editingId}
-                    />
-                  </div>
-                  <p className="text-xs text-muted-foreground">备份仓库的唯一标识。更换节点后使用相同路径即可访问原有备份数据。</p>
+                  <Label>选择节点</Label>
+                  <Select
+                    value={formData.agent_id}
+                    onValueChange={(val) => {
+                      const agent = agents?.find((a) => a.id === val);
+                      const updates: Partial<PolicyInput> = { agent_id: val };
+                      if (!editingId && agent) {
+                        updates.repo_path = agent.name;
+                      }
+                      setFormData({ ...formData, ...updates });
+                    }}
+                    disabled={!!editingId}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="请选择节点" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {agents?.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {a.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
+                <div className="space-y-2">
+                  <Label>选择存储</Label>
+                  <Select
+                    value={formData.storage_id}
+                    onValueChange={(val) => {
+                      const storage = storageList?.find((s) => s.id === val);
+                      const updates: Partial<PolicyInput> = { storage_id: val };
+                      if (
+                        !editingId &&
+                        !cleanRcloneArgs(formData.rclone_args) &&
+                        storage
+                      ) {
+                        const defaults = defaultRcloneArgs(storage.rclone_type);
+                        updates.rclone_args = defaults;
+                        if (Object.keys(defaults).length > 0) {
+                          setAdvancedTransferOpen(true);
+                        }
+                      }
+                      setFormData({ ...formData, ...updates });
+                    }}
+                    disabled={!!editingId}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="请选择存储" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {storageList?.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          {s.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
 
-                {!editingId && (
-                   <div className="space-y-2">
-                    <Label htmlFor="restic_password">Restic 密码 (可选)</Label>
-                    <Input
-                      id="restic_password"
-                      type="password"
-                      value={formData.restic_password}
-                      onChange={(e) => setFormData({ ...formData, restic_password: e.target.value })}
-                      placeholder="留空则不加密"
-                      disabled={formData.backup_mode === "archive"}
-                    />
-                    {formData.backup_mode === "archive" && (
-                      <p className="text-xs text-muted-foreground">压缩包备份直接生成归档文件，不使用 restic 仓库密码。</p>
+              <div className="space-y-2">
+                <Label htmlFor="repo_path">仓库子路径</Label>
+                <div className="flex">
+                  <span className="inline-flex items-center rounded-l-md border border-r-0 border-input bg-muted px-3 text-sm text-muted-foreground">
+                    vaultfleet/
+                  </span>
+                  <Input
+                    id="repo_path"
+                    className="rounded-l-none"
+                    value={formData.repo_path}
+                    onChange={(e) =>
+                      setFormData({ ...formData, repo_path: e.target.value })
+                    }
+                    placeholder={selectedAgent?.name || "my-server"}
+                    disabled={!!editingId}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  备份仓库的唯一标识。更换节点后使用相同路径即可访问原有备份数据。
+                </p>
+              </div>
+
+              {!editingId && (
+                <div className="space-y-2">
+                  <Label htmlFor="restic_password">Restic 密码 (可选)</Label>
+                  <Input
+                    id="restic_password"
+                    type="password"
+                    value={formData.restic_password}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        restic_password: e.target.value,
+                      })
+                    }
+                    placeholder="留空则不加密"
+                    disabled={formData.backup_mode === "archive"}
+                  />
+                  {formData.backup_mode === "archive" && (
+                    <p className="text-xs text-muted-foreground">
+                      压缩包备份直接生成归档文件，不使用 restic 仓库密码。
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="space-y-3 rounded-lg border p-4">
+                <div className="space-y-1">
+                  <Label>备份模式</Label>
+                  <p className="text-xs text-muted-foreground">
+                    可选择标准快照仓库备份，或直接生成可下载压缩包。
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    className={`rounded-lg border p-3 text-left transition-colors ${formData.backup_mode === "snapshot" ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-border hover:border-muted-foreground/30"}`}
+                    onClick={() =>
+                      setFormData({ ...formData, backup_mode: "snapshot" })
+                    }
+                  >
+                    <div className="text-sm font-medium">快照仓库</div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5">
+                      适合长期增量备份与恢复浏览。
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded-lg border p-3 text-left transition-colors ${formData.backup_mode === "archive" ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-border hover:border-muted-foreground/30"}`}
+                    onClick={() =>
+                      setFormData({ ...formData, backup_mode: "archive" })
+                    }
+                  >
+                    <div className="text-sm font-medium">压缩包归档</div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5">
+                      每次备份生成一个可直接下载的压缩文件。
+                    </div>
+                  </button>
+                </div>
+                {formData.backup_mode === "archive" && (
+                  <div className="space-y-2">
+                    <Label>压缩格式</Label>
+                    <Select
+                      value={formData.archive_format || "tar.gz"}
+                      onValueChange={(val) =>
+                        setFormData({
+                          ...formData,
+                          archive_format: val as "tar.gz" | "zip",
+                        })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="请选择压缩格式" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="tar.gz">tar.gz</SelectItem>
+                        <SelectItem value="zip">zip</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      生成后的压缩包会出现在备份历史中，可直接下载。
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-4">
+                <Label htmlFor="backup_dirs">备份目录</Label>
+                <Textarea
+                  id="backup_dirs"
+                  value={formData.backup_dirs.join("\n")}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      backup_dirs: e.target.value.split("\n").filter(Boolean),
+                    })
+                  }
+                  placeholder="每行一个路径，如: /etc"
+                  rows={3}
+                />
+                {formData.agent_id && (
+                  <div className="space-y-2">
+                    <Label className="text-xs font-normal text-muted-foreground">
+                      通过文件浏览器添加：
+                    </Label>
+                    {isAgentOnline ? (
+                      <DirectoryBrowser
+                        agentId={formData.agent_id}
+                        selectedPaths={formData.backup_dirs}
+                        onSelect={(path) => {
+                          if (!formData.backup_dirs.includes(path)) {
+                            setFormData({
+                              ...formData,
+                              backup_dirs: [...formData.backup_dirs, path],
+                            });
+                          }
+                        }}
+                        onDeselect={(path) => {
+                          setFormData({
+                            ...formData,
+                            backup_dirs: formData.backup_dirs.filter(
+                              (d) => d !== path,
+                            ),
+                          });
+                        }}
+                      />
+                    ) : (
+                      <div className="text-xs p-4 border border-dashed rounded text-center text-muted-foreground">
+                        节点离线，无法使用文件浏览器。请手动输入路径。
+                      </div>
                     )}
                   </div>
                 )}
+              </div>
 
-                <div className="space-y-3 rounded-lg border p-4">
-                  <div className="space-y-1">
-                    <Label>备份模式</Label>
-                    <p className="text-xs text-muted-foreground">可选择标准快照仓库备份，或直接生成可下载压缩包。</p>
-                  </div>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <button
-                      type="button"
-                      className={`rounded-lg border p-3 text-left transition-colors ${formData.backup_mode === "snapshot" ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-border hover:border-muted-foreground/30"}`}
-                      onClick={() => setFormData({ ...formData, backup_mode: "snapshot" })}
-                    >
-                      <div className="text-sm font-medium">快照仓库</div>
-                      <div className="text-[11px] text-muted-foreground mt-0.5">适合长期增量备份与恢复浏览。</div>
-                    </button>
-                    <button
-                      type="button"
-                      className={`rounded-lg border p-3 text-left transition-colors ${formData.backup_mode === "archive" ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-border hover:border-muted-foreground/30"}`}
-                      onClick={() => setFormData({ ...formData, backup_mode: "archive" })}
-                    >
-                      <div className="text-sm font-medium">压缩包归档</div>
-                      <div className="text-[11px] text-muted-foreground mt-0.5">每次备份生成一个可直接下载的压缩文件。</div>
-                    </button>
-                  </div>
-                  {formData.backup_mode === "archive" && (
-                    <div className="space-y-2">
-                      <Label>压缩格式</Label>
-                      <Select
-                        value={formData.archive_format || "tar.gz"}
-                        onValueChange={(val) => setFormData({ ...formData, archive_format: val as "tar.gz" | "zip" })}
-                      >
-                        <SelectTrigger><SelectValue placeholder="请选择压缩格式" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="tar.gz">tar.gz</SelectItem>
-                          <SelectItem value="zip">zip</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground">生成后的压缩包会出现在备份历史中，可直接下载。</p>
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-4">
-                  <Label htmlFor="backup_dirs">备份目录</Label>
-                  <Textarea
-                    id="backup_dirs"
-                    value={formData.backup_dirs.join("\n")}
-                    onChange={(e) => setFormData({ ...formData, backup_dirs: e.target.value.split("\n").filter(Boolean) })}
-                    placeholder="每行一个路径，如: /etc"
-                    rows={3}
-                  />
-                  {formData.agent_id && (
-                    <div className="space-y-2">
-                      <Label className="text-xs font-normal text-muted-foreground">通过文件浏览器添加：</Label>
-                      {isAgentOnline ? (
-                        <DirectoryBrowser
-                          agentId={formData.agent_id}
-                          selectedPaths={formData.backup_dirs}
-                          onSelect={(path) => {
-                            if (!formData.backup_dirs.includes(path)) {
-                              setFormData({ ...formData, backup_dirs: [...formData.backup_dirs, path] });
-                            }
-                          }}
-                          onDeselect={(path) => {
-                            setFormData({ ...formData, backup_dirs: formData.backup_dirs.filter(d => d !== path) });
-                          }}
-                        />
-                      ) : (
-                        <div className="text-xs p-4 border border-dashed rounded text-center text-muted-foreground">
-                          节点离线，无法使用文件浏览器。请手动输入路径。
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="schedule">Cron 调度</Label>
-                  <Input
-                    id="schedule"
-                    value={formData.schedule}
-                    onChange={(e) => setFormData({ ...formData, schedule: e.target.value })}
-                    placeholder="0 2 * * *"
-                  />
+              <div className="space-y-4 rounded-lg border border-amber-200 bg-amber-50/60 p-4">
+                <div className="space-y-1">
+                  <Label>Docker 工作负载建议</Label>
                   <p className="text-xs text-muted-foreground">
-                    {describeCron(formData.schedule)}
-                    {" — "}标准 Cron 表达式（分 时 日 月 周）。
+                    Docker 场景建议备份容器挂载数据、bind mount
+                    路径、`docker-compose.yml`、`.env` 等编排文件；
+                    此功能不备份镜像层，也不会自动重建容器。
                   </p>
                 </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="timeout_hours">任务超时（小时）</Label>
-                  <Input
-                    id="timeout_hours"
-                    type="number"
-                    min={1}
-                    max={72}
-                    value={formData.timeout_hours ?? ""}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setFormData({ ...formData, timeout_hours: value === "" ? undefined : parseInt(value, 10) || 6 });
-                    }}
-                    className="h-9"
-                  />
-                  <p className="text-xs text-muted-foreground">备份任务超过此时间未完成将自动标记为超时，默认 6 小时</p>
-                </div>
-
-                <div className="space-y-4 border-t pt-4">
-                  <div className="space-y-1">
-                    <Label>保留策略 (Retention)</Label>
-                    <p className="text-xs text-muted-foreground">每次备份后自动清理旧快照，释放存储空间。</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-md border bg-background p-3 text-xs text-muted-foreground">
+                    <div className="font-medium text-foreground">
+                      推荐路径示例
+                    </div>
+                    <div className="mt-1 font-mono">/srv/app/data</div>
+                    <div className="font-mono">/srv/app/docker-compose.yml</div>
+                    <div className="font-mono">/srv/app/.env</div>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {Object.entries(RETENTION_PRESETS).map(([key, preset]) => (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => {
-                          setRetentionPreset(key);
-                          if (key !== "custom") {
-                            setFormData({ ...formData, retention: { ...preset.values } });
-                          }
-                        }}
-                        className={`rounded-lg border p-3 text-left transition-colors ${
-                          retentionPreset === key
-                            ? "border-primary bg-primary/5 ring-1 ring-primary"
-                            : "border-border hover:border-muted-foreground/30"
-                        }`}
-                      >
-                        <div className="text-sm font-medium">{preset.label}</div>
-                        <div className="text-[11px] text-muted-foreground mt-0.5">{preset.description}</div>
-                      </button>
+                  <div className="rounded-md border bg-background p-3 text-xs text-muted-foreground">
+                    <div className="font-medium text-foreground">
+                      一致性示例
+                    </div>
+                    <div className="mt-1 font-mono">
+                      docker exec db pg_dump ...
+                    </div>
+                    <div className="font-mono">docker compose stop app</div>
+                    <div className="font-mono">docker compose start app</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4 rounded-lg border p-4">
+                <div className="space-y-1">
+                  <Label>备份钩子（可选）</Label>
+                  <p className="text-xs text-muted-foreground">
+                    备份前后可执行主机命令，用于 Docker
+                    数据导出、短暂停服务或恢复运行。命令执行失败会导致任务失败。
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="pre_backup_hook_command">备份前命令</Label>
+                  <Textarea
+                    id="pre_backup_hook_command"
+                    value={formData.pre_backup_hook?.command ?? ""}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        pre_backup_hook: {
+                          command: e.target.value,
+                          timeout_seconds:
+                            formData.pre_backup_hook?.timeout_seconds ?? 300,
+                        },
+                      })
+                    }
+                    placeholder="如: docker exec db pg_dump -U app app >/srv/app/backup/db.sql"
+                    rows={3}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="pre_backup_hook_timeout">
+                    备份前命令超时（秒）
+                  </Label>
+                  <Input
+                    id="pre_backup_hook_timeout"
+                    type="number"
+                    min={0}
+                    max={3600}
+                    value={formData.pre_backup_hook?.timeout_seconds ?? ""}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        pre_backup_hook: {
+                          command: formData.pre_backup_hook?.command ?? "",
+                          timeout_seconds:
+                            e.target.value === ""
+                              ? undefined
+                              : parseInt(e.target.value, 10) || 0,
+                        },
+                      })
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="post_backup_hook_command">备份后命令</Label>
+                  <Textarea
+                    id="post_backup_hook_command"
+                    value={formData.post_backup_hook?.command ?? ""}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        post_backup_hook: {
+                          command: e.target.value,
+                          timeout_seconds:
+                            formData.post_backup_hook?.timeout_seconds ?? 300,
+                        },
+                      })
+                    }
+                    placeholder="如: docker compose start app"
+                    rows={3}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="post_backup_hook_timeout">
+                    备份后命令超时（秒）
+                  </Label>
+                  <Input
+                    id="post_backup_hook_timeout"
+                    type="number"
+                    min={0}
+                    max={3600}
+                    value={formData.post_backup_hook?.timeout_seconds ?? ""}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        post_backup_hook: {
+                          command: formData.post_backup_hook?.command ?? "",
+                          timeout_seconds:
+                            e.target.value === ""
+                              ? undefined
+                              : parseInt(e.target.value, 10) || 0,
+                        },
+                      })
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="schedule">Cron 调度</Label>
+                <Input
+                  id="schedule"
+                  value={formData.schedule}
+                  onChange={(e) =>
+                    setFormData({ ...formData, schedule: e.target.value })
+                  }
+                  placeholder="0 2 * * *"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {describeCron(formData.schedule)}
+                  {" — "}标准 Cron 表达式（分 时 日 月 周）。
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="timeout_hours">任务超时（小时）</Label>
+                <Input
+                  id="timeout_hours"
+                  type="number"
+                  min={1}
+                  max={72}
+                  value={formData.timeout_hours ?? ""}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setFormData({
+                      ...formData,
+                      timeout_hours:
+                        value === "" ? undefined : parseInt(value, 10) || 6,
+                    });
+                  }}
+                  className="h-9"
+                />
+                <p className="text-xs text-muted-foreground">
+                  备份任务超过此时间未完成将自动标记为超时，默认 6 小时
+                </p>
+              </div>
+
+              <div className="space-y-4 border-t pt-4">
+                <div className="space-y-1">
+                  <Label>保留策略 (Retention)</Label>
+                  <p className="text-xs text-muted-foreground">
+                    每次备份后自动清理旧快照，释放存储空间。
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.entries(RETENTION_PRESETS).map(([key, preset]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => {
+                        setRetentionPreset(key);
+                        if (key !== "custom") {
+                          setFormData({
+                            ...formData,
+                            retention: { ...preset.values },
+                          });
+                        }
+                      }}
+                      className={`rounded-lg border p-3 text-left transition-colors ${
+                        retentionPreset === key
+                          ? "border-primary bg-primary/5 ring-1 ring-primary"
+                          : "border-border hover:border-muted-foreground/30"
+                      }`}
+                    >
+                      <div className="text-sm font-medium">{preset.label}</div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">
+                        {preset.description}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                {retentionPreset === "custom" && (
+                  <div className="grid grid-cols-2 gap-4 pt-2">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">保留最近副本</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={formData.retention.keep_last ?? 0}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            retention: {
+                              ...formData.retention,
+                              keep_last: parseInt(e.target.value) || 0,
+                            },
+                          })
+                        }
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        始终保留最近 N 个快照
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">保留每日副本</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={formData.retention.keep_daily ?? 0}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            retention: {
+                              ...formData.retention,
+                              keep_daily: parseInt(e.target.value) || 0,
+                            },
+                          })
+                        }
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        每天保留 1 个，共 N 天
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">保留每周副本</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={formData.retention.keep_weekly ?? 0}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            retention: {
+                              ...formData.retention,
+                              keep_weekly: parseInt(e.target.value) || 0,
+                            },
+                          })
+                        }
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        每周保留 1 个，共 N 周
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">保留每月副本</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={formData.retention.keep_monthly ?? 0}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            retention: {
+                              ...formData.retention,
+                              keep_monthly: parseInt(e.target.value) || 0,
+                            },
+                          })
+                        }
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        每月保留 1 个，共 N 个月
+                      </p>
+                    </div>
+                  </div>
+                )}
+                {retentionPreset !== "custom" && (
+                  <div className="text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2">
+                    最近 {formData.retention.keep_last ?? 0} 个 · 每日{" "}
+                    {formData.retention.keep_daily ?? 0} 份 · 每周{" "}
+                    {formData.retention.keep_weekly ?? 0} 份 · 每月{" "}
+                    {formData.retention.keep_monthly ?? 0} 份
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3 border-t pt-4">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between text-left"
+                  onClick={() => setAdvancedTransferOpen((open) => !open)}
+                  aria-expanded={advancedTransferOpen}
+                  aria-controls="advanced-transfer-params"
+                >
+                  <span className="flex items-center gap-2">
+                    <Settings2 className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">高级传输参数</span>
+                  </span>
+                  <ChevronDown
+                    className={`h-4 w-4 text-muted-foreground transition-transform ${advancedTransferOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
+
+                {advancedTransferOpen && (
+                  <div
+                    id="advanced-transfer-params"
+                    className="grid grid-cols-1 gap-4 pt-1 sm:grid-cols-2"
+                  >
+                    {RCLONE_ARG_FIELDS.map((field) => (
+                      <div key={field.key} className="space-y-1.5">
+                        <Label
+                          htmlFor={`rclone-${field.key}`}
+                          className="text-xs"
+                        >
+                          {field.label}
+                        </Label>
+                        <Input
+                          id={`rclone-${field.key}`}
+                          value={formData.rclone_args?.[field.key] ?? ""}
+                          onChange={(e) => {
+                            setFormData({
+                              ...formData,
+                              rclone_args: {
+                                ...(formData.rclone_args ?? {}),
+                                [field.key]: e.target.value,
+                              },
+                            });
+                          }}
+                          placeholder={`默认 ${field.defaultValue} / WebDAV ${field.webdavValue}`}
+                        />
+                        <p className="text-[11px] text-muted-foreground">
+                          {field.description}
+                        </p>
+                      </div>
                     ))}
                   </div>
-                  {retentionPreset === "custom" && (
-                    <div className="grid grid-cols-2 gap-4 pt-2">
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">保留最近副本</Label>
-                        <Input type="number" min={0} value={formData.retention.keep_last ?? 0} onChange={(e) => setFormData({ ...formData, retention: { ...formData.retention, keep_last: parseInt(e.target.value) || 0 }})} />
-                        <p className="text-[11px] text-muted-foreground">始终保留最近 N 个快照</p>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">保留每日副本</Label>
-                        <Input type="number" min={0} value={formData.retention.keep_daily ?? 0} onChange={(e) => setFormData({ ...formData, retention: { ...formData.retention, keep_daily: parseInt(e.target.value) || 0 }})} />
-                        <p className="text-[11px] text-muted-foreground">每天保留 1 个，共 N 天</p>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">保留每周副本</Label>
-                        <Input type="number" min={0} value={formData.retention.keep_weekly ?? 0} onChange={(e) => setFormData({ ...formData, retention: { ...formData.retention, keep_weekly: parseInt(e.target.value) || 0 }})} />
-                        <p className="text-[11px] text-muted-foreground">每周保留 1 个，共 N 周</p>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">保留每月副本</Label>
-                        <Input type="number" min={0} value={formData.retention.keep_monthly ?? 0} onChange={(e) => setFormData({ ...formData, retention: { ...formData.retention, keep_monthly: parseInt(e.target.value) || 0 }})} />
-                        <p className="text-[11px] text-muted-foreground">每月保留 1 个，共 N 个月</p>
-                      </div>
-                    </div>
-                  )}
-                  {retentionPreset !== "custom" && (
-                    <div className="text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2">
-                      最近 {formData.retention.keep_last ?? 0} 个 · 每日 {formData.retention.keep_daily ?? 0} 份 · 每周 {formData.retention.keep_weekly ?? 0} 份 · 每月 {formData.retention.keep_monthly ?? 0} 份
-                    </div>
-                  )}
-                </div>
+                )}
+              </div>
 
-                <div className="space-y-3 border-t pt-4">
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-between text-left"
-                    onClick={() => setAdvancedTransferOpen((open) => !open)}
-                    aria-expanded={advancedTransferOpen}
-                    aria-controls="advanced-transfer-params"
-                  >
-                    <span className="flex items-center gap-2">
-                      <Settings2 className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm font-medium">高级传输参数</span>
-                    </span>
-                    <ChevronDown
-                      className={`h-4 w-4 text-muted-foreground transition-transform ${advancedTransferOpen ? "rotate-180" : ""}`}
-                    />
-                  </button>
-
-                  {advancedTransferOpen && (
-                    <div id="advanced-transfer-params" className="grid grid-cols-1 gap-4 pt-1 sm:grid-cols-2">
-                      {RCLONE_ARG_FIELDS.map((field) => (
-                        <div key={field.key} className="space-y-1.5">
-                          <Label htmlFor={`rclone-${field.key}`} className="text-xs">{field.label}</Label>
-                          <Input
-                            id={`rclone-${field.key}`}
-                            value={formData.rclone_args?.[field.key] ?? ""}
-                            onChange={(e) => {
-                              setFormData({
-                                ...formData,
-                                rclone_args: {
-                                  ...(formData.rclone_args ?? {}),
-                                  [field.key]: e.target.value,
-                                },
-                              });
-                            }}
-                            placeholder={`默认 ${field.defaultValue} / WebDAV ${field.webdavValue}`}
-                          />
-                          <p className="text-[11px] text-muted-foreground">{field.description}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="fixed bottom-0 right-0 left-0 bg-background border-t p-4 lg:left-auto lg:w-[var(--radix-sheet-width)]">
-                   <Button type="submit" className="w-full" disabled={createMutation.isPending || updateMutation.isPending}>
-                    {createMutation.isPending || updateMutation.isPending ? "正在提交..." : "提交策略"}
-                  </Button>
-                </div>
-              </form>
+              <div className="fixed bottom-0 right-0 left-0 bg-background border-t p-4 lg:left-auto lg:w-[var(--radix-sheet-width)]">
+                <Button
+                  type="submit"
+                  className="w-full"
+                  disabled={
+                    createMutation.isPending || updateMutation.isPending
+                  }
+                >
+                  {createMutation.isPending || updateMutation.isPending
+                    ? "正在提交..."
+                    : "提交策略"}
+                </Button>
+              </div>
+            </form>
           </SheetContent>
         </Sheet>
       </div>
@@ -615,40 +1007,63 @@ export function PoliciesPage() {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={5} className="h-24 text-center">正在加载...</TableCell></TableRow>
+              <TableRow>
+                <TableCell colSpan={5} className="h-24 text-center">
+                  正在加载...
+                </TableCell>
+              </TableRow>
             ) : policies?.length === 0 ? (
-              <TableRow><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">暂无备份策略</TableCell></TableRow>
+              <TableRow>
+                <TableCell
+                  colSpan={5}
+                  className="h-24 text-center text-muted-foreground"
+                >
+                  暂无备份策略
+                </TableCell>
+              </TableRow>
             ) : (
               policies?.map((p) => (
                 <TableRow key={p.id}>
                   <TableCell className="font-medium">
-                    {agents?.find(a => a.id === p.agent_id)?.name || p.agent_id}
+                    {agents?.find((a) => a.id === p.agent_id)?.name ||
+                      p.agent_id}
                   </TableCell>
                   <TableCell>
                     <div className="space-y-0.5">
                       <div className="font-mono text-xs">{p.schedule}</div>
-                      <div className="text-[10px] text-muted-foreground">{describeCron(p.schedule)}</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {describeCron(p.schedule)}
+                      </div>
                     </div>
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={p.synced ? "success" : "unsynced"} />
                   </TableCell>
                   <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
-                    {format(new Date(p.created_at), "yyyy-MM-dd HH:mm", { locale: zhCN })}
+                    {format(new Date(p.created_at), "yyyy-MM-dd HH:mm", {
+                      locale: zhCN,
+                    })}
                   </TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onClick={() => handleEdit(p)}>
                           <Settings2 className="mr-2 h-4 w-4" /> 编辑
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => setConfirmBackupAgentId(p.agent_id)}>
+                        <DropdownMenuItem
+                          onClick={() => setConfirmBackupAgentId(p.agent_id)}
+                        >
                           <Play className="mr-2 h-4 w-4" /> 立即备份
                         </DropdownMenuItem>
-                        <DropdownMenuItem className="text-red-600" onClick={() => setConfirmDeleteId(p.id)}>
+                        <DropdownMenuItem
+                          className="text-red-600"
+                          onClick={() => setConfirmDeleteId(p.id)}
+                        >
                           <Trash2 className="mr-2 h-4 w-4" /> 删除
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -666,7 +1081,9 @@ export function PoliciesPage() {
         onOpenChange={(open) => !open && setConfirmDeleteId(null)}
         title="确认删除备份策略？"
         description="此操作将停止该节点的自动备份任务。存储中的备份数据不会被删除。"
-        onConfirm={() => confirmDeleteId && deleteMutation.mutate(confirmDeleteId)}
+        onConfirm={() =>
+          confirmDeleteId && deleteMutation.mutate(confirmDeleteId)
+        }
         loading={deleteMutation.isPending}
       />
 
@@ -674,8 +1091,10 @@ export function PoliciesPage() {
         open={!!confirmBackupAgentId}
         onOpenChange={(open) => !open && setConfirmBackupAgentId(null)}
         title="确认立即备份"
-        description={`将对节点 ${agents?.find(a => a.id === confirmBackupAgentId)?.name ?? confirmBackupAgentId} 发起立即备份请求。`}
-        onConfirm={() => confirmBackupAgentId && backupMutation.mutate(confirmBackupAgentId)}
+        description={`将对节点 ${agents?.find((a) => a.id === confirmBackupAgentId)?.name ?? confirmBackupAgentId} 发起立即备份请求。`}
+        onConfirm={() =>
+          confirmBackupAgentId && backupMutation.mutate(confirmBackupAgentId)
+        }
         loading={backupMutation.isPending}
         confirmText="立即备份"
       />
