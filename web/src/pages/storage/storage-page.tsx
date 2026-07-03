@@ -24,7 +24,7 @@ import { zhCN } from "date-fns/locale";
 import { toast } from "sonner";
 import { StorageTestResult } from "@/types/health";
 
-const STORAGE_TEMPLATES: Record<string, { name: string; defaults: Record<string, string>; fields: { key: string; label: string; type?: string }[] }> = {
+export const STORAGE_TEMPLATES: Record<string, { name: string; defaults: Record<string, string>; fields: { key: string; label: string; type?: string }[] }> = {
   s3: {
     name: "Amazon S3 / 兼容对象存储",
     defaults: { provider: "AWS", region: "us-east-1" },
@@ -44,6 +44,21 @@ const STORAGE_TEMPLATES: Record<string, { name: string; defaults: Record<string,
       { key: "url", label: "URL" },
       { key: "user", label: "用户名" },
       { key: "pass", label: "密码", type: "password" },
+    ],
+  },
+  swift: {
+    name: "OpenStack Swift",
+    defaults: { auth_version: "3", domain: "default", tenant_domain: "default" },
+    fields: [
+      { key: "auth", label: "Auth URL (认证地址)" },
+      { key: "user", label: "User (用户名)" },
+      { key: "key", label: "Key (密码 / API Key)", type: "password" },
+      { key: "tenant", label: "Project / Tenant (项目)" },
+      { key: "domain", label: "User Domain (用户域)" },
+      { key: "tenant_domain", label: "Project Domain (项目域)" },
+      { key: "auth_version", label: "Auth Version (认证版本)" },
+      { key: "region", label: "Region (区域)" },
+      { key: "container", label: "Container (容器)" },
     ],
   },
   sftp: {

@@ -420,23 +420,21 @@ func decryptPolicyRcloneConfig(database *db.Database, rawConfig string) (map[str
 }
 
 func policyRepoPath(rcloneType string, rcloneConfig map[string]string, repoPath string) string {
-	if rcloneType != "s3" {
+	pathSegment := storagecheck.RemotePathSegment(rcloneType, rcloneConfig)
+	if pathSegment == "" {
 		return repoPath
 	}
-	bucket := storagecheck.S3BucketPathSegment(rcloneConfig["bucket"])
-	if bucket == "" {
-		return repoPath
-	}
-	return bucket + "/" + strings.TrimLeft(repoPath, "/")
+	return pathSegment + "/" + strings.TrimLeft(repoPath, "/")
 }
 
 func storageRcloneConfig(rcloneType string, rcloneConfig map[string]string) map[string]string {
-	if rcloneType != "s3" {
+	pathKey, ok := storagecheck.RemotePathConfigKey(rcloneType)
+	if !ok {
 		return rcloneConfig
 	}
 	values := make(map[string]string, len(rcloneConfig))
 	for key, value := range rcloneConfig {
-		if key == "bucket" {
+		if key == pathKey {
 			continue
 		}
 		values[key] = value

@@ -1,0 +1,5 @@
+- [x] Add backend path-segment handling for Swift `container`.
+- [x] Add tests for Swift storage connection test targets and policy payload assembly.
+- [x] Add OpenStack Swift storage template to the Web UI.
+- [x] Add or update frontend tests for the Swift template.
+- [x] Run targeted Go and web test suites.

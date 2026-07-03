@@ -204,6 +204,67 @@ func TestServiceUsesS3BucketRootTargetWhenBucketIsEmpty(t *testing.T) {
 	assert.Equal(t, []string{"lsd", "vaultfleet:"}, runner.args)
 }
 
+func TestServiceUsesSwiftContainerInTargetAndOmitsContainerFromTempConfig(t *testing.T) {
+	runner := &fakeRunner{
+		t: t,
+		onRun: func(t *testing.T, _ context.Context, configPath string) error {
+			t.Helper()
+
+			contents, err := os.ReadFile(configPath)
+			require.NoError(t, err)
+
+			config := string(contents)
+			assert.NotContains(t, config, "container =")
+			assert.Contains(t, config, "auth = https://openstack.example.test:5000/v3")
+			assert.Contains(t, config, "user = vaultfleet")
+			return nil
+		},
+	}
+	service := NewService(runner)
+
+	result := service.Test(context.Background(), Request{
+		RcloneType: "swift",
+		RcloneConfig: map[string]string{
+			"auth":      "https://openstack.example.test:5000/v3",
+			"user":      "vaultfleet",
+			"key":       "swift-secret",
+			"container": " /backups/ ",
+		},
+	})
+
+	assert.True(t, result.OK)
+	require.Equal(t, 1, runner.calls)
+	assert.Equal(t, []string{"lsd", "vaultfleet:backups"}, runner.args)
+}
+
+func TestServiceUsesSwiftRootTargetWhenContainerIsEmpty(t *testing.T) {
+	runner := &fakeRunner{
+		t: t,
+		onRun: func(t *testing.T, _ context.Context, configPath string) error {
+			t.Helper()
+
+			contents, err := os.ReadFile(configPath)
+			require.NoError(t, err)
+
+			assert.NotContains(t, string(contents), "container =")
+			return nil
+		},
+	}
+	service := NewService(runner)
+
+	result := service.Test(context.Background(), Request{
+		RcloneType: "swift",
+		RcloneConfig: map[string]string{
+			"auth":      "https://openstack.example.test:5000/v3",
+			"container": "  ",
+		},
+	})
+
+	assert.True(t, result.OK)
+	require.Equal(t, 1, runner.calls)
+	assert.Equal(t, []string{"lsd", "vaultfleet:"}, runner.args)
+}
+
 func TestServiceRedactsOverlappingSecretsByLongestFirst(t *testing.T) {
 	runner := &fakeRunner{err: errors.New("failed with abcdef abc")}
 	service := NewService(runner)
