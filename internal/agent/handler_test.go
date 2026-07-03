@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"vaultfleet/internal/agent/dockerops"
 	"vaultfleet/internal/agent/executor"
 	"vaultfleet/internal/agent/policy"
 	agentscheduler "vaultfleet/internal/agent/scheduler"
@@ -1796,6 +1797,75 @@ func TestHandleRestoreMissingPolicySendsFailedTaskResult(t *testing.T) {
 	assert.Equal(t, "restore", result.TaskType)
 	assert.Equal(t, "failed", result.Status)
 	assert.Contains(t, result.ErrorLog, "no backup policy configured")
+}
+
+func TestHandleDockerDiscoverReqReturnsContainers(t *testing.T) {
+	sent := &sentMessages{}
+	inspect := `[{"Id":"abcdef1234567890","Name":"/web","Config":{"Image":"nginx","Env":["TOKEN=secret"],"Labels":{}},"State":{"Status":"running"},"Mounts":[{"Type":"bind","Source":"/srv/web","Destination":"/data","RW":true}],"NetworkSettings":{"Ports":{}}}]`
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: policy.NewStore(t.TempDir()),
+		ConfigDir:   t.TempDir(),
+		AgentID:     "agent-1",
+		SendFunc:    sent.send,
+		DockerService: &dockerops.Service{Runner: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			switch args[0] {
+			case "version":
+				return []byte(`"25.0.0"`), nil
+			case "ps":
+				return []byte("abcdef123456\n"), nil
+			default:
+				return []byte(inspect), nil
+			}
+		}},
+	})
+	msg, err := protocol.NewMessage(protocol.TypeDockerDiscoverReq, protocol.DockerDiscoverReqPayload{})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	respMsg := waitForMessageType(t, sent, protocol.TypeDockerDiscoverResp, time.Second)
+	resp, err := protocol.ParsePayload[protocol.DockerDiscoverRespPayload](&respMsg)
+	require.NoError(t, err)
+	require.Len(t, resp.Containers, 1)
+	assert.Equal(t, "web", resp.Containers[0].Name)
+	assert.Equal(t, "[redacted]", resp.Containers[0].Env["TOKEN"])
+}
+
+func TestHandleDockerRestoreReqPrecheckOnlyRestoresAndDoesNotStart(t *testing.T) {
+	configDir := t.TempDir()
+	store := policy.NewStore(configDir)
+	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{
+		AgentID:    "agent-1",
+		Storage:    protocol.StorageConfig{RcloneType: "local", RcloneConfig: map[string]string{"nounc": "true"}, RepoPath: "repo"},
+		BackupDirs: []string{"/srv/web"},
+		Retention:  protocol.RetentionPolicy{KeepLast: 1},
+	}))
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   configDir,
+		AgentID:     "agent-1",
+		SendFunc:    sent.send,
+		RestoreRunner: func(_ context.Context, _ executor.ExecutorConfig, _ string, target string, _ []string) error {
+			manifest := protocol.DockerManifest{Version: 1, Containers: []protocol.DockerContainer{{Name: "web"}}, Plan: protocol.DockerRestorePlan{Command: "echo start"}}
+			_, err := dockerops.WriteManifest(target, manifest)
+			return err
+		},
+		DockerService: &dockerops.Service{Runner: func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+			return []byte(`"25.0.0"`), nil
+		}},
+	})
+	target := t.TempDir()
+	msg, err := protocol.NewMessage(protocol.TypeDockerRestoreReq, protocol.DockerRestoreReqPayload{SnapshotID: "snap-1", Target: target, PrecheckOnly: true})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	resultMsg := waitForMessageType(t, sent, protocol.TypeTaskResult, time.Second)
+	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&resultMsg)
+	require.NoError(t, err)
+	assert.Equal(t, "success", result.Status)
+	assert.Contains(t, result.ErrorLog, "containers were not started")
 }
 
 func TestHandleSnapshotListInvokesRunnerAndSendsResponseWithSameID(t *testing.T) {

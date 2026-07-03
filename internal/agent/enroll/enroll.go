@@ -128,6 +128,7 @@ func collectSystemInfo(version string) string {
 			protocol.CapabilitySnapshotBrowse,
 			protocol.CapabilityRestoreIncludePaths,
 			protocol.CapabilityPolicyPlaintextRclonePass,
+			protocol.CapabilityDockerBackup,
 		},
 	})
 	if err != nil {

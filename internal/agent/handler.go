@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"vaultfleet/internal/agent/dockerops"
 	"vaultfleet/internal/agent/executor"
 	"vaultfleet/internal/agent/filebrowse"
 	"vaultfleet/internal/agent/policy"
@@ -59,6 +60,7 @@ type HandlerConfig struct {
 	RestoreRunner            RestoreRunnerFunc
 	SnapshotListRunner       SnapshotListRunnerFunc
 	SnapshotBrowseRunner     SnapshotBrowseRunnerFunc
+	DockerService            *dockerops.Service
 	DirSizeFunc              DirSizeFunc
 	AgentVersion             string
 	Updater                  AgentUpdater
@@ -77,6 +79,7 @@ type Handler struct {
 	restoreRunner            RestoreRunnerFunc
 	snapshotListRunner       SnapshotListRunnerFunc
 	snapshotBrowseRunner     SnapshotBrowseRunnerFunc
+	dockerService            *dockerops.Service
 	snapshotCache            *snapshotCache
 	dirSizeFunc              DirSizeFunc
 	agentVersion             string
@@ -120,6 +123,10 @@ func NewHandler(config HandlerConfig) *Handler {
 	if snapshotBrowseRunner == nil {
 		snapshotBrowseRunner = runSnapshotBrowse
 	}
+	dockerService := config.DockerService
+	if dockerService == nil {
+		dockerService = dockerops.New()
+	}
 	dirSizeFunc := config.DirSizeFunc
 	if dirSizeFunc == nil {
 		dirSizeFunc = filebrowse.CalculateDirSize
@@ -145,6 +152,7 @@ func NewHandler(config HandlerConfig) *Handler {
 		restoreRunner:            restoreRunner,
 		snapshotListRunner:       snapshotListRunner,
 		snapshotBrowseRunner:     snapshotBrowseRunner,
+		dockerService:            dockerService,
 		snapshotCache:            newSnapshotCache(configDir),
 		dirSizeFunc:              dirSizeFunc,
 		agentVersion:             config.AgentVersion,
@@ -171,6 +179,10 @@ func (h *Handler) Handle(msg protocol.Message) {
 		h.handleSnapshotListReq(msg)
 	case protocol.TypeSnapshotBrowseReq:
 		h.handleSnapshotBrowseReq(msg)
+	case protocol.TypeDockerDiscoverReq:
+		h.handleDockerDiscoverReq(msg)
+	case protocol.TypeDockerRestoreReq:
+		h.handleDockerRestoreReq(msg)
 	case protocol.TypeCollectLogsReq:
 		h.handleCollectLogsReq(msg)
 	case protocol.TypeVersionInfo:
@@ -1076,6 +1088,138 @@ func (h *Handler) handleRestoreReq(msg protocol.Message) {
 	if startErr != nil {
 		h.sendTaskResultWithID(msg.ID, h.failedTypedTaskResult(agentID, "restore", req.SnapshotID, startErr.Error(), time.Now()))
 	}
+}
+
+func (h *Handler) handleDockerDiscoverReq(msg protocol.Message) {
+	req, err := protocol.ParsePayload[protocol.DockerDiscoverReqPayload](&msg)
+	if err != nil {
+		h.sendDockerDiscoverResp(msg.ID, protocol.DockerDiscoverRespPayload{AgentID: h.agentID, Error: "parse docker discovery: " + err.Error()})
+		return
+	}
+	agentID := req.AgentID
+	if agentID == "" {
+		agentID = h.agentID
+	}
+	req.AgentID = agentID
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	resp, err := h.dockerService.Discover(ctx, *req)
+	if err != nil {
+		resp = &protocol.DockerDiscoverRespPayload{AgentID: agentID, Error: err.Error()}
+	}
+	h.sendDockerDiscoverResp(msg.ID, *resp)
+}
+
+func (h *Handler) sendDockerDiscoverResp(messageID string, payload protocol.DockerDiscoverRespPayload) {
+	msg, err := protocol.NewMessage(protocol.TypeDockerDiscoverResp, payload)
+	if err != nil {
+		log.Printf("create docker discovery response failed: %v", err)
+		return
+	}
+	msg.ID = messageID
+	if err := h.sendMessage(*msg); err != nil {
+		log.Printf("send docker discovery response failed: %v", err)
+	}
+}
+
+func (h *Handler) handleDockerRestoreReq(msg protocol.Message) {
+	req, err := protocol.ParsePayload[protocol.DockerRestoreReqPayload](&msg)
+	if err != nil {
+		log.Printf("parse docker restore request failed: %v", err)
+		h.sendTaskResultWithID(msg.ID, h.failedTypedTaskResult(h.agentID, "restore", "", "parse docker restore: "+err.Error(), time.Now()))
+		return
+	}
+	if h.policyStore == nil {
+		h.sendTaskResultWithID(msg.ID, h.failedTypedTaskResult(h.agentID, "restore", req.SnapshotID, "policy store not configured", time.Now()))
+		return
+	}
+	policyPayload, err := h.policyStore.LoadPolicy()
+	if err != nil {
+		if os.IsNotExist(err) {
+			h.sendTaskResultWithID(msg.ID, h.failedTypedTaskResult(h.agentID, "restore", req.SnapshotID, "no backup policy configured for this agent", time.Now()))
+		} else {
+			h.sendTaskResultWithID(msg.ID, h.failedTypedTaskResult(h.agentID, "restore", req.SnapshotID, "load policy: "+err.Error(), time.Now()))
+		}
+		return
+	}
+	agentID := policyPayload.AgentID
+	if agentID == "" {
+		agentID = h.agentID
+	}
+	startErr := h.tasks.Start(msg.ID, taskTypeRestore, func(ctx context.Context) {
+		h.runDockerRestore(ctx, msg.ID, agentID, policyPayload, *req)
+	})
+	if startErr != nil {
+		h.sendTaskResultWithID(msg.ID, h.failedTypedTaskResult(agentID, "restore", req.SnapshotID, startErr.Error(), time.Now()))
+	}
+}
+
+func (h *Handler) runDockerRestore(ctx context.Context, messageID string, agentID string, policyPayload *protocol.PolicyPushPayload, req protocol.DockerRestoreReqPayload) {
+	startedAt := time.Now()
+	if err := h.ensureRcloneConf(policyPayload); err != nil {
+		h.sendTaskResultWithID(messageID, h.failedTypedTaskResult(agentID, "restore", req.SnapshotID, "prepare rclone config: "+err.Error(), startedAt))
+		return
+	}
+	h.sendRestoreProgress(messageID, agentID, req.SnapshotID)
+	if err := h.restoreRunner(ctx, executorConfigForPolicy(h.configDir, policyPayload), req.SnapshotID, req.Target, req.IncludePaths); err != nil {
+		h.sendTaskResultWithID(messageID, h.dockerRestoreResult(agentID, req.SnapshotID, startedAt, "failed", err.Error()))
+		return
+	}
+	manifest, err := dockerops.ReadManifest(req.Target, req.ManifestPath)
+	if err != nil {
+		h.sendTaskResultWithID(messageID, h.dockerRestoreResult(agentID, req.SnapshotID, startedAt, "failed", "read docker manifest: "+err.Error()))
+		return
+	}
+	startupCommand := strings.TrimSpace(req.StartupCommand)
+	if startupCommand == "" {
+		startupCommand = manifest.Plan.Command
+	}
+	warnings := h.dockerService.Precheck(ctx, *manifest, startupCommand)
+	if len(warnings) > 0 {
+		status := "success"
+		if req.StartContainers {
+			status = "failed"
+		}
+		h.sendTaskResultWithID(messageID, h.dockerRestoreResult(agentID, req.SnapshotID, startedAt, status, strings.Join(warnings, "\n")))
+		return
+	}
+	if req.PrecheckOnly || !req.StartContainers {
+		h.sendTaskResultWithID(messageID, h.dockerRestoreResult(agentID, req.SnapshotID, startedAt, "success", "docker restore precheck passed; containers were not started"))
+		return
+	}
+	workingDir := manifest.Plan.WorkingDir
+	if workingDir != "" && filepath.IsAbs(workingDir) {
+		workingDir = filepath.Join(req.Target, strings.TrimPrefix(workingDir, string(os.PathSeparator)))
+	}
+	output, err := h.dockerService.RunStartup(ctx, workingDir, startupCommand, req.CommandTimeoutSeconds)
+	if err != nil {
+		errorText := strings.TrimSpace(string(output))
+		if errorText != "" {
+			errorText = err.Error() + ": " + errorText
+		} else {
+			errorText = err.Error()
+		}
+		h.sendTaskResultWithID(messageID, h.dockerRestoreResult(agentID, req.SnapshotID, startedAt, "failed", errorText))
+		return
+	}
+	h.sendTaskResultWithID(messageID, h.dockerRestoreResult(agentID, req.SnapshotID, startedAt, "success", strings.TrimSpace(string(output))))
+}
+
+func (h *Handler) dockerRestoreResult(agentID string, snapshotID string, startedAt time.Time, status string, logText string) protocol.TaskResultPayload {
+	finishedAt := time.Now()
+	result := protocol.TaskResultPayload{
+		AgentID:    agentID,
+		TaskType:   "restore",
+		Status:     status,
+		SnapshotID: snapshotID,
+		DurationMs: finishedAt.Sub(startedAt).Milliseconds(),
+		StartedAt:  startedAt,
+		FinishedAt: finishedAt,
+	}
+	if strings.TrimSpace(logText) != "" {
+		result.ErrorLog = logText
+	}
+	return result
 }
 
 func (h *Handler) sendRestoreProgress(messageID string, agentID string, snapshotID string) {

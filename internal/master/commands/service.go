@@ -69,7 +69,7 @@ func DeadlineForType(commandType string, now time.Time) time.Time {
 		return now.Add(5 * time.Minute)
 	case protocol.TypeSnapshotListReq:
 		return now.Add(2 * time.Minute)
-	case protocol.TypeBackupNow, protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq:
+	case protocol.TypeBackupNow, protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq, protocol.TypeDockerRestoreReq:
 		return now.Add(6 * time.Hour)
 	default:
 		return now.Add(30 * time.Minute)
@@ -283,7 +283,7 @@ func (s *Service) CompleteTaskResultWith(ctx context.Context, agentID string, me
 				"agent_id = ? AND message_id = ? AND type IN ? AND status NOT IN ?",
 				agentID,
 				messageID,
-				[]string{protocol.TypeBackupNow, protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq},
+				[]string{protocol.TypeBackupNow, protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq, protocol.TypeDockerRestoreReq},
 				terminalStatuses(),
 			).
 			First(&command).Error
@@ -896,12 +896,12 @@ func (s *Service) now() time.Time {
 }
 
 func isLongRunning(commandType string) bool {
-	return commandType == protocol.TypeBackupNow || commandType == protocol.TypeRestoreReq || commandType == protocol.TypeSelectiveRestoreReq
+	return commandType == protocol.TypeBackupNow || commandType == protocol.TypeRestoreReq || commandType == protocol.TypeSelectiveRestoreReq || commandType == protocol.TypeDockerRestoreReq
 }
 
 func isCancelableOnTimeout(commandType string) bool {
 	switch commandType {
-	case protocol.TypeBackupNow, protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq, protocol.TypeSnapshotListReq, protocol.TypeSnapshotBrowseReq:
+	case protocol.TypeBackupNow, protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq, protocol.TypeDockerRestoreReq, protocol.TypeSnapshotListReq, protocol.TypeSnapshotBrowseReq:
 		return true
 	default:
 		return false
@@ -912,7 +912,7 @@ func taskTypeForCommand(commandType string) (string, bool) {
 	switch commandType {
 	case protocol.TypeBackupNow:
 		return "backup", true
-	case protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq:
+	case protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq, protocol.TypeDockerRestoreReq:
 		return "restore", true
 	default:
 		return "", false

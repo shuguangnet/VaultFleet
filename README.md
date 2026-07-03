@@ -139,7 +139,7 @@ curl -fsSL https://raw.githubusercontent.com/momo-z/VaultFleet/main/build/uninst
 2. 在 **节点管理** 中创建节点，复制安装命令到目标服务器执行，等待 Agent 注册上线。
 3. 在 **备份策略** 中选择节点和存储，设置仓库子路径、备份目录、排除规则、Cron 调度、保留策略和任务超时。
 4. 如使用 WebDAV、AList 代理或限流存储，在策略的 **高级传输参数** 中调整 rclone 并发、请求频率、重试和超时。
-5. 如果业务运行在 Docker 中，优先备份挂载目录、bind mount 路径、`docker-compose.yml` 和 `.env`，并按需配置备份前后钩子执行数据库导出或短暂停服务。
+5. 如果业务运行在 Docker 中，可在节点详情页使用 **Docker 备份** 一键发现运行容器，生成包含挂载目录、volume mountpoint 和 Docker 元数据的普通备份策略；也可以继续手动配置目录和备份钩子。
 6. 在 **任务历史** 中查看手动备份、定时备份、恢复任务和运行中备份进度；必要时取消仍在运行的任务。
 7. 在 **快照浏览** 中刷新快照、浏览快照内容，并选择整份快照或部分路径恢复到目标目录。
 8. 需要迁移到新节点时，在新节点上创建使用相同存储和仓库子路径的策略，策略同步后即可看到原有快照。
@@ -149,13 +149,23 @@ curl -fsSL https://raw.githubusercontent.com/momo-z/VaultFleet/main/build/uninst
 适用范围：
 
 - 容器挂载的数据目录，例如 `/srv/app/data`、`/var/lib/postgresql/data`
+- Docker named volume 在宿主机可见的 mountpoint
 - Compose 或其他编排文件，例如 `docker-compose.yml`、`.env`
+- VaultFleet 生成的 Docker manifest，用于恢复前预检和启动命令提示
 - 由备份前钩子导出的数据库转储或应用一致性文件
 
 不在范围内：
 
 - `docker commit`、`docker save`、镜像层备份
-- 自动发现并重建容器、网络、端口映射或 Compose stack
+- 自动强制覆盖已有容器、网络、端口映射或 Compose stack
+
+一键 Docker 备份/恢复：
+
+1. 打开 **节点管理**，进入在线节点详情页。
+2. 点击 **Docker 备份**，VaultFleet 会通过 Agent 调用本机 Docker CLI 发现运行容器。
+3. 选择容器和备份存储，确认后系统会创建普通备份策略；默认会立即发起一次备份。
+4. 恢复时在快照恢复窗口勾选 **按 Docker 备份恢复**。默认只恢复文件并执行预检，不会启动容器。
+5. 只有在勾选 **恢复文件后执行 Docker 启动命令** 后，Agent 才会执行 manifest 中记录的 Compose/启动命令。
 
 推荐做法：
 
@@ -175,6 +185,8 @@ docker compose start app
 注意事项：
 
 - 钩子在 Agent 主机上执行，命令失败会导致该次备份任务失败。
+- Docker 一键发现依赖 Agent 用户能够执行 `docker` 命令；没有 Docker 权限时不会创建策略。
+- Docker 恢复会先读取快照中的 manifest 并检查 Docker/Compose 可用性；检测到阻塞问题时不会执行启动命令。
 - 对数据库容器，优先使用逻辑导出或应用级一致性命令，而不是仅依赖文件层复制。
 - 如果使用停服务钩子，请确保备份后钩子能够恢复业务，避免长时间停机。
 

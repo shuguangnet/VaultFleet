@@ -24,6 +24,9 @@ const (
 	TypeSnapshotListResp    = "snapshot_list_resp"
 	TypeSnapshotBrowseReq   = "snapshot_browse_req"
 	TypeSnapshotBrowseResp  = "snapshot_browse_resp"
+	TypeDockerDiscoverReq   = "docker_discover_req"
+	TypeDockerDiscoverResp  = "docker_discover_resp"
+	TypeDockerRestoreReq    = "docker_restore_req"
 	TypeCollectLogsReq      = "collect_logs_req"
 	TypeCollectLogsResp     = "collect_logs_resp"
 	TypeDirSizeReq          = "dir_size_req"
@@ -39,6 +42,7 @@ const (
 	CapabilityRestoreIncludePaths       = "restore_include_paths"
 	CapabilityPolicyPlaintextRclonePass = "policy_plaintext_rclone_pass"
 	CapabilityArchiveBackup             = "archive_backup"
+	CapabilityDockerBackup              = "docker_backup"
 )
 
 const (
@@ -271,6 +275,78 @@ type SnapshotFileEntry struct {
 	Type  string `json:"type"`
 	Size  int64  `json:"size"`
 	Mtime string `json:"mtime"`
+}
+
+// DockerDiscoverReqPayload requests Docker workload discovery from an agent.
+type DockerDiscoverReqPayload struct {
+	AgentID    string   `json:"agent_id,omitempty"`
+	Containers []string `json:"containers,omitempty"`
+	All        bool     `json:"all,omitempty"`
+}
+
+// DockerDiscoverRespPayload returns Docker containers and backup-relevant metadata.
+type DockerDiscoverRespPayload struct {
+	AgentID    string            `json:"agent_id"`
+	Containers []DockerContainer `json:"containers,omitempty"`
+	Warnings   []string          `json:"warnings,omitempty"`
+	Error      string            `json:"error,omitempty"`
+}
+
+type DockerContainer struct {
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	Image          string            `json:"image"`
+	Status         string            `json:"status"`
+	Mounts         []DockerMount     `json:"mounts,omitempty"`
+	Ports          []DockerPort      `json:"ports,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	ComposeProject string            `json:"compose_project,omitempty"`
+	ComposeService string            `json:"compose_service,omitempty"`
+	ComposeFile    string            `json:"compose_file,omitempty"`
+	WorkingDir     string            `json:"working_dir,omitempty"`
+}
+
+type DockerMount struct {
+	Type        string `json:"type"`
+	Name        string `json:"name,omitempty"`
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	RW          bool   `json:"rw"`
+}
+
+type DockerPort struct {
+	IP          string `json:"ip,omitempty"`
+	PrivatePort int    `json:"private_port"`
+	PublicPort  int    `json:"public_port,omitempty"`
+	Type        string `json:"type"`
+}
+
+type DockerManifest struct {
+	Version    int               `json:"version"`
+	CreatedAt  time.Time         `json:"created_at"`
+	Containers []DockerContainer `json:"containers"`
+	BackupDirs []string          `json:"backup_dirs"`
+	Plan       DockerRestorePlan `json:"restore_plan"`
+}
+
+type DockerRestorePlan struct {
+	Mode       string   `json:"mode"`
+	WorkingDir string   `json:"working_dir,omitempty"`
+	Command    string   `json:"command,omitempty"`
+	Containers []string `json:"containers,omitempty"`
+	Warnings   []string `json:"warnings,omitempty"`
+}
+
+type DockerRestoreReqPayload struct {
+	SnapshotID            string   `json:"snapshot_id"`
+	Target                string   `json:"target"`
+	IncludePaths          []string `json:"include_paths,omitempty"`
+	ManifestPath          string   `json:"manifest_path,omitempty"`
+	PrecheckOnly          bool     `json:"precheck_only,omitempty"`
+	StartContainers       bool     `json:"start_containers,omitempty"`
+	StartupCommand        string   `json:"startup_command,omitempty"`
+	CommandTimeoutSeconds int      `json:"command_timeout_seconds,omitempty"`
 }
 
 // CollectLogsReqPayload requests recent logs from an agent.

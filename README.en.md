@@ -119,7 +119,7 @@ This stops the service and removes `vaultfleet-agent`, `restic`, `rclone`, and A
 2. Create a node, copy the generated install command, and wait for Agent enrollment.
 3. Create a backup policy with repository path, backup directories, excludes, cron schedule, retention, and timeout.
 4. Tune rclone transfer parameters when using WebDAV, AList proxies, or rate-limited storage.
-5. For Docker-hosted workloads, back up mounted data directories, bind mounts, `docker-compose.yml`, and `.env`, and use optional hooks when you need logical exports or a brief stop/start window.
+5. For Docker-hosted workloads, use **Docker Backup** on the node detail page to discover running containers and generate a standard policy with mount paths, volume mountpoints, and Docker metadata; manual paths and hooks remain available.
 6. Track manual backups, scheduled backups, restore jobs, and running backup progress from task history; cancel running jobs when needed.
 7. Browse snapshots and restore either a full snapshot or selected paths.
 8. For cross-node restore, create a policy on the new node with the same storage and repository path.
@@ -129,13 +129,23 @@ This stops the service and removes `vaultfleet-agent`, `restic`, `rclone`, and A
 Supported scope:
 
 - Mounted container data such as `/srv/app/data` or `/var/lib/postgresql/data`
+- Host-visible Docker named volume mountpoints
 - Deployment files such as `docker-compose.yml` and `.env`
+- VaultFleet-generated Docker manifests used for restore prechecks and startup guidance
 - Export artifacts produced by pre-backup hooks
 
 Explicit non-goals:
 
 - `docker commit`, `docker save`, and image-layer backup workflows
-- Automatic reconstruction of containers, networks, port mappings, or Compose stacks
+- Automatic forced overwrite of existing containers, networks, port mappings, or Compose stacks
+
+One-click Docker backup and restore:
+
+1. Open **Nodes**, then open an online node detail page.
+2. Click **Docker Backup**. VaultFleet asks the Agent to discover running containers with the local Docker CLI.
+3. Select containers and a storage backend. VaultFleet creates a normal backup policy and, by default, immediately queues a backup.
+4. During snapshot restore, enable **Docker restore** to use the Docker manifest from the snapshot. By default this restores files and performs checks without starting containers.
+5. The Agent runs the recorded Compose/startup command only when **start containers after restore** is explicitly confirmed.
 
 Recommended pattern:
 
@@ -155,6 +165,8 @@ docker compose start app
 Operational caveats:
 
 - Hooks run on the agent host, and hook failures fail the backup task.
+- One-click discovery requires the Agent process to have permission to run `docker`; if Docker is unavailable, no policy is created.
+- Docker restore reads the manifest from the snapshot and checks Docker/Compose availability before running any startup command.
 - For database containers, prefer logical exports or application-aware consistency steps over raw file copies alone.
 - If you stop services before backup, ensure your post-backup hook restores service availability.
 

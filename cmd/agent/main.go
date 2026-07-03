@@ -127,6 +127,7 @@ func runClient(ctx context.Context, cfg *AgentConfig) error {
 			protocol.CapabilitySnapshotBrowse,
 			protocol.CapabilityRestoreIncludePaths,
 			protocol.CapabilityPolicyPlaintextRclonePass,
+			protocol.CapabilityDockerBackup,
 		}
 		return info
 	}

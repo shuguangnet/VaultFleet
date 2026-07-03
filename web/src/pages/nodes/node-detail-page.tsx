@@ -7,6 +7,8 @@ import { copyToClipboard } from "@/lib/utils";
 import { listTasks } from "@/services/tasks";
 import { listSnapshots, restoreSnapshot } from "@/services/snapshots";
 import { listAgentCommands } from "@/services/commands";
+import { createDockerBackupProfile, discoverDocker, restoreDockerSnapshot } from "@/services/docker";
+import { listStorage } from "@/services/storage";
 import { StatusBadge } from "@/components/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,10 +20,12 @@ import { Play, RotateCcw, Info, CheckCircle2, AlertCircle, ChevronDown, ChevronU
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { toast } from "sonner";
 import { Snapshot } from "@/types/snapshot";
+import { DockerContainer } from "@/types/docker";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { safeFormatDate } from "@/lib/date";
 import { formatBytes } from "@/pages/tasks/tasks-page";
 
@@ -41,6 +45,12 @@ export function NodeDetailPage() {
   const [confirmed, setConfirmed] = useState(false);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [confirmBackupOpen, setConfirmBackupOpen] = useState(false);
+  const [dockerDialogOpen, setDockerDialogOpen] = useState(false);
+  const [selectedDockerContainers, setSelectedDockerContainers] = useState<string[]>([]);
+  const [dockerStorageId, setDockerStorageId] = useState("");
+  const [dockerRunNow, setDockerRunNow] = useState(true);
+  const [dockerRestoreEnabled, setDockerRestoreEnabled] = useState(false);
+  const [dockerStartContainers, setDockerStartContainers] = useState(false);
 
   const { data: agent, isLoading: agentLoading } = useQuery({
     queryKey: ["agent", agentId],
@@ -79,6 +89,17 @@ export function NodeDetailPage() {
     },
   });
 
+  const { data: storage } = useQuery({
+    queryKey: ["storage"],
+    queryFn: listStorage,
+  });
+
+  const dockerDiscovery = useQuery({
+    queryKey: ["docker-discovery", agentId],
+    queryFn: () => discoverDocker(agentId!),
+    enabled: !!agentId && dockerDialogOpen,
+  });
+
   const backupMutation = useMutation({
     mutationFn: () => backupNow(agentId!),
     onSuccess: (data) => {
@@ -110,6 +131,49 @@ export function NodeDetailPage() {
     }
   });
 
+  const dockerBackupMutation = useMutation({
+    mutationFn: () => {
+      const containers = dockerDiscovery.data?.containers.filter((c) => selectedDockerContainers.includes(c.id)) ?? [];
+      return createDockerBackupProfile(agentId!, {
+        storage_id: dockerStorageId,
+        containers,
+        schedule: "",
+        retention: { keep_last: 7, keep_daily: 7, keep_weekly: 4, keep_monthly: 6 },
+        run_now: dockerRunNow,
+      });
+    },
+    onSuccess: (data) => {
+      toast.success(dockerRunNow ? "Docker 备份已创建并提交" : "Docker 备份策略已创建", {
+        description: data.backup_command ? `Message ID: ${data.backup_command.message_id}` : `Policy ID: ${data.policy_id}`,
+      });
+      setDockerDialogOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["policies"] });
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["commands"] });
+    },
+    onError: (error: any) => toast.error("创建 Docker 备份失败", { description: error.message }),
+  });
+
+  const dockerRestoreMutation = useMutation({
+    mutationFn: (body: { snapshot_id: string; target_path: string; start_containers: boolean }) =>
+      restoreDockerSnapshot(agentId!, {
+        snapshot_id: body.snapshot_id,
+        target_path: body.target_path,
+        start_containers: body.start_containers,
+        precheck_only: false,
+      }),
+    onSuccess: (data) => {
+      toast.success("Docker 恢复任务已提交", { description: `Message ID: ${data.message_id}` });
+      setSelectedSnapshot(null);
+      setConfirmed(false);
+      setDockerRestoreEnabled(false);
+      setDockerStartContainers(false);
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["commands"] });
+    },
+    onError: (error: any) => toast.error("发起 Docker 恢复失败", { description: error.message }),
+  });
+
   if (agentLoading) {
     return <div className="space-y-4"><Skeleton className="h-12 w-full" /><Skeleton className="h-[400px] w-full" /></div>;
   }
@@ -122,7 +186,13 @@ export function NodeDetailPage() {
     setSelectedSnapshot(s);
     setTargetPath(s.paths[0] || "");
     setConfirmed(false);
+    setDockerRestoreEnabled(false);
+    setDockerStartContainers(false);
   };
+
+  const dockerContainers = dockerDiscovery.data?.containers ?? [];
+  const selectedDockerObjects: DockerContainer[] = dockerContainers.filter((c) => selectedDockerContainers.includes(c.id));
+  const dockerBackupPaths = Array.from(new Set(selectedDockerObjects.flatMap((c) => c.mounts?.map((m) => m.source).filter(Boolean) ?? [])));
 
   return (
     <div className="space-y-6">
@@ -135,6 +205,10 @@ export function NodeDetailPage() {
           </div>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" disabled={agent.status !== "online"} onClick={() => setDockerDialogOpen(true)}>
+            <Info className="mr-2 h-4 w-4" />
+            Docker 备份
+          </Button>
           <Button disabled={backupMutation.isPending} onClick={() => setConfirmBackupOpen(true)}>
             <Play className="mr-2 h-4 w-4" />
             立即备份
@@ -416,6 +490,78 @@ export function NodeDetailPage() {
         </TabsContent>
       </Tabs>
 
+      <Dialog open={dockerDialogOpen} onOpenChange={setDockerDialogOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Docker 一键备份</DialogTitle>
+            <DialogDescription>选择容器后生成普通备份策略，并备份挂载数据与 Docker 元数据。</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            {dockerDiscovery.isLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+            ) : dockerDiscovery.error ? (
+              <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{(dockerDiscovery.error as any).message}</div>
+            ) : dockerContainers.length === 0 ? (
+              <div className="rounded border p-6 text-center text-sm text-muted-foreground">未发现运行中的 Docker 容器</div>
+            ) : (
+              <div className="max-h-64 overflow-y-auto rounded border">
+                {dockerContainers.map((container) => (
+                  <label key={container.id} className="flex items-start gap-3 border-b p-3 last:border-b-0">
+                    <Checkbox
+                      checked={selectedDockerContainers.includes(container.id)}
+                      onCheckedChange={(checked) => {
+                        setSelectedDockerContainers((current) =>
+                          checked ? [...current, container.id] : current.filter((id) => id !== container.id)
+                        );
+                      }}
+                    />
+                    <span className="min-w-0 flex-1 space-y-1">
+                      <span className="flex items-center gap-2 text-sm font-medium">
+                        {container.name}
+                        <span className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">{container.status}</span>
+                      </span>
+                      <span className="block truncate text-xs text-muted-foreground">{container.image}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {(container.mounts ?? []).map((m) => m.source).filter(Boolean).join(", ") || "无主机挂载路径"}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+            <div className="grid gap-2">
+              <Label>存储</Label>
+              <Select value={dockerStorageId} onValueChange={setDockerStorageId}>
+                <SelectTrigger><SelectValue placeholder="选择备份存储" /></SelectTrigger>
+                <SelectContent>
+                  {storage?.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="rounded border bg-muted/30 p-3 text-xs text-muted-foreground">
+              <div className="mb-1 font-medium text-foreground">将纳入备份的 Docker 路径</div>
+              {dockerBackupPaths.length > 0 ? dockerBackupPaths.join(", ") : "选择容器后显示挂载路径"}
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox checked={dockerRunNow} onCheckedChange={(checked) => setDockerRunNow(checked === true)} />
+              创建后立即备份
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDockerDialogOpen(false)}>取消</Button>
+            <Button
+              disabled={!dockerStorageId || selectedDockerContainers.length === 0 || dockerBackupMutation.isPending}
+              onClick={() => dockerBackupMutation.mutate()}
+            >
+              {dockerBackupMutation.isPending ? "提交中..." : "创建 Docker 备份"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!selectedSnapshot} onOpenChange={(open) => !open && setSelectedSnapshot(null)}>
         <DialogContent>
           <DialogHeader>
@@ -447,17 +593,33 @@ export function NodeDetailPage() {
                 我理解恢复操作可能会覆盖目标路径下的现有文件
               </label>
             </div>
+            <div className="space-y-3 rounded border p-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <Checkbox checked={dockerRestoreEnabled} onCheckedChange={(checked) => setDockerRestoreEnabled(checked === true)} />
+                按 Docker 备份恢复
+              </label>
+              {dockerRestoreEnabled && (
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Checkbox checked={dockerStartContainers} onCheckedChange={(checked) => setDockerStartContainers(checked === true)} />
+                  恢复文件后执行 Docker 启动命令
+                </label>
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSelectedSnapshot(null)}>取消</Button>
             <Button 
-              disabled={!confirmed || !targetPath || restoreMutation.isPending}
-              onClick={() => restoreMutation.mutate({ 
-                snapshot_id: selectedSnapshot!.id, 
-                target_path: targetPath 
-              })}
+              disabled={!confirmed || !targetPath || restoreMutation.isPending || dockerRestoreMutation.isPending}
+              onClick={() => {
+                const body = { snapshot_id: selectedSnapshot!.id, target_path: targetPath };
+                if (dockerRestoreEnabled) {
+                  dockerRestoreMutation.mutate({ ...body, start_containers: dockerStartContainers });
+                } else {
+                  restoreMutation.mutate(body);
+                }
+              }}
             >
-              {restoreMutation.isPending ? "提交中..." : "确认恢复"}
+              {restoreMutation.isPending || dockerRestoreMutation.isPending ? "提交中..." : "确认恢复"}
             </Button>
           </DialogFooter>
         </DialogContent>

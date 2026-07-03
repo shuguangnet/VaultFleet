@@ -139,6 +139,7 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	snapshotBrowseHandler := NewSnapshotBrowseHandler(cfg.Database, cfg.Hub)
 	restoreHandler := NewRestoreHandler(cfg.Database, cfg.Hub)
 	restoreHandler.Commands = commandService
+	dockerHandler := NewDockerHandler(cfg.Database, cfg.Hub, commandService, cfg.EventBus)
 	taskHandler := NewTaskHandler(cfg.Database, cfg.Hub)
 	taskHandler.Commands = commandService
 	taskHandler.ProgressGetter = cfg.TaskProgressGetter
@@ -177,6 +178,7 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	RegisterSnapshotRoutes(protected, snapshotHandler)
 	RegisterSnapshotBrowseRoutes(protected, snapshotBrowseHandler)
 	RegisterRestoreRoutes(protected, restoreHandler)
+	RegisterDockerRoutes(protected, dockerHandler)
 	RegisterTaskRoutes(protected, taskHandler)
 	RegisterCommandRoutes(protected, commandHandler)
 	RegisterNotificationRoutes(protected, notificationHandler)
