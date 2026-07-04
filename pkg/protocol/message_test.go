@@ -454,23 +454,36 @@ func TestDirSizeRoundTrip(t *testing.T) {
 func TestVersionInfoRoundTrip(t *testing.T) {
 	payload := VersionInfoPayload{
 		Version:    "v0.5.0",
-		GitHubRepo: "momo-z/VaultFleet",
+		GitHubRepo: "shuguangnet/VaultFleet",
 	}
 
 	_, parsed := roundTripPayload[VersionInfoPayload](t, TypeVersionInfo, payload)
 	assert.Equal(t, "v0.5.0", parsed.Version)
-	assert.Equal(t, "momo-z/VaultFleet", parsed.GitHubRepo)
+	assert.Equal(t, "shuguangnet/VaultFleet", parsed.GitHubRepo)
 }
 
 func TestUpdateAgentRoundTrip(t *testing.T) {
 	payload := UpdateAgentPayload{
 		Version:    "v0.5.0",
-		GitHubRepo: "momo-z/VaultFleet",
+		GitHubRepo: "shuguangnet/VaultFleet",
 	}
 
 	_, parsed := roundTripPayload[UpdateAgentPayload](t, TypeUpdateAgent, payload)
 	assert.Equal(t, "v0.5.0", parsed.Version)
-	assert.Equal(t, "momo-z/VaultFleet", parsed.GitHubRepo)
+	assert.Equal(t, "shuguangnet/VaultFleet", parsed.GitHubRepo)
+}
+
+func TestUpdateAgentRespRoundTrip(t *testing.T) {
+	payload := UpdateAgentRespPayload{
+		Accepted:   true,
+		Version:    "v0.5.0",
+		GitHubRepo: "shuguangnet/VaultFleet",
+	}
+
+	_, parsed := roundTripPayload[UpdateAgentRespPayload](t, TypeUpdateAgentResp, payload)
+	assert.True(t, parsed.Accepted)
+	assert.Equal(t, "v0.5.0", parsed.Version)
+	assert.Equal(t, "shuguangnet/VaultFleet", parsed.GitHubRepo)
 }
 
 func TestAllMessageTypeConstants(t *testing.T) {
@@ -497,6 +510,7 @@ func TestAllMessageTypeConstants(t *testing.T) {
 		TypeDirSizeResp,
 		TypeVersionInfo,
 		TypeUpdateAgent,
+		TypeUpdateAgentResp,
 		TypeBackupProgress,
 		TypeCancelTask,
 	}
@@ -523,12 +537,13 @@ func TestAllMessageTypeConstants(t *testing.T) {
 		"dir_size_resp",
 		"version_info",
 		"update_agent",
+		"update_agent_resp",
 		"backup_progress",
 		"cancel_task",
 	}
 
 	assert.Equal(t, expected, types)
-	assert.Len(t, types, 24)
+	assert.Len(t, types, 25)
 	seen := make(map[string]bool)
 	for _, typ := range types {
 		assert.NotEmpty(t, typ)

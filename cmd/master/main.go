@@ -137,8 +137,9 @@ func buildRuntimeWithOptions(ctx context.Context, database *db.Database, options
 	}
 	wsHandler.AgentStateUpdater = api.NewAgentStateUpdater(database)
 	wsHandler.HeartbeatStateUpdater = api.NewHeartbeatStateUpdater(database)
+	githubRepo := "shuguangnet/VaultFleet"
 	wsHandler.MasterVersion = version
-	wsHandler.GitHubRepo = "momo-z/VaultFleet"
+	wsHandler.GitHubRepo = githubRepo
 	go commandService.RunTimeoutScanner(ctx, options.commandTimeoutScanInterval)
 	bus.Subscribe(events.PolicyChanged, policyPusher.Handle)
 	router := api.NewRouter(api.RouterConfig{
@@ -149,6 +150,7 @@ func buildRuntimeWithOptions(ctx context.Context, database *db.Database, options
 		AgentWebSocket:     wsHandler.HandleWebSocket,
 		TaskProgressGetter: progressCache.Get,
 		Version:            version,
+		GitHubRepo:         githubRepo,
 		LogBuf:             logRing,
 	})
 

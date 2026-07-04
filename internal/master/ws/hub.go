@@ -154,6 +154,8 @@ func expectedResponseType(requestType string) (string, error) {
 		return protocol.TypeSnapshotBrowseResp, nil
 	case protocol.TypeCollectLogsReq:
 		return protocol.TypeCollectLogsResp, nil
+	case protocol.TypeUpdateAgent:
+		return protocol.TypeUpdateAgentResp, nil
 	default:
 		return "", errors.New("unsupported request type for response waiter")
 	}

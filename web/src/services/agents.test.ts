@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { getAgent, listAgents, normalizeAgent } from "./agents";
+import { getAgent, listAgents, normalizeAgent, updateAgent } from "./agents";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -72,5 +72,22 @@ describe("agent service", () => {
 
     await expect(listAgents()).resolves.toMatchObject([{ id: "agent-1", hostname: "host-a", arch: "arm64" }]);
     await expect(getAgent("agent-2")).resolves.toMatchObject({ id: "agent-2", last_seen: "" });
+  });
+
+  it("requests an agent update through the master API", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      data: {
+        accepted: true,
+        message_id: "msg-1",
+        version: "v0.5.13",
+      },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(updateAgent("agent-1")).resolves.toMatchObject({ accepted: true, version: "v0.5.13" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/agents/agent-1/update-agent", expect.objectContaining({
+      method: "POST",
+    }));
   });
 });

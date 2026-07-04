@@ -1049,7 +1049,7 @@ func TestHandlerHeartbeatSendsVersionInfoWhenMismatch(t *testing.T) {
 	hub := NewHub()
 	handler := NewHandler(hub, events.NewBus(), validTestAuth, noPolicy, nil)
 	handler.MasterVersion = "v2.0.0"
-	handler.GitHubRepo = "momo-z/VaultFleet"
+	handler.GitHubRepo = "shuguangnet/VaultFleet"
 	handler.HeartbeatStateUpdater = func(string, string, *time.Time, *protocol.HeartbeatPayload) error {
 		return nil
 	}
@@ -1076,14 +1076,14 @@ func TestHandlerHeartbeatSendsVersionInfoWhenMismatch(t *testing.T) {
 	payload, err := protocol.ParsePayload[protocol.VersionInfoPayload](&msg)
 	require.NoError(t, err)
 	assert.Equal(t, "v2.0.0", payload.Version)
-	assert.Equal(t, "momo-z/VaultFleet", payload.GitHubRepo)
+	assert.Equal(t, "shuguangnet/VaultFleet", payload.GitHubRepo)
 }
 
 func TestHandlerHeartbeatSkipsVersionInfoWhenMatch(t *testing.T) {
 	hub := NewHub()
 	handler := NewHandler(hub, events.NewBus(), validTestAuth, noPolicy, nil)
 	handler.MasterVersion = "v1.0.0"
-	handler.GitHubRepo = "momo-z/VaultFleet"
+	handler.GitHubRepo = "shuguangnet/VaultFleet"
 	handler.HeartbeatStateUpdater = func(string, string, *time.Time, *protocol.HeartbeatPayload) error {
 		return nil
 	}
@@ -1102,7 +1102,7 @@ func TestHandlerHeartbeatVersionInfoCooldown(t *testing.T) {
 	hub := NewHub()
 	handler := NewHandler(hub, events.NewBus(), validTestAuth, noPolicy, nil)
 	handler.MasterVersion = "v2.0.0"
-	handler.GitHubRepo = "momo-z/VaultFleet"
+	handler.GitHubRepo = "shuguangnet/VaultFleet"
 	handler.HeartbeatStateUpdater = func(string, string, *time.Time, *protocol.HeartbeatPayload) error {
 		return nil
 	}

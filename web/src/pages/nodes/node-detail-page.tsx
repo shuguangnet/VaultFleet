@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getAgent, backupNow } from "@/services/agents";
+import { getAgent, backupNow, updateAgent } from "@/services/agents";
 import { listPolicies } from "@/services/policies";
 import { copyToClipboard } from "@/lib/utils";
 import { listTasks } from "@/services/tasks";
@@ -14,7 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { DirectoryBrowser } from "@/components/directory-browser";
 import { Button } from "@/components/ui/button";
-import { Play, RotateCcw, Info, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
+import { Play, RotateCcw, Info, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, RefreshCw, UploadCloud } from "lucide-react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { toast } from "sonner";
 import { Snapshot } from "@/types/snapshot";
@@ -31,6 +31,7 @@ const COMMAND_TYPE_LABELS: Record<string, string> = {
   selective_restore_req: "恢复",
   policy_push: "策略下发",
   snapshot_list_req: "快照刷新",
+  update_agent: "Agent 更新",
 };
 
 export function NodeDetailPage() {
@@ -41,6 +42,7 @@ export function NodeDetailPage() {
   const [confirmed, setConfirmed] = useState(false);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [confirmBackupOpen, setConfirmBackupOpen] = useState(false);
+  const [confirmUpdateOpen, setConfirmUpdateOpen] = useState(false);
 
   const { data: agent, isLoading: agentLoading } = useQuery({
     queryKey: ["agent", agentId],
@@ -95,6 +97,18 @@ export function NodeDetailPage() {
     }
   });
 
+  const updateMutation = useMutation({
+    mutationFn: () => updateAgent(agentId!),
+    onSuccess: (data) => {
+      toast.success("Agent 更新请求已确认", { description: `目标版本: ${data.version}` });
+      queryClient.invalidateQueries({ queryKey: ["agent", agentId] });
+      queryClient.invalidateQueries({ queryKey: ["commands"] });
+    },
+    onError: (error: any) => {
+      toast.error("更新 Agent 失败", { description: error.message });
+    }
+  });
+
   const restoreMutation = useMutation({
     mutationFn: (body: { snapshot_id: string; target_path: string }) => 
       restoreSnapshot(agentId!, body),
@@ -134,7 +148,15 @@ export function NodeDetailPage() {
             <span>ID: {agent.id}</span>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button
+            variant="outline"
+            disabled={agent.status !== "online" || updateMutation.isPending}
+            onClick={() => setConfirmUpdateOpen(true)}
+          >
+            <UploadCloud className="mr-2 h-4 w-4" />
+            更新 Agent
+          </Button>
           <Button disabled={backupMutation.isPending} onClick={() => setConfirmBackupOpen(true)}>
             <Play className="mr-2 h-4 w-4" />
             立即备份
@@ -151,6 +173,19 @@ export function NodeDetailPage() {
             loading={backupMutation.isPending}
             variant="default"
             confirmText="立即备份"
+          />
+          <ConfirmDialog
+            open={confirmUpdateOpen}
+            onOpenChange={setConfirmUpdateOpen}
+            title="确认更新 Agent？"
+            description={`将请求节点 ${agent.name} 更新到当前 Master 版本。更新过程中 Agent 会下载新二进制并重启。`}
+            onConfirm={() => {
+              setConfirmUpdateOpen(false);
+              updateMutation.mutate();
+            }}
+            loading={updateMutation.isPending}
+            variant="default"
+            confirmText="更新 Agent"
           />
         </div>
       </div>

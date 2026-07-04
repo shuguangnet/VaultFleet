@@ -268,6 +268,37 @@ func TestHub_SendAndWaitReturnsMatchingCollectLogsResponse(t *testing.T) {
 	assert.False(t, hub.HasWaiter("agent-1", "logs-1"))
 }
 
+func TestHub_SendAndWaitReturnsMatchingUpdateAgentResponse(t *testing.T) {
+	hub := NewHub()
+	clientConn := addTestWebSocketAgent(t, hub, "agent-1")
+	request := protocol.Message{
+		Type:    protocol.TypeUpdateAgent,
+		ID:      "update-1",
+		Payload: json.RawMessage(`{"version":"v0.5.13"}`),
+	}
+	response := protocol.Message{
+		Type:    protocol.TypeUpdateAgentResp,
+		ID:      "update-1",
+		Payload: json.RawMessage(`{"accepted":true,"version":"v0.5.13"}`),
+	}
+
+	respCh, err := hub.SendAndWait("agent-1", request, 500*time.Millisecond)
+	require.NoError(t, err)
+	var sent protocol.Message
+	require.NoError(t, clientConn.ReadJSON(&sent))
+	assert.Equal(t, request, sent)
+
+	assert.True(t, hub.HandleResponse("agent-1", response))
+
+	select {
+	case got := <-respCh:
+		assert.Equal(t, response, got)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for update response")
+	}
+	assert.False(t, hub.HasWaiter("agent-1", "update-1"))
+}
+
 func TestHub_SendAndWaitReturnsMatchingSnapshotBrowseResponse(t *testing.T) {
 	hub := NewHub()
 	clientConn := addTestWebSocketAgent(t, hub, "agent-1")

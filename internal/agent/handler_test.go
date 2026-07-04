@@ -2641,7 +2641,7 @@ func TestHandlerVersionInfoTriggersUpdate(t *testing.T) {
 	})
 	msg, err := protocol.NewMessage(protocol.TypeVersionInfo, protocol.VersionInfoPayload{
 		Version:    "v2.0.0",
-		GitHubRepo: "momo-z/VaultFleet",
+		GitHubRepo: "shuguangnet/VaultFleet",
 	})
 	require.NoError(t, err)
 
@@ -2656,7 +2656,7 @@ func TestHandlerVersionInfoTriggersUpdate(t *testing.T) {
 	updater.mu.Lock()
 	defer updater.mu.Unlock()
 	assert.Equal(t, "v2.0.0", updater.calls[0].version)
-	assert.Equal(t, "momo-z/VaultFleet", updater.calls[0].repo)
+	assert.Equal(t, "shuguangnet/VaultFleet", updater.calls[0].repo)
 }
 
 func TestHandlerVersionInfoSkipsWhenSameVersion(t *testing.T) {
@@ -2668,7 +2668,7 @@ func TestHandlerVersionInfoSkipsWhenSameVersion(t *testing.T) {
 	})
 	msg, err := protocol.NewMessage(protocol.TypeVersionInfo, protocol.VersionInfoPayload{
 		Version:    "v2.0.0",
-		GitHubRepo: "momo-z/VaultFleet",
+		GitHubRepo: "shuguangnet/VaultFleet",
 	})
 	require.NoError(t, err)
 
@@ -2694,18 +2694,27 @@ func TestHandlerVersionInfoSkipsWhenNoUpdater(t *testing.T) {
 
 func TestHandlerUpdateAgentTriggersUpdateEvenWhenSameVersion(t *testing.T) {
 	updater := &recordingUpdater{}
+	sent := &sentMessages{}
 	handler := NewHandler(HandlerConfig{
 		PolicyStore:  policy.NewStore(""),
 		AgentVersion: "v2.0.0",
 		Updater:      updater,
+		SendFunc:     sent.send,
 	})
 	msg, err := protocol.NewMessage(protocol.TypeUpdateAgent, protocol.UpdateAgentPayload{
 		Version:    "v2.0.0",
-		GitHubRepo: "momo-z/VaultFleet",
+		GitHubRepo: "shuguangnet/VaultFleet",
 	})
 	require.NoError(t, err)
 
 	handler.Handle(*msg)
+
+	ack := waitForMessageType(t, sent, protocol.TypeUpdateAgentResp, time.Second)
+	assert.Equal(t, msg.ID, ack.ID)
+	payload, err := protocol.ParsePayload[protocol.UpdateAgentRespPayload](&ack)
+	require.NoError(t, err)
+	assert.True(t, payload.Accepted)
+	assert.Equal(t, "v2.0.0", payload.Version)
 
 	require.Eventually(t, func() bool {
 		updater.mu.Lock()
@@ -2715,4 +2724,25 @@ func TestHandlerUpdateAgentTriggersUpdateEvenWhenSameVersion(t *testing.T) {
 	updater.mu.Lock()
 	defer updater.mu.Unlock()
 	assert.Equal(t, "v2.0.0", updater.calls[0].version)
+}
+
+func TestHandlerUpdateAgentRespondsWhenUpdaterDisabled(t *testing.T) {
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: policy.NewStore(""),
+		SendFunc:    sent.send,
+	})
+	msg, err := protocol.NewMessage(protocol.TypeUpdateAgent, protocol.UpdateAgentPayload{
+		Version: "v2.0.0",
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	ack := waitForMessageType(t, sent, protocol.TypeUpdateAgentResp, time.Second)
+	assert.Equal(t, msg.ID, ack.ID)
+	payload, err := protocol.ParsePayload[protocol.UpdateAgentRespPayload](&ack)
+	require.NoError(t, err)
+	assert.False(t, payload.Accepted)
+	assert.Equal(t, "agent self-update is disabled", payload.Error)
 }

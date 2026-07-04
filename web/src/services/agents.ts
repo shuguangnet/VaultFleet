@@ -12,6 +12,8 @@ export const browseAgent = (id: string, body: BrowseRequest) => apiPost<BrowseRe
 export const dirSizeAgent = (id: string, body: DirSizeRequest) => apiPost<DirSizeResponse>(`/api/agents/${id}/dir-size`, body);
 export const discoverDockerAgent = (id: string) => apiPost<DockerDiscoveryResponse>(`/api/agents/${id}/docker/discover`);
 export const backupNow = (id: string) => apiPost<{ command_id: string; message_id: string }>(`/api/agents/${id}/backup-now`);
+export const updateAgent = (id: string, body: { version?: string; github_repo?: string } = {}) =>
+  apiPost<{ accepted: boolean; message_id: string; version: string; github_repo?: string }>(`/api/agents/${id}/update-agent`, body);
 
 export function normalizeAgent(agent: ApiAgent): Agent {
   const systemInfo = parseSystemInfo(agent.system_info);

@@ -1422,18 +1422,38 @@ func (h *Handler) handleVersionInfo(msg protocol.Message) {
 }
 
 func (h *Handler) handleUpdateAgent(msg protocol.Message) {
-	if h.updater == nil {
-		return
-	}
 	info, err := protocol.ParsePayload[protocol.UpdateAgentPayload](&msg)
 	if err != nil {
 		log.Printf("parse update agent failed: %v", err)
+		h.sendUpdateAgentResp(msg.ID, false, "", "", err.Error())
 		return
 	}
+	if h.updater == nil {
+		h.sendUpdateAgentResp(msg.ID, false, info.Version, info.GitHubRepo, "agent self-update is disabled")
+		return
+	}
+	h.sendUpdateAgentResp(msg.ID, true, info.Version, info.GitHubRepo, "")
 	log.Printf("master requested update to %s", info.Version)
 	go func() {
 		if err := h.updater.Update(info.Version, info.GitHubRepo); err != nil {
 			log.Printf("self-update to %s failed: %v", info.Version, err)
 		}
 	}()
+}
+
+func (h *Handler) sendUpdateAgentResp(messageID string, accepted bool, version string, githubRepo string, errorText string) {
+	resp, err := protocol.NewMessage(protocol.TypeUpdateAgentResp, protocol.UpdateAgentRespPayload{
+		Accepted:   accepted,
+		Version:    version,
+		GitHubRepo: githubRepo,
+		Error:      errorText,
+	})
+	if err != nil {
+		log.Printf("create update agent response failed: %v", err)
+		return
+	}
+	resp.ID = messageID
+	if err := h.sendMessage(*resp); err != nil {
+		log.Printf("send update agent response failed: %v", err)
+	}
 }

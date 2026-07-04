@@ -36,6 +36,7 @@ type RouterConfig struct {
 	AgentWebSocket     gin.HandlerFunc
 	TaskProgressGetter func(agentID string, messageID string) *protocol.BackupProgressPayload
 	Version            string
+	GitHubRepo         string
 	LogBuf             *logbuf.RingBuffer
 }
 
@@ -129,6 +130,9 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 
 	authHandler := NewAuthHandler(cfg.Database)
 	agentHandler := NewAgentHandler(cfg.Database)
+	agentHandler.Hub = cfg.Hub
+	agentHandler.Version = cfg.Version
+	agentHandler.GitHubRepo = cfg.GitHubRepo
 	storageHandler := NewConfigHandler(cfg.Database)
 	storageHandler.EventBus = cfg.EventBus
 	storageHandler.ProviderLoader = storagecheck.NewProviderLoader()
@@ -170,6 +174,7 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	protected.GET("/agents/:id", agentHandler.Get)
 	protected.DELETE("/agents/:id", agentHandler.Delete)
 	protected.POST("/agents/:id/regenerate-token", agentHandler.RegenerateToken)
+	protected.POST("/agents/:id/update-agent", agentHandler.UpdateAgent)
 	protected.GET("/agents/:id/install-token", agentHandler.GetInstallToken)
 	RegisterStorageRoutes(protected, storageHandler)
 	RegisterPolicyRoutes(protected, policyHandler)

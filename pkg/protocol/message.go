@@ -32,6 +32,7 @@ const (
 	TypeDirSizeResp         = "dir_size_resp"
 	TypeVersionInfo         = "version_info"
 	TypeUpdateAgent         = "update_agent"
+	TypeUpdateAgentResp     = "update_agent_resp"
 	TypeBackupProgress      = "backup_progress"
 	TypeCancelTask          = "cancel_task"
 )
@@ -348,4 +349,11 @@ type VersionInfoPayload struct {
 type UpdateAgentPayload struct {
 	Version    string `json:"version"`
 	GitHubRepo string `json:"github_repo"`
+}
+
+type UpdateAgentRespPayload struct {
+	Accepted   bool   `json:"accepted"`
+	Version    string `json:"version,omitempty"`
+	GitHubRepo string `json:"github_repo,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
