@@ -1,16 +1,17 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listPolicies, createPolicy, updatePolicy, deletePolicy } from "@/services/policies";
-import { listAgents, backupNow } from "@/services/agents";
+import { listAgents, backupNow, discoverDockerAgent } from "@/services/agents";
 import { listStorage } from "@/services/storage";
 
-import { BackupPolicy, PolicyInput, RetentionConfig } from "@/types/policy";
+import { BackupPolicy, BackupSource, DockerContainerBackupSource, PolicyInput, RetentionConfig } from "@/types/policy";
+import { DockerContainer } from "@/types/api";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Settings2, Trash2, MoreHorizontal, Play, ChevronDown } from "lucide-react";
+import { Plus, Settings2, Trash2, MoreHorizontal, Play, ChevronDown, RefreshCw, AlertCircle, Box } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -115,6 +116,7 @@ export function defaultPolicyInput(): PolicyInput {
     },
     rclone_args: {},
     timeout_hours: 6,
+    backup_sources: [],
   };
 }
 
@@ -140,6 +142,52 @@ export function submitRcloneArgs(args: Record<string, string> | undefined, clear
     return cleaned;
   }
   return {};
+}
+
+function dockerSourcesFromPolicy(policy: BackupPolicy): BackupSource[] {
+  return (policy.backup_sources ?? []).filter((source) => source.type === "docker_container");
+}
+
+function buildBackupSources(input: PolicyInput): BackupSource[] {
+  const pathSources = input.backup_dirs
+    .map((path) => path.trim())
+    .filter(Boolean)
+    .map((path) => ({ type: "path" as const, path }));
+  const dockerSources = (input.backup_sources ?? []).filter((source) => source.type === "docker_container");
+  return [...pathSources, ...dockerSources];
+}
+
+function dockerSourceKey(source: DockerContainerBackupSource): string {
+  if (source.container_id) return `id:${source.container_id}`;
+  if (source.compose_project && source.compose_service) return `compose:${source.compose_project}:${source.compose_service}`;
+  return `name:${source.name ?? ""}`;
+}
+
+function containerKey(container: DockerContainer): string {
+  const compose = container.compose ?? {};
+  if (container.id) return `id:${container.id}`;
+  if (compose.project && compose.service) return `compose:${compose.project}:${compose.service}`;
+  return `name:${container.names?.[0] ?? ""}`;
+}
+
+function sourceFromContainer(container: DockerContainer): BackupSource {
+  const compose = container.compose ?? {};
+  return {
+    type: "docker_container",
+    docker_container: {
+      container_id: container.id,
+      name: container.names?.[0] ?? "",
+      image: container.image,
+      labels: container.labels ?? {},
+      compose_project: compose.project,
+      compose_service: compose.service,
+      compose_working_dir: compose.working_dir,
+      compose_config_files: compose.config_files ?? [],
+      include_bind_mounts: true,
+      include_volumes: true,
+      include_compose_files: true,
+    },
+  };
 }
 
 function detectRetentionPreset(retention: RetentionConfig): string {
@@ -245,6 +293,7 @@ export function PoliciesPage() {
       retention: policy.retention,
       rclone_args: policy.rclone_args || {},
       timeout_hours: policy.timeout_hours || 6,
+      backup_sources: dockerSourcesFromPolicy(policy),
     });
     setRetentionPreset(detectRetentionPreset(policy.retention));
     setAdvancedTransferOpen(!!cleanRcloneArgs(policy.rclone_args));
@@ -265,6 +314,7 @@ export function PoliciesPage() {
     const submitData = {
       ...formData,
       repo_path: "vaultfleet/" + formData.repo_path,
+      backup_sources: buildBackupSources(formData),
       rclone_args: submitRcloneArgs(formData.rclone_args, !!editingId),
       timeout_hours: formData.timeout_hours || 6,
     };
@@ -277,6 +327,19 @@ export function PoliciesPage() {
 
   const selectedAgent = agents?.find(a => a.id === formData.agent_id);
   const isAgentOnline = selectedAgent?.status === "online";
+  const dockerCapable = !!selectedAgent?.capabilities?.includes("docker_workload_backups");
+  const selectedDockerSources = (formData.backup_sources ?? []).filter((source) => source.type === "docker_container");
+  const selectedDockerKeys = new Set(
+    selectedDockerSources
+      .map((source) => source.docker_container)
+      .filter((source): source is DockerContainerBackupSource => !!source)
+      .map(dockerSourceKey),
+  );
+  const dockerDiscoveryQuery = useQuery({
+    queryKey: ["agent-docker", formData.agent_id],
+    queryFn: () => discoverDockerAgent(formData.agent_id),
+    enabled: isDrawerOpen && !!formData.agent_id && isAgentOnline && dockerCapable,
+  });
 
   return (
     <div className="space-y-6">
@@ -306,7 +369,7 @@ export function PoliciesPage() {
                       value={formData.agent_id}
                       onValueChange={(val) => {
                         const agent = agents?.find(a => a.id === val);
-                        const updates: Partial<PolicyInput> = { agent_id: val };
+                        const updates: Partial<PolicyInput> = { agent_id: val, backup_sources: [] };
                         if (!editingId && agent) {
                           updates.repo_path = agent.name;
                         }
@@ -378,9 +441,13 @@ export function PoliciesPage() {
                 )}
 
                 <div className="space-y-4">
-                  <Label htmlFor="backup_dirs">备份目录</Label>
+                  <div>
+                    <Label htmlFor="backup_dirs">备份来源</Label>
+                    <p className="text-xs text-muted-foreground mt-1">选择宿主机目录，或从在线节点发现 Docker 容器。</p>
+                  </div>
                   <Textarea
                     id="backup_dirs"
+                    aria-label="备份目录"
                     value={formData.backup_dirs.join("\n")}
                     onChange={(e) => setFormData({ ...formData, backup_dirs: e.target.value.split("\n").filter(Boolean) })}
                     placeholder="每行一个路径，如: /etc"
@@ -405,6 +472,107 @@ export function PoliciesPage() {
                       ) : (
                         <div className="text-xs p-4 border border-dashed rounded text-center text-muted-foreground">
                           节点离线，无法使用文件浏览器。请手动输入路径。
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {formData.agent_id && (
+                    <div className="space-y-2 rounded-md border p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <Box className="h-4 w-4 text-muted-foreground" />
+                          <div>
+                            <div className="text-sm font-medium">Docker 容器</div>
+                            <div className="text-xs text-muted-foreground">已选择 {selectedDockerSources.length} 个容器</div>
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => dockerDiscoveryQuery.refetch()}
+                          disabled={!isAgentOnline || !dockerCapable || dockerDiscoveryQuery.isFetching}
+                        >
+                          <RefreshCw className={`mr-2 h-4 w-4 ${dockerDiscoveryQuery.isFetching ? "animate-spin" : ""}`} />
+                          刷新
+                        </Button>
+                      </div>
+
+                      {!isAgentOnline && (
+                        <div className="text-xs rounded border border-dashed p-3 text-muted-foreground">节点离线，无法发现 Docker 容器。</div>
+                      )}
+                      {isAgentOnline && !dockerCapable && (
+                        <div className="text-xs rounded border border-dashed p-3 text-muted-foreground">当前 Agent 未上报 Docker 备份能力。</div>
+                      )}
+                      {isAgentOnline && dockerCapable && dockerDiscoveryQuery.error && (
+                        <div className="flex gap-2 rounded border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                          <span>{(dockerDiscoveryQuery.error as Error).message}</span>
+                        </div>
+                      )}
+                      {isAgentOnline && dockerCapable && dockerDiscoveryQuery.data?.error && (
+                        <div className="flex gap-2 rounded border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                          <span>{dockerDiscoveryQuery.data.error}</span>
+                        </div>
+                      )}
+                      {isAgentOnline && dockerCapable && dockerDiscoveryQuery.data?.available && (
+                        <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                          {dockerDiscoveryQuery.data.containers.length === 0 ? (
+                            <div className="text-xs rounded border border-dashed p-3 text-muted-foreground">未发现 Docker 容器。</div>
+                          ) : (
+                            dockerDiscoveryQuery.data.containers.map((container) => {
+                              const key = containerKey(container);
+                              const checked = selectedDockerKeys.has(key);
+                              const compose = container.compose;
+                              return (
+                                <label key={container.id} className={`block rounded-md border p-3 ${container.selectable ? "cursor-pointer hover:bg-muted/40" : "opacity-70"}`}>
+                                  <div className="flex items-start gap-3">
+                                    <Checkbox
+                                      checked={checked}
+                                      disabled={!container.selectable}
+                                      onCheckedChange={(value) => {
+                                        const dockerSources = selectedDockerSources.filter((source) => {
+                                          const dockerSource = source.docker_container;
+                                          return dockerSource && dockerSourceKey(dockerSource) !== key;
+                                        });
+                                        if (value) {
+                                          dockerSources.push(sourceFromContainer(container));
+                                        }
+                                        setFormData({ ...formData, backup_sources: dockerSources });
+                                      }}
+                                    />
+                                    <div className="min-w-0 flex-1 space-y-1">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span className="text-sm font-medium">{container.names?.[0] || container.id.slice(0, 12)}</span>
+                                        <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{container.state}</span>
+                                      </div>
+                                      <div className="truncate text-xs text-muted-foreground">{container.image}</div>
+                                      {(compose?.project || compose?.service) && (
+                                        <div className="text-xs text-muted-foreground">
+                                          {compose.project || "-"} / {compose.service || "-"}
+                                        </div>
+                                      )}
+                                      <div className="space-y-0.5">
+                                        {container.mounts.slice(0, 3).map((mount, index) => (
+                                          <div key={`${mount.destination}-${index}`} className="truncate text-[11px] text-muted-foreground">
+                                            {mount.type}: {mount.source || mount.name || "-"} → {mount.destination}
+                                          </div>
+                                        ))}
+                                        {container.mounts.length > 3 && (
+                                          <div className="text-[11px] text-muted-foreground">另有 {container.mounts.length - 3} 个挂载</div>
+                                        )}
+                                      </div>
+                                      {(container.warnings ?? []).length > 0 && (
+                                        <div className="text-[11px] text-amber-600">{container.warnings?.join("；")}</div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </label>
+                              );
+                            })
+                          )}
                         </div>
                       )}
                     </div>

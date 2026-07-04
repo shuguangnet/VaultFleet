@@ -330,6 +330,13 @@ func (s *Service) CompleteTaskResultWith(ctx context.Context, agentID string, me
 			"finished_at": finishedAt,
 			"updated_at":  now,
 		}
+		if result.Docker != nil {
+			rawDocker, err := json.Marshal(result.Docker)
+			if err != nil {
+				return fmt.Errorf("marshal docker metadata: %w", err)
+			}
+			taskUpdates["docker"] = string(rawDocker)
+		}
 		if startedAt != nil {
 			taskUpdates["started_at"] = startedAt
 		}

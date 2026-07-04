@@ -58,7 +58,7 @@ export const STORAGE_TEMPLATES: Record<string, { name: string; defaults: Record<
       { key: "tenant_domain", label: "Project Domain (项目域)" },
       { key: "auth_version", label: "Auth Version (认证版本)" },
       { key: "region", label: "Region (区域)" },
-      { key: "container", label: "Container (容器)" },
+      { key: "container", label: "Storage Container (存储容器)" },
     ],
   },
   sftp: {

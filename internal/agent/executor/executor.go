@@ -12,13 +12,14 @@ import (
 )
 
 type TaskResult struct {
-	Type       string         `json:"type"`
-	Status     string         `json:"status"`
-	DurationMs int64          `json:"duration_ms"`
-	SnapshotID string         `json:"snapshot_id,omitempty"`
-	RepoSize   int64          `json:"repo_size,omitempty"`
-	Snapshots  []SnapshotInfo `json:"snapshots,omitempty"`
-	ErrorLog   string         `json:"error_log,omitempty"`
+	Type       string                         `json:"type"`
+	Status     string                         `json:"status"`
+	DurationMs int64                          `json:"duration_ms"`
+	SnapshotID string                         `json:"snapshot_id,omitempty"`
+	RepoSize   int64                          `json:"repo_size,omitempty"`
+	Snapshots  []SnapshotInfo                 `json:"snapshots,omitempty"`
+	ErrorLog   string                         `json:"error_log,omitempty"`
+	Docker     *protocol.DockerBackupMetadata `json:"docker,omitempty"`
 }
 
 func (r TaskResult) ToProtocol(agentID string, startedAt time.Time) protocol.TaskResultPayload {
@@ -43,6 +44,7 @@ func (r TaskResult) ToProtocol(agentID string, startedAt time.Time) protocol.Tas
 		StartedAt:  startedAt,
 		FinishedAt: startedAt.Add(time.Duration(r.DurationMs) * time.Millisecond),
 		Snapshots:  snapshots,
+		Docker:     r.Docker,
 	}
 }
 

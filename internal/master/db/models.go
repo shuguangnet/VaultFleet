@@ -63,6 +63,7 @@ type BackupPolicy struct {
 	RepoPath        string    `gorm:"type:text" json:"repo_path"`
 	ResticPassword  string    `gorm:"type:text" json:"-"`
 	BackupDirs      string    `gorm:"type:text" json:"backup_dirs"`
+	BackupSources   string    `gorm:"type:text" json:"backup_sources"`
 	ExcludePatterns string    `gorm:"type:text" json:"exclude_patterns"`
 	Schedule        string    `gorm:"type:text" json:"schedule"`
 	Retention       string    `gorm:"type:text" json:"retention"`
@@ -117,6 +118,7 @@ type TaskHistory struct {
 	CommandID  string     `gorm:"type:text;index" json:"command_id,omitempty"`
 	PolicyID   string     `gorm:"type:text;index" json:"policy_id,omitempty"`
 	StorageID  string     `gorm:"type:text;index" json:"storage_id,omitempty"`
+	Docker     string     `gorm:"type:text" json:"docker,omitempty"`
 	StartedAt  *time.Time `json:"started_at"`
 	FinishedAt *time.Time `json:"finished_at"`
 	DurationMs int64      `json:"duration_ms"`

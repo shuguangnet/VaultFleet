@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	agentdocker "vaultfleet/internal/agent/docker"
 	"vaultfleet/internal/agent/executor"
 	"vaultfleet/internal/agent/policy"
 	agentscheduler "vaultfleet/internal/agent/scheduler"
@@ -2214,6 +2215,79 @@ func TestHandlerDirBrowseReqSendsResponseWithSameID(t *testing.T) {
 	assert.Equal(t, []protocol.DirEntry{{Path: "/etc", Type: "dir", Size: 4096}}, payload.Entries)
 }
 
+func TestHandlerDockerDiscoveryReqSendsResponseWithSameID(t *testing.T) {
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{
+		SendFunc:  sent.send,
+		DockerAPI: fakeAgentDockerAPI{containers: []agentdocker.ContainerSummary{{ID: "container-1", Names: []string{"/db"}, Image: "postgres:16", State: "running", Mounts: []agentdocker.Mount{{Type: "volume", Name: "db-data", Source: "/var/lib/docker/volumes/db-data/_data", Destination: "/data", RW: true}}}}},
+	})
+
+	req, err := protocol.NewMessage(protocol.TypeDockerDiscoveryReq, protocol.DockerDiscoveryReqPayload{})
+	require.NoError(t, err)
+	handler.Handle(*req)
+
+	messages := sent.snapshot()
+	require.Len(t, messages, 1)
+	assert.Equal(t, protocol.TypeDockerDiscoveryResp, messages[0].Type)
+	assert.Equal(t, req.ID, messages[0].ID)
+	payload, err := protocol.ParsePayload[protocol.DockerDiscoveryRespPayload](&messages[0])
+	require.NoError(t, err)
+	assert.True(t, payload.Available)
+	require.Len(t, payload.Containers, 1)
+	assert.Equal(t, "container-1", payload.Containers[0].ID)
+}
+
+func TestHandlerBackupResolvesDockerSourcesBeforeRunner(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	configDir := filepath.Join(t.TempDir(), "config")
+	mountPath := filepath.Join(t.TempDir(), "data")
+	require.NoError(t, os.MkdirAll(mountPath, 0o755))
+	sent := &sentMessages{}
+	var runnerConfig executor.ExecutorConfig
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   configDir,
+		Scheduler:   &recordingScheduler{},
+		SendFunc:    sent.send,
+		DockerAPI: fakeAgentDockerAPI{
+			containers: []agentdocker.ContainerSummary{{ID: "container-1", Names: []string{"/db"}}},
+			inspects: map[string]agentdocker.ContainerInspect{
+				"container-1": fakeInspect("container-1", "/db", "postgres:16", "running", []agentdocker.Mount{{Type: "bind", Source: mountPath, Destination: "/data", RW: true}}),
+			},
+		},
+		BackupRunnerWithProgress: func(_ context.Context, cfg executor.ExecutorConfig, _ executor.ProgressCallback) executor.TaskResult {
+			runnerConfig = cfg
+			return executor.TaskResult{Type: "backup", Status: "success", DurationMs: 1}
+		},
+	})
+	push, err := protocol.NewMessage(protocol.TypePolicyPush, protocol.PolicyPushPayload{
+		AgentID: "agent-1",
+		Storage: protocol.StorageConfig{
+			RcloneType:   "s3",
+			RcloneConfig: map[string]string{"provider": "Other"},
+			RepoPath:     "bucket/agent-1",
+		},
+		BackupDirs: []string{"/srv"},
+		BackupSources: []protocol.BackupSource{
+			{Type: protocol.BackupSourceTypePath, Path: "/srv"},
+			{Type: protocol.BackupSourceTypeDockerContainer, DockerContainer: &protocol.DockerContainerBackupSource{ContainerID: "container-1", IncludeBindMounts: true}},
+		},
+	})
+	require.NoError(t, err)
+	handler.Handle(*push)
+
+	backup, err := protocol.NewMessage(protocol.TypeBackupNow, protocol.BackupNowPayload{AgentID: "agent-1"})
+	require.NoError(t, err)
+	handler.Handle(*backup)
+	result := waitForMessageType(t, sent, protocol.TypeTaskResult, time.Second)
+	assert.Equal(t, []string{"/srv", mountPath}, runnerConfig.BackupDirs)
+	payload, err := protocol.ParsePayload[protocol.TaskResultPayload](&result)
+	require.NoError(t, err)
+	require.NotNil(t, payload.Docker)
+	require.Len(t, payload.Docker.Sources, 1)
+	assert.Equal(t, []string{mountPath}, payload.Docker.Sources[0].ResolvedPaths)
+}
+
 func TestHandlerDirBrowseReqNormalizesInvalidDepth(t *testing.T) {
 	var browsedDepth int
 	handler := NewHandler(HandlerConfig{
@@ -2450,6 +2524,39 @@ func messageTypes(msgs []protocol.Message) []string {
 		types[i] = msg.Type
 	}
 	return types
+}
+
+type fakeAgentDockerAPI struct {
+	pingErr    error
+	listErr    error
+	containers []agentdocker.ContainerSummary
+	inspects   map[string]agentdocker.ContainerInspect
+}
+
+func (f fakeAgentDockerAPI) Ping(context.Context) error {
+	return f.pingErr
+}
+
+func (f fakeAgentDockerAPI) ListContainers(context.Context) ([]agentdocker.ContainerSummary, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.containers, nil
+}
+
+func (f fakeAgentDockerAPI) InspectContainer(_ context.Context, id string) (agentdocker.ContainerInspect, error) {
+	inspect, ok := f.inspects[id]
+	if !ok {
+		return agentdocker.ContainerInspect{}, errors.New("missing inspect")
+	}
+	return inspect, nil
+}
+
+func fakeInspect(id string, name string, image string, state string, mounts []agentdocker.Mount) agentdocker.ContainerInspect {
+	inspect := agentdocker.ContainerInspect{ID: id, Name: name, Mounts: mounts}
+	inspect.Config.Image = image
+	inspect.State.Status = state
+	return inspect
 }
 
 func assertNotClosed(t *testing.T, ch <-chan struct{}, timeout time.Duration) {

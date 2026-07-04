@@ -144,6 +144,7 @@ func TestCollectLogs_ReturnsNoSourceError(t *testing.T) {
 
 func TestDetectLogSource_Fallback(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("PATH", dir)
 	logFile := filepath.Join(dir, "agent.log")
 	require.NoError(t, os.WriteFile(logFile, []byte("test\n"), 0o644))
 

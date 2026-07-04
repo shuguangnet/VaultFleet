@@ -222,6 +222,74 @@ func TestDirSizeRequiresPath(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestDiscoverDockerHappyRelay(t *testing.T) {
+	setup := setupBrowseAPI(t)
+	agent := createBrowseAgent(t, setup.database, "online")
+	markBrowseAgentCapabilities(t, setup.database, agent.ID, []string{protocol.CapabilityDockerWorkloadBackups})
+	setup.hub.Add(agent.ID, nil)
+	setup.handler.timeout = time.Second
+	setup.handler.sendAndWait = func(agentID string, msg protocol.Message, timeout time.Duration) (<-chan protocol.Message, error) {
+		assert.Equal(t, agent.ID, agentID)
+		assert.Equal(t, protocol.TypeDockerDiscoveryReq, msg.Type)
+		assert.Equal(t, time.Second, timeout)
+		resp, err := protocol.NewMessage(protocol.TypeDockerDiscoveryResp, protocol.DockerDiscoveryRespPayload{
+			Available: true,
+			Containers: []protocol.DockerContainer{
+				{ID: "container-1", Names: []string{"db"}, Image: "postgres:16", State: "running", Selectable: true},
+			},
+		})
+		require.NoError(t, err)
+		resp.ID = msg.ID
+		ch := make(chan protocol.Message, 1)
+		ch <- *resp
+		close(ch)
+		return ch, nil
+	}
+
+	w := postBrowseJSON(t, setup.router, "/api/agents/"+agent.ID+"/docker/discover", nil)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	raw := parseJSON(t, w)
+	data, err := json.Marshal(raw["data"])
+	require.NoError(t, err)
+	var body protocol.DockerDiscoveryRespPayload
+	require.NoError(t, json.Unmarshal(data, &body))
+	assert.True(t, body.Available)
+	require.Len(t, body.Containers, 1)
+	assert.Equal(t, "container-1", body.Containers[0].ID)
+}
+
+func TestDiscoverDockerRejectsUnsupportedAgent(t *testing.T) {
+	setup := setupBrowseAPI(t)
+	agent := createBrowseAgent(t, setup.database, "online")
+	setup.hub.Add(agent.ID, nil)
+
+	w := postBrowseJSON(t, setup.router, "/api/agents/"+agent.ID+"/docker/discover", nil)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	body := parseJSON(t, w)
+	assert.Equal(t, "agent does not support Docker workload backups", body["error"])
+}
+
+func TestDiscoverDockerRejectsOfflineAgent(t *testing.T) {
+	setup := setupBrowseAPI(t)
+	agent := createBrowseAgent(t, setup.database, "offline")
+	markBrowseAgentCapabilities(t, setup.database, agent.ID, []string{protocol.CapabilityDockerWorkloadBackups})
+
+	w := postBrowseJSON(t, setup.router, "/api/agents/"+agent.ID+"/docker/discover", nil)
+
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	body := parseJSON(t, w)
+	assert.Equal(t, "agent offline", body["error"])
+}
+
+func markBrowseAgentCapabilities(t *testing.T, database *db.Database, agentID string, capabilities []string) {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{"capabilities": capabilities})
+	require.NoError(t, err)
+	require.NoError(t, database.DB.Model(&db.Agent{}).Where("id = ?", agentID).Update("system_info", string(data)).Error)
+}
+
 func TestDirSizeTimeout(t *testing.T) {
 	setup := setupBrowseAPI(t)
 	agent := createBrowseAgent(t, setup.database, "online")

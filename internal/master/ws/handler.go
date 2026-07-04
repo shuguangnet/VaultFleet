@@ -238,7 +238,7 @@ func (h *Handler) dispatch(agentID string, msg protocol.Message) {
 				h.ProgressCache.Set(agentID, msg.ID, progress)
 			}
 		}
-	case protocol.TypeDirBrowseResp, protocol.TypeDirSizeResp, protocol.TypeSnapshotListResp, protocol.TypeSnapshotBrowseResp, protocol.TypeCollectLogsResp:
+	case protocol.TypeDirBrowseResp, protocol.TypeDirSizeResp, protocol.TypeDockerDiscoveryResp, protocol.TypeSnapshotListResp, protocol.TypeSnapshotBrowseResp, protocol.TypeCollectLogsResp:
 		handled := h.hub.HandleResponse(agentID, msg)
 		if !handled && msg.Type == protocol.TypeSnapshotListResp && h.SnapshotListResponseProcessor != nil {
 			if err := h.SnapshotListResponseProcessor(agentID, msg); err != nil {

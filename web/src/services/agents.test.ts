@@ -10,7 +10,7 @@ describe("agent service", () => {
       name: "Debian-AMD64",
       status: "online",
       last_seen_at: "2026-05-21T05:20:52.803465124Z",
-      system_info: "{\"hostname\":\"ser4885257919\",\"os\":\"linux\",\"arch\":\"amd64\",\"version\":\"0.1.0\"}",
+      system_info: "{\"hostname\":\"ser4885257919\",\"os\":\"linux\",\"arch\":\"amd64\",\"version\":\"0.1.0\",\"capabilities\":[\"docker_workload_backups\"]}",
       created_at: "2026-05-21T05:17:11Z",
     })).toEqual({
       id: "agent-1",
@@ -21,6 +21,7 @@ describe("agent service", () => {
       hostname: "ser4885257919",
       os: "linux",
       arch: "amd64",
+      capabilities: ["docker_workload_backups"],
       created_at: "2026-05-21T05:17:11Z",
     });
   });
@@ -40,6 +41,7 @@ describe("agent service", () => {
     expect(normalized.os).toBe("");
     expect(normalized.arch).toBe("");
     expect(normalized.version).toBe("");
+    expect(normalized.capabilities).toEqual([]);
   });
 
   it("normalizes list and detail responses from the API", async () => {

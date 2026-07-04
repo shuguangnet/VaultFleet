@@ -357,8 +357,12 @@ func policyPushPayload(database *db.Database, policy db.BackupPolicy, storage db
 		rclonePassObscured = true
 	}
 
-	var backupDirs []string
-	if err := json.Unmarshal([]byte(policy.BackupDirs), &backupDirs); err != nil {
+	backupDirs, err := policyBackupDirs(policy)
+	if err != nil {
+		return protocol.PolicyPushPayload{}, err
+	}
+	backupSources, err := policyBackupSources(policy)
+	if err != nil {
 		return protocol.PolicyPushPayload{}, err
 	}
 
@@ -391,6 +395,7 @@ func policyPushPayload(database *db.Database, policy db.BackupPolicy, storage db
 		ResticPassword:  resticPassword,
 		PlainBackup:     strings.TrimSpace(resticPassword) == "",
 		BackupDirs:      backupDirs,
+		BackupSources:   backupSources,
 		ExcludePatterns: excludePatterns,
 		Schedule:        policy.Schedule,
 		Retention:       retention,

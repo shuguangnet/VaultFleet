@@ -45,3 +45,36 @@ export interface DirSizeResponse {
   size: number;
   error?: string;
 }
+
+export interface DockerDiscoveryResponse {
+  available: boolean;
+  error?: string;
+  containers: DockerContainer[];
+}
+
+export interface DockerContainer {
+  id: string;
+  names: string[];
+  image: string;
+  state: string;
+  labels?: Record<string, string>;
+  compose?: DockerComposeInfo;
+  mounts: DockerMount[];
+  selectable: boolean;
+  warnings?: string[];
+}
+
+export interface DockerComposeInfo {
+  project?: string;
+  service?: string;
+  working_dir?: string;
+  config_files?: string[];
+}
+
+export interface DockerMount {
+  type: string;
+  name?: string;
+  source?: string;
+  destination: string;
+  rw: boolean;
+}

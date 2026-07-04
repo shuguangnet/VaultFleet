@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -48,6 +49,7 @@ type taskResponse struct {
 	ErrorLog      string                          `json:"error_log,omitempty"`
 	Error         string                          `json:"error,omitempty"`
 	Progress      *protocol.BackupProgressPayload `json:"progress,omitempty"`
+	Docker        *protocol.DockerBackupMetadata  `json:"docker,omitempty"`
 	CreatedAt     time.Time                       `json:"created_at"`
 	UpdatedAt     time.Time                       `json:"updated_at"`
 }
@@ -237,7 +239,7 @@ func parseTaskLimit(raw string) int {
 }
 
 func newTaskResponse(history db.TaskHistory) taskResponse {
-	return taskResponse{
+	response := taskResponse{
 		ID:            history.ID,
 		AgentID:       history.AgentID,
 		Type:          history.Type,
@@ -257,4 +259,11 @@ func newTaskResponse(history db.TaskHistory) taskResponse {
 		CreatedAt:     history.CreatedAt,
 		UpdatedAt:     history.UpdatedAt,
 	}
+	if history.Docker != "" {
+		var metadata protocol.DockerBackupMetadata
+		if err := json.Unmarshal([]byte(history.Docker), &metadata); err == nil {
+			response.Docker = &metadata
+		}
+	}
+	return response
 }

@@ -13,6 +13,8 @@ const (
 	TypeHeartbeat           = "heartbeat"
 	TypeDirBrowseReq        = "dir_browse_req"
 	TypeDirBrowseResp       = "dir_browse_resp"
+	TypeDockerDiscoveryReq  = "docker_discovery_req"
+	TypeDockerDiscoveryResp = "docker_discovery_resp"
 	TypePolicyPush          = "policy_push"
 	TypePolicyAck           = "policy_ack"
 	TypeBackupNow           = "backup_now"
@@ -38,6 +40,13 @@ const (
 	CapabilitySnapshotBrowse            = "snapshot_browse"
 	CapabilityRestoreIncludePaths       = "restore_include_paths"
 	CapabilityPolicyPlaintextRclonePass = "policy_plaintext_rclone_pass"
+	CapabilityDockerWorkloadBackups     = "docker_workload_backups"
+	CapabilityTypedBackupSources        = "typed_backup_sources"
+)
+
+const (
+	BackupSourceTypePath            = "path"
+	BackupSourceTypeDockerContainer = "docker_container"
 )
 
 // Message is the shared WebSocket envelope used by master and agents.
@@ -110,16 +119,17 @@ type PolicyAckPayload struct {
 
 // TaskResultPayload reports completion metadata for backup, restore, or maintenance work.
 type TaskResultPayload struct {
-	AgentID    string         `json:"agent_id"`
-	TaskType   string         `json:"task_type"`
-	Status     string         `json:"status"`
-	SnapshotID string         `json:"snapshot_id,omitempty"`
-	DurationMs int64          `json:"duration_ms"`
-	RepoSize   int64          `json:"repo_size"`
-	ErrorLog   string         `json:"error_log,omitempty"`
-	StartedAt  time.Time      `json:"started_at"`
-	FinishedAt time.Time      `json:"finished_at"`
-	Snapshots  []SnapshotInfo `json:"snapshots,omitempty"`
+	AgentID    string                `json:"agent_id"`
+	TaskType   string                `json:"task_type"`
+	Status     string                `json:"status"`
+	SnapshotID string                `json:"snapshot_id,omitempty"`
+	DurationMs int64                 `json:"duration_ms"`
+	RepoSize   int64                 `json:"repo_size"`
+	ErrorLog   string                `json:"error_log,omitempty"`
+	StartedAt  time.Time             `json:"started_at"`
+	FinishedAt time.Time             `json:"finished_at"`
+	Snapshots  []SnapshotInfo        `json:"snapshots,omitempty"`
+	Docker     *DockerBackupMetadata `json:"docker,omitempty"`
 }
 
 // BackupProgressPayload reports incremental backup progress from an agent.
@@ -171,6 +181,76 @@ type DirBrowseReqPayload struct {
 	Depth int    `json:"depth"`
 }
 
+type DockerDiscoveryReqPayload struct{}
+
+type DockerDiscoveryRespPayload struct {
+	Available  bool              `json:"available"`
+	Error      string            `json:"error,omitempty"`
+	Containers []DockerContainer `json:"containers"`
+}
+
+type DockerContainer struct {
+	ID         string            `json:"id"`
+	Names      []string          `json:"names"`
+	Image      string            `json:"image"`
+	State      string            `json:"state"`
+	Labels     map[string]string `json:"labels,omitempty"`
+	Compose    DockerComposeInfo `json:"compose,omitempty"`
+	Mounts     []DockerMount     `json:"mounts"`
+	Selectable bool              `json:"selectable"`
+	Warnings   []string          `json:"warnings,omitempty"`
+}
+
+type DockerComposeInfo struct {
+	Project     string   `json:"project,omitempty"`
+	Service     string   `json:"service,omitempty"`
+	WorkingDir  string   `json:"working_dir,omitempty"`
+	ConfigFiles []string `json:"config_files,omitempty"`
+}
+
+type DockerMount struct {
+	Type        string `json:"type"`
+	Name        string `json:"name,omitempty"`
+	Source      string `json:"source,omitempty"`
+	Destination string `json:"destination"`
+	RW          bool   `json:"rw"`
+}
+
+type BackupSource struct {
+	Type            string                       `json:"type"`
+	Path            string                       `json:"path,omitempty"`
+	DockerContainer *DockerContainerBackupSource `json:"docker_container,omitempty"`
+}
+
+type DockerContainerBackupSource struct {
+	ContainerID         string            `json:"container_id,omitempty"`
+	Name                string            `json:"name,omitempty"`
+	Image               string            `json:"image,omitempty"`
+	Labels              map[string]string `json:"labels,omitempty"`
+	ComposeProject      string            `json:"compose_project,omitempty"`
+	ComposeService      string            `json:"compose_service,omitempty"`
+	ComposeWorkingDir   string            `json:"compose_working_dir,omitempty"`
+	ComposeConfigFiles  []string          `json:"compose_config_files,omitempty"`
+	IncludeBindMounts   bool              `json:"include_bind_mounts"`
+	IncludeVolumes      bool              `json:"include_volumes"`
+	IncludeComposeFiles bool              `json:"include_compose_files"`
+}
+
+type DockerBackupMetadata struct {
+	Sources  []DockerResolvedSource `json:"sources,omitempty"`
+	Warnings []string               `json:"warnings,omitempty"`
+}
+
+type DockerResolvedSource struct {
+	Selection     DockerContainerBackupSource `json:"selection"`
+	ContainerID   string                      `json:"container_id,omitempty"`
+	Name          string                      `json:"name,omitempty"`
+	Image         string                      `json:"image,omitempty"`
+	State         string                      `json:"state,omitempty"`
+	ResolvedPaths []string                    `json:"resolved_paths,omitempty"`
+	Warnings      []string                    `json:"warnings,omitempty"`
+}
+
 type DirSizeReqPayload struct {
 	Path string `json:"path"`
 }
@@ -188,6 +268,7 @@ type PolicyPushPayload struct {
 	ResticPassword  string          `json:"restic_password"`
 	PlainBackup     bool            `json:"plain_backup,omitempty"`
 	BackupDirs      []string        `json:"backup_dirs"`
+	BackupSources   []BackupSource  `json:"backup_sources,omitempty"`
 	ExcludePatterns []string        `json:"exclude_patterns"`
 	Schedule        string          `json:"schedule"`
 	Retention       RetentionPolicy `json:"retention"`

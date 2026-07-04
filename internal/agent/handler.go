@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	agentdocker "vaultfleet/internal/agent/docker"
 	"vaultfleet/internal/agent/executor"
 	"vaultfleet/internal/agent/filebrowse"
 	"vaultfleet/internal/agent/policy"
@@ -61,6 +62,7 @@ type HandlerConfig struct {
 	DirSizeFunc              DirSizeFunc
 	AgentVersion             string
 	Updater                  AgentUpdater
+	DockerAPI                agentdocker.API
 }
 
 type Handler struct {
@@ -80,6 +82,7 @@ type Handler struct {
 	dirSizeFunc              DirSizeFunc
 	agentVersion             string
 	updater                  AgentUpdater
+	dockerAPI                agentdocker.API
 	tasks                    *taskManager
 	pendingResultsMu         sync.Mutex
 }
@@ -148,6 +151,7 @@ func NewHandler(config HandlerConfig) *Handler {
 		dirSizeFunc:              dirSizeFunc,
 		agentVersion:             config.AgentVersion,
 		updater:                  config.Updater,
+		dockerAPI:                config.DockerAPI,
 		tasks:                    newTaskManager(),
 	}
 	handler.restoreSavedPolicySchedule()
@@ -162,6 +166,8 @@ func (h *Handler) Handle(msg protocol.Message) {
 		h.handleBackupNow(msg)
 	case protocol.TypeDirBrowseReq:
 		h.handleDirBrowseReq(msg)
+	case protocol.TypeDockerDiscoveryReq:
+		h.handleDockerDiscoveryReq(msg)
 	case protocol.TypeDirSizeReq:
 		h.handleDirSizeReq(msg)
 	case protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq:
@@ -585,8 +591,17 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 		h.sendTaskResultWithID(messageID, h.failedTaskResult(agentID, "prepare rclone config: "+err.Error(), startedAt))
 		return
 	}
-	cfg := executorConfigForPolicy(h.configDir, policyPayload)
+	resolvedPolicy, dockerMetadata, err := h.resolvePolicyBackupSources(ctx, policyPayload)
+	if err != nil {
+		log.Printf("resolve backup sources failed: %v", err)
+		h.sendTaskResultWithID(messageID, h.failedTaskResult(agentID, "resolve backup sources: "+err.Error(), startedAt))
+		return
+	}
+	cfg := executorConfigForPolicy(h.configDir, resolvedPolicy)
 	result := h.backupRunnerWithProgress(ctx, cfg, h.backupProgressCallback(messageID, agentID))
+	if dockerMetadata != nil {
+		result.Docker = dockerMetadata
+	}
 	if ctx.Err() == context.Canceled {
 		result.Status = "cancelled"
 		if result.ErrorLog == "" {
@@ -598,6 +613,23 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 	if result.Status == "success" && len(result.Snapshots) > 0 {
 		go h.warmSnapshotCache(context.Background(), cfg, result.Snapshots)
 	}
+}
+
+func (h *Handler) resolvePolicyBackupSources(ctx context.Context, policyPayload *protocol.PolicyPushPayload) (*protocol.PolicyPushPayload, *protocol.DockerBackupMetadata, error) {
+	if policyPayload == nil {
+		return nil, nil, errors.New("policy payload is nil")
+	}
+	resolved := *policyPayload
+	resolved.BackupDirs = append([]string(nil), policyPayload.BackupDirs...)
+	if len(policyPayload.BackupSources) == 0 {
+		return &resolved, nil, nil
+	}
+	dockerPaths, metadata, err := agentdocker.Resolve(ctx, h.dockerAPI, policyPayload.BackupSources)
+	if err != nil {
+		return nil, nil, err
+	}
+	resolved.BackupDirs = appendUniqueStrings(resolved.BackupDirs, dockerPaths...)
+	return &resolved, metadata, nil
 }
 
 func (h *Handler) warmSnapshotCache(ctx context.Context, cfg executor.ExecutorConfig, snapshots []executor.SnapshotInfo) {
@@ -863,6 +895,23 @@ func copyStringMap(values map[string]string) map[string]string {
 		copied[key] = value
 	}
 	return copied
+}
+
+func appendUniqueStrings(values []string, more ...string) []string {
+	seen := make(map[string]struct{}, len(values)+len(more))
+	result := make([]string, 0, len(values)+len(more))
+	for _, value := range append(values, more...) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func runBackup(ctx context.Context, cfg executor.ExecutorConfig) executor.TaskResult {
@@ -1305,6 +1354,19 @@ func (h *Handler) handleDirBrowseReq(msg protocol.Message) {
 	}
 	if err := h.send(*resp); err != nil {
 		log.Printf("send directory browse response failed: %v", err)
+	}
+}
+
+func (h *Handler) handleDockerDiscoveryReq(msg protocol.Message) {
+	payload := agentdocker.Discover(context.Background(), h.dockerAPI)
+	resp, err := protocol.NewMessage(protocol.TypeDockerDiscoveryResp, payload)
+	if err != nil {
+		log.Printf("create docker discovery response failed: %v", err)
+		return
+	}
+	resp.ID = msg.ID
+	if err := h.sendMessage(*resp); err != nil {
+		log.Printf("send docker discovery response failed: %v", err)
 	}
 }
 

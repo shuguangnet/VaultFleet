@@ -1,5 +1,5 @@
 import { Agent, ApiAgent, CreateAgentResponse } from "@/types/agent";
-import { BrowseRequest, BrowseResponse, DirSizeRequest, DirSizeResponse } from "@/types/api";
+import { BrowseRequest, BrowseResponse, DirSizeRequest, DirSizeResponse, DockerDiscoveryResponse } from "@/types/api";
 import { apiDelete, apiGet, apiPost } from "./http";
 
 export const listAgents = async () => (await apiGet<ApiAgent[]>("/api/agents")).map(normalizeAgent);
@@ -10,6 +10,7 @@ export const regenerateAgentToken = (id: string) => apiPost<CreateAgentResponse>
 export const getInstallToken = (id: string) => apiGet<{ id: string; enroll_token: string; enrolled: boolean }>(`/api/agents/${id}/install-token`);
 export const browseAgent = (id: string, body: BrowseRequest) => apiPost<BrowseResponse>(`/api/agents/${id}/browse`, body);
 export const dirSizeAgent = (id: string, body: DirSizeRequest) => apiPost<DirSizeResponse>(`/api/agents/${id}/dir-size`, body);
+export const discoverDockerAgent = (id: string) => apiPost<DockerDiscoveryResponse>(`/api/agents/${id}/docker/discover`);
 export const backupNow = (id: string) => apiPost<{ command_id: string; message_id: string }>(`/api/agents/${id}/backup-now`);
 
 export function normalizeAgent(agent: ApiAgent): Agent {
@@ -23,11 +24,12 @@ export function normalizeAgent(agent: ApiAgent): Agent {
     hostname: agent.hostname ?? systemInfo.hostname ?? "",
     os: agent.os ?? systemInfo.os ?? "",
     arch: agent.arch ?? systemInfo.arch ?? "",
+    capabilities: agent.capabilities ?? systemInfo.capabilities ?? [],
     created_at: agent.created_at,
   };
 }
 
-function parseSystemInfo(raw: string | null | undefined): Partial<Pick<Agent, "version" | "hostname" | "os" | "arch">> {
+function parseSystemInfo(raw: string | null | undefined): Partial<Pick<Agent, "version" | "hostname" | "os" | "arch" | "capabilities">> {
   if (!raw) {
     return {};
   }
@@ -41,10 +43,19 @@ function parseSystemInfo(raw: string | null | undefined): Partial<Pick<Agent, "v
       hostname: stringField(parsed, "hostname"),
       os: stringField(parsed, "os"),
       arch: stringField(parsed, "arch"),
+      capabilities: stringArrayField(parsed, "capabilities"),
     };
   } catch {
     return {};
   }
+}
+
+function stringArrayField(value: object, key: string): string[] | undefined {
+  const field = (value as Record<string, unknown>)[key];
+  if (!Array.isArray(field)) {
+    return undefined;
+  }
+  return field.filter((item): item is string => typeof item === "string");
 }
 
 function stringField(value: object, key: string): string | undefined {

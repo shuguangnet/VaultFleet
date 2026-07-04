@@ -116,11 +116,21 @@ This stops the service and removes `vaultfleet-agent`, `restic`, `rclone`, and A
 
 1. Add a storage backend and run the connection test.
 2. Create a node, copy the generated install command, and wait for Agent enrollment.
-3. Create a backup policy with repository path, backup directories, excludes, cron schedule, retention, and timeout.
+3. Create a backup policy with repository path, backup sources, excludes, cron schedule, retention, and timeout. Sources can be host directories or Docker containers discovered from a Docker-capable Agent.
 4. Tune rclone transfer parameters when using WebDAV, AList proxies, or rate-limited storage.
 5. Track manual backups, scheduled backups, restore jobs, and running backup progress from task history; cancel running jobs when needed.
 6. Browse snapshots and restore either a full snapshot or selected paths.
 7. For cross-node restore, create a policy on the new node with the same storage and repository path.
+
+## Docker Container Backups
+
+Docker backups are configured from **Backup Policies**, not storage settings. A storage `container` / bucket means an object-storage container or bucket, not a Docker container.
+
+When an Agent can access the local Docker Engine API, it reports Docker backup capability and the policy form can list local containers. The Agent process usually needs permission to read `/var/run/docker.sock`; if the Agent itself runs in a container, mount the Docker socket explicitly. Docker socket access is highly privileged, so enable it only on trusted Agent hosts.
+
+When a Docker container is selected, the Agent re-inspects it immediately before the backup runs and resolves bind mounts, named/anonymous volume mountpoints, and discoverable Compose config files into concrete backup paths. VaultFleet does not back up the whole `/var/lib/docker` tree, overlay/image layers, Docker networks, or image contents by default.
+
+Running container files may not be application-consistent. For databases and similar services, use the application's own dump, snapshot, write-quiesce, or pre/post hook workflow to produce consistent files, then back up those paths. Restore by restoring Compose files and data directories first, then recreate containers using the application's normal process.
 
 ## Architecture
 

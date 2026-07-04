@@ -136,11 +136,21 @@ curl -fsSL https://raw.githubusercontent.com/momo-z/VaultFleet/main/build/uninst
 
 1. 在 **存储配置** 中添加 S3 / R2 / MinIO、WebDAV、SFTP、本地路径或其他 rclone 后端，并执行连接测试。
 2. 在 **节点管理** 中创建节点，复制安装命令到目标服务器执行，等待 Agent 注册上线。
-3. 在 **备份策略** 中选择节点和存储，设置仓库子路径、备份目录、排除规则、Cron 调度、保留策略和任务超时。
+3. 在 **备份策略** 中选择节点和存储，设置仓库子路径、备份来源、排除规则、Cron 调度、保留策略和任务超时。备份来源可以是宿主机目录，也可以是在支持 Docker 的 Agent 上发现并选择的 Docker 容器。
 4. 如使用 WebDAV、AList 代理或限流存储，在策略的 **高级传输参数** 中调整 rclone 并发、请求频率、重试和超时。
 5. 在 **任务历史** 中查看手动备份、定时备份、恢复任务和运行中备份进度；必要时取消仍在运行的任务。
 6. 在 **快照浏览** 中刷新快照、浏览快照内容，并选择整份快照或部分路径恢复到目标目录。
 7. 需要迁移到新节点时，在新节点上创建使用相同存储和仓库子路径的策略，策略同步后即可看到原有快照。
+
+## Docker 容器备份
+
+Docker 备份在 **备份策略** 中配置，不在存储配置中配置。存储配置里的 container / bucket 表示对象存储容器或存储桶，不是 Docker 容器。
+
+Agent 能访问本机 Docker Engine API 时，会在策略表单中上报 Docker 备份能力并列出容器。通常需要让 Agent 进程具备读取 `/var/run/docker.sock` 的权限；如果 Agent 运行在容器中，需要显式挂载 Docker socket。Docker socket 权限等同于较高的宿主机控制权限，请只在可信 Agent 主机上启用。
+
+选择 Docker 容器后，Agent 会在备份执行前重新检查容器，并将该容器的 bind mount、named/anonymous volume 挂载点和可发现的 Compose 配置文件解析成实际备份路径。VaultFleet 不会默认备份 `/var/lib/docker` 整体、overlay/image layer、网络或镜像内容。
+
+Docker 容器运行中的文件可能缺少应用级一致性。数据库类服务仍建议使用应用自己的 dump、快照、暂停写入或 pre/post hook 流程生成一致数据后再备份对应目录。恢复时，先恢复 Compose 文件和数据目录，再按应用自身流程重建容器。
 
 ## 架构
 

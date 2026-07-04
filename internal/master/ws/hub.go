@@ -144,6 +144,10 @@ func expectedResponseType(requestType string) (string, error) {
 	switch requestType {
 	case protocol.TypeDirBrowseReq:
 		return protocol.TypeDirBrowseResp, nil
+	case protocol.TypeDirSizeReq:
+		return protocol.TypeDirSizeResp, nil
+	case protocol.TypeDockerDiscoveryReq:
+		return protocol.TypeDockerDiscoveryResp, nil
 	case protocol.TypeSnapshotListReq:
 		return protocol.TypeSnapshotListResp, nil
 	case protocol.TypeSnapshotBrowseReq:
