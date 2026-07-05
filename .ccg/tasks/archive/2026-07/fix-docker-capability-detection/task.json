@@ -1,0 +1,12 @@
+{
+  "id": "fix-docker-capability-detection",
+  "title": "修复 Agent 未上报 Docker 备份能力导致无法检测容器",
+  "status": "completed",
+  "complexity": "M",
+  "risk": "medium",
+  "domain": "backend/frontend",
+  "currentPhase": "completed",
+  "nextAction": "已修复 Agent Docker/archive backup capability 上报",
+  "createdAt": "2026-07-05T04:17:52Z",
+  "branch": "main"
+}
