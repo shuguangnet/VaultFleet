@@ -1,48 +1,82 @@
-import { useState, useRef } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { changePassword, exportSystemData, importSystemData, confirmImport, ImportValidationResult, getSystemVersion } from "@/services/system";
+import {
+  Alert,
+  App,
+  Button,
+  Card,
+  Col,
+  Form,
+  Input,
+  Result,
+  Row,
+  Space,
+  Spin,
+  Tag,
+  Typography,
+} from "antd";
+import {
+  CheckCircleOutlined,
+  CloudServerOutlined,
+  DatabaseOutlined,
+  DownloadOutlined,
+  ExclamationCircleOutlined,
+  FolderOutlined,
+  KeyOutlined,
+  ReloadOutlined,
+  SafetyCertificateOutlined,
+  ThunderboltOutlined,
+  UploadOutlined,
+} from "@ant-design/icons";
+import {
+  changePassword,
+  confirmImport,
+  exportSystemData,
+  getSystemVersion,
+  importSystemData,
+  type ImportValidationResult,
+} from "@/services/system";
 import { checkHealth, checkReady } from "@/services/health";
 import { listAgents } from "@/services/agents";
 import { downloadDiagnosticBundle } from "@/services/diagnostic";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { ErrorPanel } from "@/components/error-panel";
-import { Download, ShieldCheck, CheckCircle2, Activity, Server, Database, KeyRound, FolderTree, AlertCircle, RefreshCw, Upload, ExternalLink, Loader2 } from "lucide-react";
-import { toast } from "sonner";
 import { StatusBadge } from "@/components/status-badge";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ErrorPanel } from "@/components/error-panel";
 import type { Agent } from "@/types/agent";
 
 export function SystemPage() {
+  const { message } = App.useApp();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [passwordSuccess, setPasswordSuccess] = useState(false);
-  const [importResult, setImportResult] = useState<ImportValidationResult | null>(null);
+  const [importResult, setImportResult] =
+    useState<ImportValidationResult | null>(null);
   const [showImportConfirm, setShowImportConfirm] = useState(false);
   const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { data: healthStatus, refetch: refetchHealth, isFetching: healthFetching } = useQuery({
+  const {
+    data: healthStatus,
+    refetch: refetchHealth,
+    isFetching: healthFetching,
+  } = useQuery({
     queryKey: ["health"],
     queryFn: checkHealth,
     refetchInterval: 30000,
   });
-
-  const { data: readyStatus, refetch: refetchReady, isFetching: readyFetching } = useQuery({
+  const {
+    data: readyStatus,
+    refetch: refetchReady,
+    isFetching: readyFetching,
+  } = useQuery({
     queryKey: ["ready"],
     queryFn: checkReady,
     refetchInterval: 30000,
   });
-
   const { data: versionInfo } = useQuery({
     queryKey: ["system-version"],
     queryFn: getSystemVersion,
   });
-
   const { data: agents = [] } = useQuery({
     queryKey: ["agents"],
     queryFn: listAgents,
@@ -51,16 +85,13 @@ export function SystemPage() {
   const passwordMutation = useMutation({
     mutationFn: changePassword,
     onSuccess: () => {
-      setPasswordSuccess(true);
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      toast.success("密码修改成功");
-      setTimeout(() => setPasswordSuccess(false), 3000);
+      message.success("密码修改成功");
     },
-    onError: (error: any) => {
-      toast.error("修改密码失败", { description: error.message });
-    }
+    onError: (error: any) =>
+      message.error("修改密码失败: " + error.message),
   });
 
   const exportMutation = useMutation({
@@ -69,40 +100,36 @@ export function SystemPage() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `vaultfleet-export-${new Date().toISOString().split("T")[0]}.zip`;
+      a.download = `vaultfleet-export-${
+        new Date().toISOString().split("T")[0]
+      }.zip`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
-      toast.success("数据导出成功");
+      message.success("数据导出成功");
     },
-    onError: (error: any) => {
-      toast.error("数据导出失败", { description: error.message });
-    }
+    onError: (error: any) =>
+      message.error("数据导出失败: " + error.message),
   });
 
   const importMutation = useMutation({
     mutationFn: importSystemData,
     onSuccess: (result) => {
       if (result.valid) {
-        setImportResult(result);
         setShowImportConfirm(true);
       } else {
         setImportResult(result);
-        toast.error("备份文件验证失败", {
-          description: result.errors.join("；"),
-        });
+        message.error(`备份文件验证失败: ${result.errors.join("；")}`);
       }
     },
-    onError: (error: any) => {
-      toast.error("上传失败", { description: error.message });
-    },
+    onError: (error: any) => message.error("上传失败: " + error.message),
   });
 
   const confirmMutation = useMutation({
     mutationFn: confirmImport,
     onSuccess: () => {
       setShowImportConfirm(false);
-      toast.success("导入已确认，Master 正在重启...");
+      message.success("导入已确认，Master 正在重启...");
       const poll = setInterval(async () => {
         try {
           const res = await fetch("/health");
@@ -110,12 +137,13 @@ export function SystemPage() {
             clearInterval(poll);
             window.location.reload();
           }
-        } catch {}
+        } catch {
+          /* ignore */
+        }
       }, 2000);
     },
-    onError: (error: any) => {
-      toast.error("确认导入失败", { description: error.message });
-    },
+    onError: (error: any) =>
+      message.error("确认导入失败: " + error.message),
   });
 
   const diagnosticMutation = useMutation({
@@ -124,22 +152,21 @@ export function SystemPage() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `vaultfleet-diagnostic-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.zip`;
+      a.download = `vaultfleet-diagnostic-${new Date()
+        .toISOString()
+        .replace(/[:.]/g, "-")
+        .slice(0, 19)}.zip`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-      toast.success("诊断包已生成");
+      message.success("诊断包已生成");
     },
-    onError: (error: any) => {
-      toast.error("生成诊断包失败", { description: error.message });
-    },
+    onError: (error: any) =>
+      message.error("生成诊断包失败: " + error.message),
   });
 
-  const handleImportClick = () => {
-    fileInputRef.current?.click();
-  };
-
+  const handleImportClick = () => fileInputRef.current?.click();
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -147,292 +174,284 @@ export function SystemPage() {
       e.target.value = "";
     }
   };
-
-  const handlePasswordSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handlePasswordSubmit = () => {
     if (newPassword !== confirmPassword) {
-      toast.error("新密码不匹配");
+      message.error("新密码不匹配");
       return;
     }
-    passwordMutation.mutate({ current_password: currentPassword, new_password: newPassword });
+    passwordMutation.mutate({
+      current_password: currentPassword,
+      new_password: newPassword,
+    });
   };
-
-  const toggleAgent = (id: string) => {
-    setSelectedAgents((prev) => (
-      prev.includes(id) ? prev.filter((agentID) => agentID !== id) : [...prev, id]
-    ));
-  };
+  const toggleAgent = (id: string) =>
+    setSelectedAgents((prev) =>
+      prev.includes(id)
+        ? prev.filter((x) => x !== id)
+        : [...prev, id]
+    );
 
   const isRefreshing = healthFetching || readyFetching;
 
+  const statusItems = [
+    {
+      icon: <CloudServerOutlined />,
+      title: "服务进程",
+      subtitle: "HTTP API Server",
+      ok: !!healthStatus?.ok,
+    },
+    {
+      icon: <DatabaseOutlined />,
+      title: "数据库连接",
+      subtitle: "SQLite 存储",
+      ok: !!readyStatus?.ok || readyStatus?.status === "ready",
+    },
+    {
+      icon: <KeyOutlined />,
+      title: "Master Key",
+      subtitle: "数据加密密钥",
+      ok: !!readyStatus?.ok,
+    },
+    {
+      icon: <FolderOutlined />,
+      title: "数据目录",
+      subtitle: "本地存储可用性",
+      ok: !!readyStatus?.ok,
+    },
+  ];
+
   return (
-    <div className="space-y-6 max-w-4xl">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">系统管理</h1>
-        <Button 
-          variant="outline" 
-          size="sm" 
-          onClick={() => { refetchHealth(); refetchReady(); }}
+    <div className="vf-page" style={{ maxWidth: 1000 }}>
+      <div
+        className="vf-page-header"
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          系统管理
+        </Typography.Title>
+        <Button
+          icon={<ReloadOutlined spin={isRefreshing} />}
+          onClick={() => {
+            refetchHealth();
+            refetchReady();
+          }}
           disabled={isRefreshing}
         >
-          <RefreshCw className={isRefreshing ? "h-4 w-4 mr-2 animate-spin" : "h-4 w-4 mr-2"} />
           刷新状态
         </Button>
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Activity className="h-5 w-5 text-primary" />
-              系统状态
-            </CardTitle>
+      <Card
+        title={
+          <Space>
+            <ThunderboltOutlined style={{ color: "#1668dc" }} />
+            <Typography.Text strong>系统状态</Typography.Text>
             {versionInfo?.version && (
-              <span className="text-xs font-mono text-muted-foreground bg-muted px-2 py-1 rounded">
-                {versionInfo.version}
-              </span>
+              <Tag style={{ fontFamily: "monospace" }}>{versionInfo.version}</Tag>
             )}
-          </div>
-          <CardDescription>Master 服务运行及依赖组件就绪状态。</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-6 md:grid-cols-2">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between p-3 border rounded-lg">
-              <div className="flex items-center gap-3">
-                <Server className="h-5 w-5 text-muted-foreground" />
-                <div>
-                  <div className="text-sm font-medium">服务进程</div>
-                  <div className="text-xs text-muted-foreground">HTTP API Server</div>
-                </div>
+          </Space>
+        }
+      >
+        <Row gutter={[16, 16]}>
+          {statusItems.map((item) => (
+            <Col xs={24} md={12} key={item.title}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: 12,
+                  border: "1px solid #f0f0f0",
+                  borderRadius: 6,
+                }}
+              >
+                <Space>
+                  <span style={{ color: "rgba(0,0,0,0.45)", fontSize: 18 }}>
+                    {item.icon}
+                  </span>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 500 }}>
+                      {item.title}
+                    </div>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {item.subtitle}
+                    </Typography.Text>
+                  </div>
+                </Space>
+                <StatusBadge status={item.ok ? "success" : "failed"} />
               </div>
-              <StatusBadge status={healthStatus?.ok ? "success" : "failed"} />
-            </div>
-
-            <div className="flex items-center justify-between p-3 border rounded-lg">
-              <div className="flex items-center gap-3">
-                <Database className="h-5 w-5 text-muted-foreground" />
-                <div>
-                  <div className="text-sm font-medium">数据库连接</div>
-                  <div className="text-xs text-muted-foreground">SQLite 存储</div>
-                </div>
-              </div>
-              <StatusBadge status={readyStatus?.ok || readyStatus?.status === "ready" ? "success" : "failed"} />
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex items-center justify-between p-3 border rounded-lg">
-              <div className="flex items-center gap-3">
-                <KeyRound className="h-5 w-5 text-muted-foreground" />
-                <div>
-                  <div className="text-sm font-medium">Master Key</div>
-                  <div className="text-xs text-muted-foreground">数据加密密钥</div>
-                </div>
-              </div>
-              <StatusBadge status={readyStatus?.ok ? "success" : "failed"} />
-            </div>
-
-            <div className="flex items-center justify-between p-3 border rounded-lg">
-              <div className="flex items-center gap-3">
-                <FolderTree className="h-5 w-5 text-muted-foreground" />
-                <div>
-                  <div className="text-sm font-medium">数据目录</div>
-                  <div className="text-xs text-muted-foreground">本地存储可用性</div>
-                </div>
-              </div>
-              <StatusBadge status={readyStatus?.ok ? "success" : "failed"} />
-            </div>
-          </div>
-          
-          {!readyStatus?.ok && readyStatus?.error && (
-            <div className="md:col-span-2 flex items-start gap-2 text-red-600 bg-red-50 p-3 rounded border border-red-200 text-xs">
-              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-bold mr-1">系统未就绪:</span>
+            </Col>
+          ))}
+        </Row>
+        {!readyStatus?.ok && readyStatus?.error && (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginTop: 16 }}
+            message={
+              <span>
+                <strong>系统未就绪：</strong>
                 {readyStatus.error}
-              </div>
-            </div>
-          )}
-        </CardContent>
+              </span>
+            }
+          />
+        )}
       </Card>
 
-      <div className="grid gap-6 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>修改密码</CardTitle>
-            <CardDescription>定期修改密码以确保账户安全。</CardDescription>
-          </CardHeader>
-          <form onSubmit={handlePasswordSubmit}>
-            <CardContent className="space-y-4">
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
+          <Card title="修改密码">
+            <Form
+              layout="vertical"
+              style={{ marginTop: 0 }}
+              onFinish={handlePasswordSubmit}
+            >
               <ErrorPanel error={passwordMutation.error as any} />
-              {passwordSuccess && (
-                <div className="flex items-center gap-2 text-green-600 text-sm font-medium bg-green-50 p-3 rounded border border-green-200">
-                  <CheckCircle2 className="h-4 w-4" /> 密码修改成功
-                </div>
-              )}
-              <div className="space-y-2">
-                <Label htmlFor="current">当前密码</Label>
-                <Input
-                  id="current"
-                  type="password"
+              <Form.Item label="当前密码">
+                <Input.Password
                   value={currentPassword}
                   onChange={(e) => setCurrentPassword(e.target.value)}
-                  required
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="new">新密码</Label>
-                <Input
-                  id="new"
-                  type="password"
+              </Form.Item>
+              <Form.Item label="新密码">
+                <Input.Password
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  required
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="confirm">确认新密码</Label>
-                <Input
-                  id="confirm"
-                  type="password"
+              </Form.Item>
+              <Form.Item label="确认新密码">
+                <Input.Password
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  required
                 />
-              </div>
-            </CardContent>
-            <CardFooter>
-              <Button type="submit" disabled={passwordMutation.isPending}>
-                {passwordMutation.isPending ? "正在修改..." : "提交修改"}
-              </Button>
-            </CardFooter>
-          </form>
-        </Card>
+              </Form.Item>
+              <Form.Item style={{ marginBottom: 0 }}>
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  loading={passwordMutation.isPending}
+                >
+                  提交修改
+                </Button>
+              </Form.Item>
+            </Form>
+          </Card>
+        </Col>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>数据管理</CardTitle>
-            <CardDescription>导出或导入 Master 节点的完整数据。建议在进行系统迁移或重大更新前导出备份。</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex flex-col items-center justify-center py-8 text-center space-y-4 bg-muted/20 rounded-lg border-2 border-dashed">
-              <ShieldCheck className="h-12 w-12 text-muted-foreground opacity-30" />
-              <p className="text-sm text-muted-foreground px-6">
+        <Col xs={24} md={12}>
+          <Card
+            title="数据管理"
+            styles={{ body: { display: "flex", flexDirection: "column", gap: 12 } }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                padding: "24px 0",
+                textAlign: "center",
+                background: "#fafafa",
+                border: "1px dashed #d9d9d9",
+                borderRadius: 6,
+              }}
+            >
+              <SafetyCertificateOutlined
+                style={{ fontSize: 40, color: "rgba(0,0,0,0.25)" }}
+              />
+              <Typography.Paragraph
+                type="secondary"
+                style={{ fontSize: 12, padding: "0 16px", marginTop: 8 }}
+              >
                 导出的压缩包包含 SQLite 数据库和加密密钥。请务必加密存储导出的文件。
-              </p>
+              </Typography.Paragraph>
             </div>
             {importResult && !importResult.valid && (
-              <div className="text-xs text-red-600 bg-red-50 p-3 rounded border border-red-200">
-                <div className="font-bold mb-1">验证失败：</div>
-                <ul className="list-disc list-inside">
-                  {importResult.errors.map((err, i) => (
-                    <li key={i}>{err}</li>
-                  ))}
-                </ul>
-              </div>
+              <Alert
+                type="error"
+                showIcon
+                message="验证失败"
+                description={
+                  <ul style={{ marginBottom: 0, paddingLeft: 16 }}>
+                    {importResult.errors.map((err, i) => (
+                      <li key={i}>{err}</li>
+                    ))}
+                  </ul>
+                }
+              />
             )}
-          </CardContent>
-          <CardFooter className="flex gap-2">
-            <Button
-              variant="outline"
-              className="flex-1"
-              onClick={() => exportMutation.mutate()}
-              disabled={exportMutation.isPending}
-            >
-              <Download className="mr-2 h-4 w-4" />
-              {exportMutation.isPending ? "正在导出..." : "导出数据"}
-            </Button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".zip"
-              className="hidden"
-              onChange={handleFileChange}
-            />
-            <Button
-              variant="outline"
-              className="flex-1"
-              onClick={handleImportClick}
-              disabled={importMutation.isPending}
-            >
-              <Upload className="mr-2 h-4 w-4" />
-              {importMutation.isPending ? "正在验证..." : "导入数据"}
-            </Button>
-          </CardFooter>
-        </Card>
-      </div>
+            <Space className="vf-page-actions">
+              <Button
+                icon={<DownloadOutlined />}
+                onClick={() => exportMutation.mutate()}
+                loading={exportMutation.isPending}
+              >
+                {exportMutation.isPending ? "正在导出..." : "导出数据"}
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".zip"
+                style={{ display: "none" }}
+                onChange={handleFileChange}
+              />
+              <Button
+                icon={<UploadOutlined />}
+                onClick={handleImportClick}
+                loading={importMutation.isPending}
+              >
+                {importMutation.isPending ? "正在验证..." : "导入数据"}
+              </Button>
+            </Space>
+          </Card>
+        </Col>
+      </Row>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">诊断包</CardTitle>
-          <CardDescription>收集系统状态和日志，用于问题排查。</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {agents.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">选择需要收集日志的 Agent（可选）：</p>
+      <Card title="诊断包">
+        {agents.length > 0 && (
+          <>
+            <Typography.Text type="secondary" style={{ display: "block", marginBottom: 8 }}>
+              选择需要收集日志的 Agent（可选）：
+            </Typography.Text>
+            <Space direction="vertical" style={{ width: "100%" }}>
               {agents.map((agent: Agent) => (
-                <label key={agent.id} className="flex items-center gap-2 text-sm">
-                  <Checkbox
+                <Space key={agent.id}>
+                  <input
+                    type="checkbox"
                     checked={selectedAgents.includes(agent.id)}
-                    onCheckedChange={() => toggleAgent(agent.id)}
-                    disabled={agent.status !== "online" || diagnosticMutation.isPending}
+                    onChange={() => toggleAgent(agent.id)}
+                    disabled={
+                      agent.status !== "online" || diagnosticMutation.isPending
+                    }
                   />
-                  <span className={agent.status !== "online" ? "text-muted-foreground" : ""}>
+                  <Typography.Text
+                    type={
+                      agent.status !== "online" ? "secondary" : undefined
+                    }
+                  >
                     {agent.name}
-                  </span>
+                  </Typography.Text>
                   {agent.status !== "online" && (
-                    <span className="text-xs text-muted-foreground">（离线）</span>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      （离线）
+                    </Typography.Text>
                   )}
-                </label>
+                </Space>
               ))}
-            </div>
-          )}
-        </CardContent>
-        <CardFooter>
-          <Button
-            variant="outline"
-            onClick={() => diagnosticMutation.mutate(selectedAgents)}
-            disabled={diagnosticMutation.isPending}
-          >
-            {diagnosticMutation.isPending ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                正在生成...
-              </>
-            ) : (
-              <>
-                <Download className="mr-2 h-4 w-4" />
-                生成诊断包
-              </>
-            )}
-          </Button>
-        </CardFooter>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">问题反馈</CardTitle>
-          <CardDescription>遇到 Bug 或有建议？提交 Issue 到 GitHub。</CardDescription>
-        </CardHeader>
-        <CardFooter>
-          <Button
-            variant="outline"
-            onClick={() => {
-              const params = new URLSearchParams({
-                template: "bug_report.yml",
-                version: versionInfo?.version || "unknown",
-              });
-              window.open(
-                `https://github.com/momo-z/VaultFleet/issues/new?${params.toString()}`,
-                "_blank"
-              );
-            }}
-          >
-            <ExternalLink className="mr-2 h-4 w-4" />
-            提交 Issue
-          </Button>
-        </CardFooter>
+            </Space>
+          </>
+        )}
+        <Button
+          icon={<DownloadOutlined />}
+          style={{ marginTop: 12 }}
+          onClick={() => diagnosticMutation.mutate(selectedAgents)}
+          loading={diagnosticMutation.isPending}
+        >
+          {diagnosticMutation.isPending ? "正在生成..." : "生成诊断包"}
+        </Button>
       </Card>
 
       <ConfirmDialog
@@ -441,6 +460,7 @@ export function SystemPage() {
         title="确认导入备份数据"
         description="导入将替换当前所有 Master 数据，Master 将自动重启。当前数据会保存到 rollback 目录。此操作不可撤销，是否继续？"
         confirmText="确认导入并重启"
+        variant="destructive"
         onConfirm={() => confirmMutation.mutate()}
         loading={confirmMutation.isPending}
       />

@@ -1,7 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "react-router-dom";
-import { Toaster } from "sonner";
+import { App as AntdApp, ConfigProvider } from "antd";
+import zhCN from "antd/locale/zh_CN";
+import dayjs from "dayjs";
+import "dayjs/locale/zh-cn";
 import { router } from "./router";
+import { antdTheme } from "./styles/antd-theme";
+
+dayjs.locale("zh-cn");
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -14,9 +20,12 @@ const queryClient = new QueryClient({
 
 export function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-      <Toaster position="top-right" richColors />
-    </QueryClientProvider>
+    <ConfigProvider locale={zhCN} theme={antdTheme}>
+      <AntdApp>
+        <QueryClientProvider client={queryClient}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>
+      </AntdApp>
+    </ConfigProvider>
   );
 }

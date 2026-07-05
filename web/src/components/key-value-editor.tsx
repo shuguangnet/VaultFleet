@@ -1,7 +1,5 @@
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Plus, Trash2 } from "lucide-react";
+import { Button, Input, Space } from "antd";
+import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 
 interface KeyValueEditorProps {
   value: Record<string, string>;
@@ -40,39 +38,42 @@ export function KeyValueEditor({ value, onChange }: KeyValueEditorProps) {
   };
 
   return (
-    <div className="space-y-2">
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {entries.map(([k, v]) => (
-        <div key={k} className="flex gap-2 items-center">
+        <Space.Compact key={k} className="vf-key-value-row" style={{ width: "100%" }}>
           <Input
             value={k}
             onChange={(e) => handleKeyChange(k, e.target.value)}
             placeholder="Key"
-            className="flex-1 font-mono text-xs"
+            style={{ flex: 1, fontFamily: "monospace", fontSize: 12 }}
           />
           <Input
             value={v}
             onChange={(e) => handleValueChange(k, e.target.value)}
             placeholder="Value"
-            className="flex-[2] font-mono text-xs"
-            type={k.includes("password") || k.includes("secret") || k.includes("key") ? "password" : "text"}
+            style={{ flex: 2, fontFamily: "monospace", fontSize: 12 }}
+            type={
+              k.includes("password") ||
+              k.includes("secret") ||
+              k.includes("key")
+                ? "password"
+                : "text"
+            }
           />
           <Button
-            variant="ghost"
-            size="icon"
+            icon={<DeleteOutlined />}
+            danger
             onClick={() => handleRemove(k)}
-            className="text-muted-foreground hover:text-destructive shrink-0"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        </div>
+          />
+        </Space.Compact>
       ))}
       <Button
-        variant="outline"
-        size="sm"
+        type="dashed"
+        icon={<PlusOutlined />}
         onClick={handleAdd}
-        className="w-full border-dashed"
+        block
       >
-        <Plus className="mr-2 h-4 w-4" /> 添加配置项
+        添加配置项
       </Button>
     </div>
   );

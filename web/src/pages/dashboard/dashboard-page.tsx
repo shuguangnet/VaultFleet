@@ -1,22 +1,58 @@
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import {
+  Alert,
+  Button,
+  Card,
+  Col,
+  Empty,
+  Row,
+  Spin,
+  Table,
+  Tag,
+  Typography,
+} from "antd";
+import {
+  CheckCircleTwoTone,
+  CloseCircleTwoTone,
+  DatabaseOutlined,
+  HistoryOutlined,
+  PlusOutlined,
+  SafetyCertificateOutlined,
+  ThunderboltTwoTone,
+} from "@ant-design/icons";
+import type { ColumnsType } from "antd/es/table";
+import dayjs from "dayjs";
+import relativeTime from "dayjs/plugin/relativeTime";
+import "dayjs/locale/zh-cn";
 import { listAgents } from "@/services/agents";
 import { listPolicies } from "@/services/policies";
 import { listTasks } from "@/services/tasks";
 import { checkReady } from "@/services/health";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/status-badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Server, ShieldCheck, CheckCircle2, XCircle, Clock, Activity, Plus, Database } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
-import { zhCN } from "date-fns/locale";
-import { Link } from "react-router-dom";
-import { Button } from "@/components/ui/button";
+
+dayjs.extend(relativeTime);
+dayjs.locale("zh-cn");
+
+interface DashboardTaskRow {
+  id: string;
+  agent_id: string;
+  agent_name: string;
+  type: string;
+  status: string;
+  created_at: string;
+}
 
 export function DashboardPage() {
   const { data: agents } = useQuery({ queryKey: ["agents"], queryFn: listAgents });
-  const { data: policies } = useQuery({ queryKey: ["policies"], queryFn: () => listPolicies() });
-  const { data: tasks } = useQuery({ queryKey: ["tasks", { limit: 200 }], queryFn: () => listTasks({ limit: 200 }) });
-  
+  const { data: policies } = useQuery({
+    queryKey: ["policies"],
+    queryFn: () => listPolicies(),
+  });
+  const { data: tasks } = useQuery({
+    queryKey: ["tasks", { limit: 200 }],
+    queryFn: () => listTasks({ limit: 200 }),
+  });
   const { data: readyStatus } = useQuery({
     queryKey: ["ready"],
     queryFn: checkReady,
@@ -25,145 +61,257 @@ export function DashboardPage() {
 
   const onlineNodes = agents?.filter((a) => a.status === "online").length || 0;
   const offlineNodes = agents?.filter((a) => a.status === "offline").length || 0;
-  
   const syncedPolicies = policies?.filter((p) => p.synced).length || 0;
   const unsyncedPolicies = policies?.filter((p) => !p.synced).length || 0;
 
-  const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const recentTasks = tasks?.filter((t) => new Date(t.created_at) > last24h) || [];
+  const last24h = dayjs().subtract(24, "hour");
+  const recentTasks =
+    tasks?.filter((t) => dayjs(t.created_at).isAfter(last24h)) || [];
   const successCount = recentTasks.filter((t) => t.status === "success").length;
   const failedCount = recentTasks.filter((t) => t.status === "failed").length;
 
   const latestTasks = tasks?.slice(0, 10) || [];
 
+  const columns: ColumnsType<DashboardTaskRow> = [
+    {
+      title: "节点",
+      dataIndex: "agent_name",
+      key: "agent_name",
+      render: (text, record) =>
+        record.agent_name || record.agent_id,
+    },
+    {
+      title: "类型",
+      dataIndex: "type",
+      key: "type",
+      render: (t: string) => (t === "backup" ? "备份" : "恢复"),
+    },
+    {
+      title: "状态",
+      dataIndex: "status",
+      key: "status",
+      render: (s: string) => <StatusBadge status={s as any} />,
+    },
+    {
+      title: "开始时间",
+      dataIndex: "created_at",
+      key: "created_at",
+      render: (v: string) => (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {dayjs(v).fromNow()}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: "操作",
+      key: "action",
+      align: "right",
+      render: (_, record) => (
+        <Link to={`/tasks?agent_id=${record.agent_id}`}>
+          <Button type="link" size="small">
+            详情
+          </Button>
+        </Link>
+      ),
+    },
+  ];
+
+  const tableData: DashboardTaskRow[] = latestTasks.map((t) => ({
+    id: t.id,
+    agent_id: t.agent_id,
+    agent_name:
+      agents?.find((a) => a.id === t.agent_id)?.name || t.agent_id,
+    type: t.type,
+    status: t.status,
+    created_at: t.created_at,
+  }));
+
   return (
-    <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">系统状态</CardTitle>
-            <Activity className={readyStatus?.ok ? "h-4 w-4 text-green-500" : "h-4 w-4 text-red-500"} />
-          </CardHeader>
-          <CardContent>
+    <div className="vf-page" style={{ gap: 20 }}>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} sm={12} lg={8} xl={6}>
+          <Card styles={{ body: { padding: 20 } }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 12,
+              }}
+            >
+              <Typography.Text type="secondary">系统状态</Typography.Text>
+              {readyStatus?.ok ? (
+                <ThunderboltTwoTone twoToneColor="#52c41a" style={{ fontSize: 18 }} />
+              ) : (
+                <ThunderboltTwoTone twoToneColor="#ff4d4f" style={{ fontSize: 18 }} />
+              )}
+            </div>
             {readyStatus?.ok ? (
               <>
-                <div className="text-2xl font-bold text-green-600">运行正常</div>
-                <p className="text-xs text-muted-foreground mt-1">系统已就绪</p>
+                <Typography.Title level={3} style={{ color: "#52c41a", margin: 0 }}>
+                  运行正常
+                </Typography.Title>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  系统已就绪
+                </Typography.Text>
               </>
             ) : (
               <>
-                <div className="text-2xl font-bold text-red-600">未就绪</div>
-                <p className="text-xs text-red-500 mt-1 truncate" title={readyStatus?.error}>{readyStatus?.error || "无法连接服务器"}</p>
+                <Typography.Title level={3} style={{ color: "#ff4d4f", margin: 0 }}>
+                  未就绪
+                </Typography.Title>
+                <Typography.Text
+                  type="danger"
+                  ellipsis
+                  style={{ fontSize: 12, maxWidth: "100%" }}
+                >
+                  {readyStatus?.error || "无法连接服务器"}
+                </Typography.Text>
               </>
             )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">节点状态</CardTitle>
-            <Server className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">{onlineNodes} <span className="text-muted-foreground font-normal text-base">在线</span></div>
-            <p className="text-xs text-muted-foreground mt-1">{offlineNodes} 节点离线</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">策略同步</CardTitle>
-            <ShieldCheck className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{syncedPolicies} <span className="text-muted-foreground font-normal text-base">已同步</span></div>
-            <p className="text-xs text-amber-600 mt-1">{unsyncedPolicies} 策略待同步</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">24h 成功任务</CardTitle>
-            <CheckCircle2 className="h-4 w-4 text-green-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">{successCount}</div>
-            <p className="text-xs text-muted-foreground mt-1">最近 24 小时</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">24h 失败任务</CardTitle>
-            <XCircle className="h-4 w-4 text-red-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-red-600">{failedCount}</div>
-            <p className="text-xs text-muted-foreground mt-1">最近 24 小时</p>
-          </CardContent>
-        </Card>
+          </Card>
+        </Col>
+
+        <Col xs={24} sm={12} lg={8} xl={6}>
+          <Card styles={{ body: { padding: 20 } }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 12,
+              }}
+            >
+              <Typography.Text type="secondary">节点状态</Typography.Text>
+              <DatabaseOutlined style={{ fontSize: 18, color: "rgba(0,0,0,0.45)" }} />
+            </div>
+            <Typography.Title level={3} style={{ color: "#52c41a", margin: 0 }}>
+              {onlineNodes}{" "}
+              <Typography.Text type="secondary" style={{ fontSize: 14 }}>
+                在线
+              </Typography.Text>
+            </Typography.Title>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {offlineNodes} 节点离线
+            </Typography.Text>
+          </Card>
+        </Col>
+
+        <Col xs={24} sm={12} lg={8} xl={6}>
+          <Card styles={{ body: { padding: 20 } }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 12,
+              }}
+            >
+              <Typography.Text type="secondary">策略同步</Typography.Text>
+              <SafetyCertificateOutlined
+                style={{ fontSize: 18, color: "rgba(0,0,0,0.45)" }}
+              />
+            </div>
+            <Typography.Title level={3} style={{ margin: 0 }}>
+              {syncedPolicies}{" "}
+              <Typography.Text type="secondary" style={{ fontSize: 14 }}>
+                已同步
+              </Typography.Text>
+            </Typography.Title>
+            <Typography.Text type="warning" style={{ fontSize: 12 }}>
+              {unsyncedPolicies} 策略待同步
+            </Typography.Text>
+          </Card>
+        </Col>
+
+        <Col xs={24} sm={12} lg={8} xl={6}>
+          <Card styles={{ body: { padding: 20 } }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 12,
+              }}
+            >
+              <Typography.Text type="secondary">24h 任务</Typography.Text>
+              <HistoryOutlined style={{ fontSize: 18, color: "rgba(0,0,0,0.45)" }} />
+            </div>
+            <div style={{ display: "flex", gap: 16, alignItems: "baseline" }}>
+              <span>
+                <CheckCircleTwoTone twoToneColor="#52c41a" style={{ marginRight: 4 }} />
+                <Typography.Text strong style={{ fontSize: 20 }}>
+                  {successCount}
+                </Typography.Text>
+              </span>
+              <span>
+                <CloseCircleTwoTone twoToneColor="#ff4d4f" style={{ marginRight: 4 }} />
+                <Typography.Text strong style={{ fontSize: 20, color: "#ff4d4f" }}>
+                  {failedCount}
+                </Typography.Text>
+              </span>
+            </div>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              成功 / 失败 · 24h
+            </Typography.Text>
+          </Card>
+        </Col>
+      </Row>
+
+      <div>
+        <Typography.Title level={5} style={{ marginBottom: 12 }}>
+          快捷操作
+        </Typography.Title>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Link to="/nodes">
+            <Button icon={<PlusOutlined />}>添加节点</Button>
+          </Link>
+          <Link to="/storage">
+            <Button icon={<DatabaseOutlined />}>添加存储</Button>
+          </Link>
+          <Link to="/policies">
+            <Button icon={<SafetyCertificateOutlined />}>创建策略</Button>
+          </Link>
+        </div>
       </div>
 
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold">快捷操作</h2>
+      <div>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 12,
+          }}
+        >
+          <Typography.Title level={5} style={{ margin: 0 }}>
+            最近任务
+          </Typography.Title>
+          <Link to="/tasks">
+            <Button type="link" size="small">
+              查看全部
+            </Button>
+          </Link>
+        </div>
+        <Card className="vf-table-card" styles={{ body: { padding: 0 } }}>
+          <Table<DashboardTaskRow>
+            columns={columns}
+            dataSource={tableData}
+            rowKey="id"
+            pagination={false}
+            scroll={{ x: 640 }}
+            size="middle"
+            locale={{
+              emptyText: (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="暂无任务记录"
+                />
+              ),
+            }}
+          />
+        </Card>
       </div>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" asChild>
-          <Link to="/nodes"><Plus className="mr-1 h-3 w-3" />添加节点</Link>
-        </Button>
-        <Button variant="outline" size="sm" asChild>
-          <Link to="/storage"><Database className="mr-1 h-3 w-3" />添加存储</Link>
-        </Button>
-        <Button variant="outline" size="sm" asChild>
-          <Link to="/policies"><ShieldCheck className="mr-1 h-3 w-3" />创建策略</Link>
-        </Button>
-      </div>
-
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold">最近任务</h2>
-        <Button variant="outline" size="sm" asChild>
-          <Link to="/tasks">查看全部</Link>
-        </Button>
-      </div>
-
-      <Card>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>节点</TableHead>
-              <TableHead>类型</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead>开始时间</TableHead>
-              <TableHead className="text-right">操作</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {latestTasks.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                  暂无任务记录
-                </TableCell>
-              </TableRow>
-            ) : (
-              latestTasks.map((task) => (
-                <TableRow key={task.id}>
-                  <TableCell className="font-medium">
-                    {agents?.find((a) => a.id === task.agent_id)?.name || task.agent_id}
-                  </TableCell>
-                  <TableCell>{task.type === "backup" ? "备份" : "恢复"}</TableCell>
-                  <TableCell>
-                    <StatusBadge status={task.status} />
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-xs">
-                    {formatDistanceToNow(new Date(task.created_at), { addSuffix: true, locale: zhCN })}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button variant="ghost" size="sm" asChild>
-                      <Link to={`/tasks?agent_id=${task.agent_id}`}>详情</Link>
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </Card>
     </div>
   );
 }

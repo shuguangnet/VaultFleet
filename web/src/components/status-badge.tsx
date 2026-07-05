@@ -1,35 +1,49 @@
-import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { Tag } from "antd";
 
-type StatusType = "online" | "offline" | "success" | "failed" | "running" | "syncing" | "unsynced" | "pending" | "timeout" | "dispatched" | "succeeded" | "queued" | "cancelled";
+export type StatusType =
+  | "online"
+  | "offline"
+  | "success"
+  | "failed"
+  | "running"
+  | "syncing"
+  | "unsynced"
+  | "pending"
+  | "timeout"
+  | "dispatched"
+  | "succeeded"
+  | "queued"
+  | "cancelled";
 
 interface StatusBadgeProps {
   status: StatusType;
   className?: string;
 }
 
+const STATUS_CONFIG: Record<
+  StatusType,
+  { label: string; color: string }
+> = {
+  online: { label: "在线", color: "success" },
+  offline: { label: "离线", color: "error" },
+  success: { label: "已完成", color: "success" },
+  failed: { label: "失败", color: "error" },
+  running: { label: "运行中", color: "processing" },
+  syncing: { label: "同步中", color: "processing" },
+  unsynced: { label: "待同步", color: "warning" },
+  pending: { label: "等待中", color: "warning" },
+  timeout: { label: "超时", color: "orange" },
+  dispatched: { label: "已下发", color: "blue" },
+  succeeded: { label: "成功", color: "success" },
+  queued: { label: "已排队", color: "default" },
+  cancelled: { label: "已取消", color: "default" },
+};
+
 export function StatusBadge({ status, className }: StatusBadgeProps) {
-  const config: Record<StatusType, { label: string; className: string }> = {
-    online: { label: "在线", className: "bg-green-500 hover:bg-green-600" },
-    offline: { label: "离线", className: "bg-red-500 hover:bg-red-600" },
-    success: { label: "已完成", className: "bg-green-500 hover:bg-green-600" },
-    failed: { label: "失败", className: "bg-red-500 hover:bg-red-600" },
-    running: { label: "运行中", className: "bg-blue-500 hover:bg-blue-600 animate-pulse" },
-    syncing: { label: "同步中", className: "bg-blue-500 hover:bg-blue-600" },
-    unsynced: { label: "待同步", className: "bg-amber-500 hover:bg-amber-600" },
-    pending: { label: "等待中", className: "bg-amber-500 hover:bg-amber-600" },
-    timeout: { label: "超时", className: "bg-orange-500 hover:bg-orange-600" },
-    dispatched: { label: "已下发", className: "bg-indigo-500 hover:bg-indigo-600" },
-    succeeded: { label: "成功", className: "bg-green-600 hover:bg-green-700" },
-    queued: { label: "已排队", className: "bg-slate-500 hover:bg-slate-600" },
-    cancelled: { label: "已取消", className: "bg-gray-500 hover:bg-gray-600" },
-  };
-
-  const { label, className: statusClass } = config[status] || { label: status, className: "bg-gray-500" };
-
+  const config = STATUS_CONFIG[status] ?? { label: status, color: "default" };
   return (
-    <Badge className={cn("font-medium", statusClass, className)}>
-      {label}
-    </Badge>
+    <Tag color={config.color} className={className} style={{ margin: 0 }}>
+      {config.label}
+    </Tag>
   );
 }

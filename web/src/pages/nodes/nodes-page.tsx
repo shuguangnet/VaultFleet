@@ -1,33 +1,55 @@
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { listAgents, createAgent, deleteAgent, regenerateAgentToken, getInstallToken } from "@/services/agents";
-import { StatusBadge } from "@/components/status-badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Search, MoreHorizontal, RefreshCw, Trash2, ExternalLink, Terminal } from "lucide-react";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { ConfirmDialog } from "@/components/confirm-dialog";
-import { InstallCommand } from "@/components/install-command";
+  Button,
+  Card,
+  Drawer,
+  Dropdown,
+  Empty,
+  Input,
+  Popconfirm,
+  Space,
+  Spin,
+  Table,
+  Typography,
+} from "antd";
+import {
+  CopyOutlined,
+  CheckOutlined,
+  EllipsisOutlined,
+  LinkOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  SearchOutlined,
+  CodeOutlined,
+  WarningOutlined,
+} from "@ant-design/icons";
+import type { ColumnsType } from "antd/es/table";
 import { Link } from "react-router-dom";
-import { safeFormatDate } from "@/lib/date";
+import {safeFormatDate} from "@/lib/date";
+import {
+  createAgent,
+  deleteAgent,
+  getInstallToken,
+  listAgents,
+  regenerateAgentToken,
+} from "@/services/agents";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { InstallCommand } from "@/components/install-command";
+import { StatusBadge } from "@/components/status-badge";
+import { App } from "antd";
+
+type Agent = Awaited<ReturnType<typeof listAgents>>[number];
 
 export function NodesPage() {
+  const { message } = App.useApp();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const [isAddDrawerOpen, setIsAddDrawerOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [newNodeName, setNewNodeName] = useState("");
   const [enrollToken, setEnrollToken] = useState<string | null>(null);
-  const [confirmDeleteId, setConfirmConfirmDeleteId] = useState<string | null>(null);
-  const [confirmRegenId, setConfirmRegenId] = useState<string | null>(null);
-  const [installCommandAgentId, setInstallCommandAgentId] = useState<string | null>(null);
-  const [showEnrolledConfirm, setShowEnrolledConfirm] = useState(false);
+  const [installCommandAgent, setInstallCommandAgent] = useState<
+    { id: string; token: string } | null
+  >(null);
 
   const { data: agents, isLoading } = useQuery({
     queryKey: ["agents"],
@@ -46,221 +68,259 @@ export function NodesPage() {
   const deleteMutation = useMutation({
     mutationFn: deleteAgent,
     onSuccess: () => {
-      setConfirmConfirmDeleteId(null);
+      message.success("节点已删除");
       queryClient.invalidateQueries({ queryKey: ["agents"] });
     },
+    onError: (err: any) => message.error(err.message || "删除失败"),
   });
 
   const regenMutation = useMutation({
     mutationFn: regenerateAgentToken,
     onSuccess: (data) => {
       setEnrollToken(data.enroll_token);
-      setConfirmRegenId(null);
-      setIsAddDrawerOpen(true); // Re-open drawer to show new token
     },
   });
 
-  const filteredAgents = agents?.filter((a) => a.name.toLowerCase().includes(search.toLowerCase())) || [];
+  const filtered = agents?.filter((a) =>
+    a.name.toLowerCase().includes(search.toLowerCase())
+  ) || [];
 
-  const handleAddNode = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAddNode = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!newNodeName) {
+      message.warning("请输入节点名称");
+      return;
+    }
     createMutation.mutate({ name: newNodeName });
   };
 
-  const handleDrawerClose = (open: boolean) => {
-    setIsAddDrawerOpen(open);
-    if (!open) {
-      setEnrollToken(null);
-      setNewNodeName("");
-      setInstallCommandAgentId(null);
-      createMutation.reset();
-    }
+  const closeDrawer = () => {
+    setDrawerOpen(false);
+    setEnrollToken(null);
+    setNewNodeName("");
+    setInstallCommandAgent(null);
+    createMutation.reset();
   };
 
   const handleShowInstallCommand = async (agentId: string) => {
     try {
       const result = await getInstallToken(agentId);
       if (!result.enrolled) {
-        // Agent not yet enrolled, show install command directly
-        setInstallCommandAgentId(agentId);
+        setInstallCommandAgent({ id: agentId, token: result.enroll_token });
         setEnrollToken(result.enroll_token);
-        setIsAddDrawerOpen(true);
+        setDrawerOpen(true);
       } else {
-        // Agent already enrolled, ask for confirmation
-        setInstallCommandAgentId(agentId);
-        setShowEnrolledConfirm(true);
+        // 节点已注册 — 直接重新生成
+        regenMutation.mutate(agentId, {
+          onSuccess: (data) => {
+            setInstallCommandAgent({ id: agentId, token: data.enroll_token });
+            setDrawerOpen(true);
+          },
+        });
       }
     } catch {
-      // If the API call fails, fall back to regen flow
-      setInstallCommandAgentId(agentId);
-      setShowEnrolledConfirm(true);
+      regenMutation.mutate(agentId, {
+        onSuccess: (data) => {
+          setInstallCommandAgent({ id: agentId, token: data.enroll_token });
+          setDrawerOpen(true);
+        },
+      });
     }
   };
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">节点管理</h1>
-        <Sheet open={isAddDrawerOpen} onOpenChange={handleDrawerClose}>
-          <SheetTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" /> 添加节点
-            </Button>
-          </SheetTrigger>
-          <SheetContent className="sm:max-w-md">
-            <SheetHeader>
-              <SheetTitle>{enrollToken ? "安装指令" : "添加新节点"}</SheetTitle>
-              <SheetDescription>
-                {enrollToken ? "在您的服务器上运行以下命令以完成部署。" : "输入节点名称以生成安装 Token。"}
-              </SheetDescription>
-            </SheetHeader>
-            <div className="py-6">
-              {enrollToken ? (
-                <InstallCommand enrollToken={enrollToken} />
-              ) : (
-                <form onSubmit={handleAddNode} className="space-y-4">
-                  <div className="space-y-2">
-                    <Input
-                      placeholder="节点名称 (如: production-db-1)"
-                      value={newNodeName}
-                      onChange={(e) => setNewNodeName(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <Button type="submit" className="w-full" disabled={createMutation.isPending}>
-                    {createMutation.isPending ? "正在生成..." : "生成安装 Token"}
-                  </Button>
-                </form>
-              )}
-            </div>
-          </SheetContent>
-        </Sheet>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="搜索节点名称..."
-            className="pl-8"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+  const columns: ColumnsType<Agent> = [
+    {
+      title: "名称",
+      dataIndex: "name",
+      key: "name",
+      render: (text, record) => (
+        <Link to={`/nodes/${record.id}`}>
+          <Space>
+            <Typography.Text strong>{text}</Typography.Text>
+            <LinkOutlined style={{ color: "rgba(0,0,0,0.45)" }} />
+          </Space>
+        </Link>
+      ),
+    },
+    {
+      title: "状态",
+      dataIndex: "status",
+      key: "status",
+      render: (s: string) => <StatusBadge status={s as any} />,
+    },
+    {
+      title: "最后在线",
+      dataIndex: "last_seen",
+      key: "last_seen",
+      render: (v: string | null) => (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {safeFormatDate(v, "yyyy-MM-dd HH:mm:ss", "从未在线")}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: "系统信息",
+      key: "os",
+      responsive: ["md"],
+      render: (_, record) => (
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          <Typography.Text style={{ fontSize: 12 }}>
+            {record.os} / {record.arch}
+          </Typography.Text>
+          {record.version && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {record.version}
+            </Typography.Text>
+          )}
         </div>
-      </div>
+      ),
+    },
+    {
+      title: "创建时间",
+      dataIndex: "created_at",
+      key: "created_at",
+      responsive: ["lg"],
+      render: (v: string) => (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {safeFormatDate(v, "yyyy-MM-dd")}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: "操作",
+      key: "action",
+      align: "right",
+      render: (_, record) => (
+        <Dropdown
+          menu={{
+            items: [
+              {
+                key: "detail",
+                label: (
+                  <Link to={`/nodes/${record.id}`} style={{ display: "block" }}>
+                    详情
+                  </Link>
+                ),
+              },
+              {
+                key: "install",
+                icon: <CodeOutlined />,
+                label: "安装指令",
+                onClick: () => handleShowInstallCommand(record.id),
+              },
+              { type: "divider" },
+              {
+                key: "delete",
+                icon: <WarningOutlined style={{ color: "#ff4d4f" }} />,
+                label: (
+                  <Popconfirm
+                    title="确认删除节点？"
+                    description="此操作将永久删除该节点及其所有关联策略。此操作不可撤销。"
+                    okText="确认删除"
+                    okButtonProps={{ danger: true }}
+                    cancelText="取消"
+                    onConfirm={() => deleteMutation.mutate(record.id)}
+                  >
+                    <span style={{ color: "#ff4d4f" }}>删除</span>
+                  </Popconfirm>
+                ),
+              },
+            ],
+          }}
+          trigger={["click"]}
+          placement="bottomRight"
+        >
+          <Button type="text" icon={<EllipsisOutlined />} />
+        </Dropdown>
+      ),
+    },
+  ];
 
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>名称</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead>最后在线</TableHead>
-              <TableHead className="hidden md:table-cell">系统信息</TableHead>
-              <TableHead className="hidden lg:table-cell">创建时间</TableHead>
-              <TableHead className="text-right">操作</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center">正在加载...</TableCell>
-              </TableRow>
-            ) : filteredAgents.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
-                  未找到匹配的节点
-                </TableCell>
-              </TableRow>
-            ) : (
-              filteredAgents.map((agent) => (
-                <TableRow key={agent.id}>
-                  <TableCell className="font-medium">
-                    <Link to={`/nodes/${agent.id}`} className="hover:underline flex items-center gap-1">
-                      {agent.name}
-                      <ExternalLink className="h-3 w-3 text-muted-foreground" />
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <StatusBadge status={agent.status} />
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {safeFormatDate(agent.last_seen, "yyyy-MM-dd HH:mm:ss", "从未在线")}
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell text-xs">
-                    <div className="flex flex-col">
-                      <span>{agent.os} / {agent.arch}</span>
-                      {agent.version && <span className="text-muted-foreground">{agent.version}</span>}
-                    </div>
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
-                    {safeFormatDate(agent.created_at, "yyyy-MM-dd")}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem asChild>
-                          <Link to={`/nodes/${agent.id}`}>详情</Link>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleShowInstallCommand(agent.id)}>
-                          <Terminal className="mr-2 h-4 w-4" /> 安装指令
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => setConfirmRegenId(agent.id)}>
-                          <RefreshCw className="mr-2 h-4 w-4" /> 重新生成 Token
-                        </DropdownMenuItem>
-                        <DropdownMenuItem className="text-red-600" onClick={() => setConfirmConfirmDeleteId(agent.id)}>
-                          <Trash2 className="mr-2 h-4 w-4" /> 删除
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
-
-      <ConfirmDialog
-        open={!!confirmDeleteId}
-        onOpenChange={(open) => !open && setConfirmConfirmDeleteId(null)}
-        title="确认删除节点？"
-        description="此操作将永久删除该节点及其所有关联策略。此操作不可撤销。"
-        onConfirm={() => confirmDeleteId && deleteMutation.mutate(confirmDeleteId)}
-        loading={deleteMutation.isPending}
-      />
-
-      <ConfirmDialog
-        open={!!confirmRegenId}
-        onOpenChange={(open) => !open && setConfirmRegenId(null)}
-        title="确认重新生成 Token？"
-        description="重新生成后，原有的安装 Token 将立即失效。您需要重新部署该节点。"
-        confirmText="重新生成"
-        variant="default"
-        onConfirm={() => confirmRegenId && regenMutation.mutate(confirmRegenId)}
-        loading={regenMutation.isPending}
-      />
-
-      <ConfirmDialog
-        open={showEnrolledConfirm}
-        onOpenChange={(open) => !open && setShowEnrolledConfirm(false)}
-        title="节点已注册"
-        description="该节点已完成注册，重新部署将使当前运行的 Agent 失效并生成新的安装 Token。是否继续？"
-        confirmText="重新生成并部署"
-        variant="default"
-        onConfirm={() => {
-          if (installCommandAgentId) {
-            regenMutation.mutate(installCommandAgentId);
-            setShowEnrolledConfirm(false);
-          }
+  return (
+    <div className="vf-page">
+      <div
+        className="vf-page-header"
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
         }}
-        loading={regenMutation.isPending}
+      >
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          节点管理
+        </Typography.Title>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => setDrawerOpen(true)}
+        >
+          添加节点
+        </Button>
+      </div>
+
+      <Input
+        className="vf-mobile-full"
+        allowClear
+        placeholder="搜索节点名称..."
+        prefix={<SearchOutlined />}
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        style={{ maxWidth: 320 }}
       />
+
+      <Card className="vf-table-card" styles={{ body: { padding: 0 } }}>
+        <Table<Agent>
+          columns={columns}
+          dataSource={filtered}
+          rowKey="id"
+          loading={isLoading}
+          pagination={{ pageSize: 10, showSizeChanger: true }}
+          scroll={{ x: 680 }}
+          size="middle"
+          locale={{
+            emptyText: (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="未找到匹配的节点"
+              />
+            ),
+          }}
+        />
+      </Card>
+
+      <Drawer
+        title={enrollToken ? "安装指令" : "添加新节点"}
+        open={drawerOpen}
+        onClose={closeDrawer}
+        width="min(100vw, 480px)"
+        destroyOnClose
+      >
+        {enrollToken ? (
+          <InstallCommand enrollToken={enrollToken} />
+        ) : (
+          <form onSubmit={handleAddNode}>
+            <Space direction="vertical" size={16} style={{ width: "100%" }}>
+              <Typography.Paragraph type="secondary">
+                输入节点名称以生成安装 Token。
+              </Typography.Paragraph>
+              <Input
+                placeholder="节点名称 (如: production-db-1)"
+                value={newNodeName}
+                onChange={(e) => setNewNodeName(e.target.value)}
+                autoFocus
+              />
+              <Button
+                type="primary"
+                htmlType="submit"
+                block
+                loading={createMutation.isPending}
+              >
+                生成安装 Token
+              </Button>
+            </Space>
+          </form>
+        )}
+      </Drawer>
     </div>
   );
 }

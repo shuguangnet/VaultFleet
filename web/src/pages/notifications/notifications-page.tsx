@@ -1,35 +1,46 @@
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  listNotifications,
+  App,
+  Button,
+  Card,
+  Col,
+  Drawer,
+  Dropdown,
+  Empty,
+  Form,
+  Input,
+  Popconfirm,
+  Row,
+  Select,
+  Space,
+  Switch,
+  Table,
+  Tag,
+  Typography,
+} from "antd";
+import {
+  CheckOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  EllipsisOutlined,
+  MessageOutlined,
+  PlusOutlined,
+  SendOutlined,
+} from "@ant-design/icons";
+import type { ColumnsType } from "antd/es/table";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
   createNotification,
-  updateNotification,
   deleteNotification,
+  listNotifications,
   testNotification,
   testNotificationConfig,
   testNotificationDraft,
+  updateNotification,
 } from "@/services/notifications";
-import { NotificationConfig, NotificationInput } from "@/types/notification";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Bell, Settings2, Trash2, MoreHorizontal, Send, Check } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger, SheetFooter } from "@/components/ui/sheet";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
-import { ConfirmDialog } from "@/components/confirm-dialog";
+import type { NotificationConfig, NotificationInput } from "@/types/notification";
 import { ErrorPanel } from "@/components/error-panel";
-import { format } from "date-fns";
-import { zhCN } from "date-fns/locale";
-import { toast } from "sonner";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 
 const EVENT_OPTIONS = [
   { id: "backup_failed", label: "备份失败" },
@@ -39,7 +50,8 @@ const EVENT_OPTIONS = [
 type NotificationType = NotificationInput["type"];
 
 const DEFAULT_SUBJECT_TEMPLATE = "[VaultFleet] {{.Title}} - {{.AgentName}}";
-const DEFAULT_BODY_TEMPLATE = "{{.Title}}\nLevel: {{.Level}}\nAgent: {{.AgentName}}\nTime: {{.Timestamp}}\n\n{{.Body}}";
+const DEFAULT_BODY_TEMPLATE =
+  "{{.Title}}\nLevel: {{.Level}}\nAgent: {{.AgentName}}\nTime: {{.Timestamp}}\n\n{{.Body}}";
 
 function defaultConfigForType(type: NotificationType): Record<string, unknown> {
   switch (type) {
@@ -67,34 +79,30 @@ function defaultConfigForType(type: NotificationType): Record<string, unknown> {
 }
 
 function configString(config: Record<string, unknown>, key: string) {
-  const value = config[key];
-  if (typeof value === "string") return value;
-  if (typeof value === "number") return String(value);
+  const v = config[key];
+  if (typeof v === "string") return v;
+  if (typeof v === "number") return String(v);
   return "";
 }
 
 function configListText(config: Record<string, unknown>, key: string) {
-  const value = config[key];
-  if (Array.isArray(value)) {
-    return value.filter((item): item is string => typeof item === "string").join("\n");
-  }
-  return typeof value === "string" ? value : "";
+  const v = config[key];
+  if (Array.isArray(v))
+    return v.filter((i): i is string => typeof i === "string").join("\n");
+  return typeof v === "string" ? v : "";
 }
 
 function parseConfigList(value: string) {
-  return value
-    .split(/[\n,]/)
-    .map((item) => item.trim())
-    .filter(Boolean);
+  return value.split(/[\n,]/).map((i) => i.trim()).filter(Boolean);
 }
 
 export function NotificationsPage() {
+  const { message } = App.useApp();
   const queryClient = useQueryClient();
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [testSuccessId, setTestSuccessId] = useState<string | null>(null);
-
   const [formData, setFormData] = useState<NotificationInput>({
     name: "",
     type: "telegram",
@@ -102,64 +110,57 @@ export function NotificationsPage() {
     events: ["backup_failed", "agent_offline"],
   });
 
-  const { data: notifications, isLoading } = useQuery({ queryKey: ["notifications"], queryFn: listNotifications });
+  const { data: notifications, isLoading } = useQuery({
+    queryKey: ["notifications"],
+    queryFn: listNotifications,
+  });
 
   const createMutation = useMutation({
     mutationFn: createNotification,
     onSuccess: () => {
-      setIsDrawerOpen(false);
+      setDrawerOpen(false);
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
-      toast.success("通知配置已创建");
+      message.success("通知配置已创建");
     },
-    onError: (error: any) => {
-      toast.error("创建通知失败", { description: error.message });
-    },
+    onError: (err: any) => message.error("创建通知失败: " + err.message),
   });
 
   const updateMutation = useMutation({
     mutationFn: (data: NotificationInput) => updateNotification(editingId!, data),
     onSuccess: () => {
-      setIsDrawerOpen(false);
+      setDrawerOpen(false);
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
-      toast.success("通知配置已更新");
+      message.success("通知配置已更新");
     },
-    onError: (error: any) => {
-      toast.error("更新通知失败", { description: error.message });
-    },
+    onError: (err: any) => message.error("更新通知失败: " + err.message),
   });
 
   const deleteMutation = useMutation({
     mutationFn: deleteNotification,
     onSuccess: () => {
-      setConfirmDeleteId(null);
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
-      toast.success("通知配置已删除");
+      message.success("通知配置已删除");
     },
-    onError: (error: any) => {
-      toast.error("删除通知失败", { description: error.message });
-    },
+    onError: (err: any) => message.error("删除通知失败: " + err.message),
   });
 
   const testMutation = useMutation({
     mutationFn: testNotification,
     onSuccess: (_, id) => {
       setTestSuccessId(id);
-      toast.success("测试消息已发送");
+      message.success("测试消息已发送");
       setTimeout(() => setTestSuccessId(null), 3000);
     },
-    onError: (error: any) => {
-      toast.error("发送测试消息失败", { description: error.message });
-    },
+    onError: (err: any) => message.error("发送测试消息失败: " + err.message),
   });
 
   const testConfigMutation = useMutation({
-    mutationFn: () => editingId ? testNotificationDraft(editingId, formData) : testNotificationConfig(formData),
-    onSuccess: () => {
-      toast.success("测试消息已发送");
-    },
-    onError: (error: any) => {
-      toast.error("发送测试消息失败", { description: error.message });
-    },
+    mutationFn: () =>
+      editingId
+        ? testNotificationDraft(editingId, formData)
+        : testNotificationConfig(formData),
+    onSuccess: () => message.success("测试消息已发送"),
+    onError: (err: any) => message.error("发送测试消息失败: " + err.message),
   });
 
   const handleEdit = (n: NotificationConfig) => {
@@ -170,389 +171,481 @@ export function NotificationsPage() {
       config: n.config,
       events: n.events,
     });
-    setIsDrawerOpen(true);
+    setDrawerOpen(true);
   };
 
-  const handleDrawerClose = (open: boolean) => {
-    setIsDrawerOpen(open);
-    if (!open) {
-      setEditingId(null);
-      setFormData({
-        name: "",
-        type: "telegram",
-        config: defaultConfigForType("telegram"),
-        events: ["backup_failed", "agent_offline"],
-      });
-      createMutation.reset();
-      updateMutation.reset();
-      testConfigMutation.reset();
-    }
+  const resetForm = () => {
+    setEditingId(null);
+    setFormData({
+      name: "",
+      type: "telegram",
+      config: defaultConfigForType("telegram"),
+      events: ["backup_failed", "agent_offline"],
+    });
+    createMutation.reset();
+    updateMutation.reset();
+    testConfigMutation.reset();
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingId) {
-      updateMutation.mutate(formData);
-    } else {
-      createMutation.mutate(formData);
-    }
+    if (editingId) updateMutation.mutate(formData);
+    else createMutation.mutate(formData);
   };
 
   const toggleEvent = (eventId: string) => {
-    const newEvents = formData.events.includes(eventId)
-      ? formData.events.filter(id => id !== eventId)
-      : [...formData.events, eventId];
-    setFormData({ ...formData, events: newEvents });
+    setFormData((prev) => ({
+      ...prev,
+      events: prev.events.includes(eventId)
+        ? prev.events.filter((id) => id !== eventId)
+        : [...prev.events, eventId],
+    }));
   };
 
   const updateConfig = (key: string, value: unknown) => {
-    setFormData({ ...formData, config: { ...formData.config, [key]: value } });
+    setFormData((prev) => ({
+      ...prev,
+      config: { ...prev.config, [key]: value },
+    }));
   };
 
+  const columns: ColumnsType<NotificationConfig> = [
+    {
+      title: "名称",
+      dataIndex: "name",
+      key: "name",
+      render: (v: string) => <Typography.Text strong>{v}</Typography.Text>,
+    },
+    {
+      title: "类型",
+      dataIndex: "type",
+      key: "type",
+      render: (v: string) => <Tag>{v}</Tag>,
+    },
+    {
+      title: "订阅事件",
+      dataIndex: "events",
+      key: "events",
+      render: (events: string[]) => (
+        <Space size={4} wrap>
+          {events.map((ev) => (
+            <Tag key={ev}>
+              {EVENT_OPTIONS.find((o) => o.id === ev)?.label || ev}
+            </Tag>
+          ))}
+        </Space>
+      ),
+    },
+    {
+      title: "操作",
+      key: "action",
+      align: "right",
+      render: (_, record) => (
+        <Space>
+          <Button
+            type="text"
+            icon={
+              testSuccessId === record.id ? (
+                <CheckOutlined style={{ color: "#52c41a" }} />
+              ) : (
+                <SendOutlined />
+              )
+            }
+            onClick={() => testMutation.mutate(record.id)}
+            loading={testMutation.isPending && testMutation.variables === record.id}
+            title="发送测试消息"
+          />
+          <Dropdown
+            menu={{
+              items: [
+                {
+                  key: "edit",
+                  icon: <EditOutlined />,
+                  label: "编辑",
+                  onClick: () => handleEdit(record),
+                },
+                { type: "divider" },
+                {
+                  key: "delete",
+                  icon: <DeleteOutlined />,
+                  label: (
+                    <Popconfirm
+                      title="确认删除通知配置？"
+                      description="系统将停止向此渠道发送告警。此操作不可撤销。"
+                      okText="确认删除"
+                      okButtonProps={{ danger: true }}
+                      cancelText="取消"
+                      onConfirm={() => deleteMutation.mutate(record.id)}
+                    >
+                      <span style={{ color: "#ff4d4f" }}>删除</span>
+                    </Popconfirm>
+                  ),
+                },
+              ],
+            }}
+            trigger={["click"]}
+          >
+            <Button type="text" icon={<EllipsisOutlined />} />
+          </Dropdown>
+        </Space>
+      ),
+    },
+  ];
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">通知设置</h1>
-        <Sheet open={isDrawerOpen} onOpenChange={handleDrawerClose}>
-          <SheetTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" /> 添加通知
-            </Button>
-          </SheetTrigger>
-          <SheetContent className="sm:max-w-xl">
-            <SheetHeader>
-              <SheetTitle>{editingId ? "编辑通知" : "添加新通知"}</SheetTitle>
-              <SheetDescription>
-                配置系统告警的发送渠道和触发事件。
-              </SheetDescription>
-            </SheetHeader>
-            <form onSubmit={handleSubmit} className="space-y-6 py-6 pb-20">
-              <ErrorPanel error={(createMutation.error || updateMutation.error) as any} />
-              
-              <div className="space-y-2">
-                <Label htmlFor="name">名称</Label>
-                <Input
-                  id="name"
-                  placeholder="如: 运维 Telegram"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  required
-                />
-              </div>
+    <div className="vf-page">
+      <div
+        className="vf-page-header"
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          通知设置
+        </Typography.Title>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => {
+            resetForm();
+            setDrawerOpen(true);
+          }}
+        >
+          添加通知
+        </Button>
+      </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="type">通知类型</Label>
-                <Select
-                  value={formData.type}
-                  onValueChange={(val: NotificationType) => setFormData({
-                    ...formData, 
-                    type: val, 
-                    config: defaultConfigForType(val)
-                  })}
+      <Card className="vf-table-card" styles={{ body: { padding: 0 } }}>
+        <Table<NotificationConfig>
+          columns={columns}
+          dataSource={notifications || []}
+          rowKey="id"
+          loading={isLoading}
+          pagination={{ pageSize: 10 }}
+          scroll={{ x: 680 }}
+          size="middle"
+          locale={{
+            emptyText: (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="暂无通知配置"
+              />
+            ),
+          }}
+        />
+      </Card>
+
+      <Drawer
+        title={editingId ? "编辑通知" : "添加新通知"}
+        open={drawerOpen}
+        onClose={() => {
+          setDrawerOpen(false);
+          resetForm();
+        }}
+        width="min(100vw, 520px)"
+        destroyOnClose
+        footer={
+          <div
+            className="vf-drawer-footer"
+            style={{
+              padding: "10px 16px",
+              background: "#fff",
+              borderTop: "1px solid #f0f0f0",
+            }}
+          >
+            <Row gutter={[8, 8]}>
+              <Col xs={24} sm={10}>
+                <Button
+                  block
+                  onClick={() => testConfigMutation.mutate()}
+                  loading={testConfigMutation.isPending}
+                  disabled={createMutation.isPending || updateMutation.isPending}
                 >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="telegram">Telegram Bot</SelectItem>
-                    <SelectItem value="webhook">Generic Webhook</SelectItem>
-                    <SelectItem value="email">Email SMTP</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+                  测试当前配置
+                </Button>
+              </Col>
+              <Col xs={24} sm={14}>
+                <Button
+                  type="primary"
+                  block
+                  onClick={handleSubmit as any}
+                  loading={createMutation.isPending || updateMutation.isPending}
+                >
+                  {createMutation.isPending || updateMutation.isPending
+                    ? "正在保存..."
+                    : "保存通知配置"}
+                </Button>
+              </Col>
+            </Row>
+          </div>
+        }
+      >
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <ErrorPanel
+            error={(createMutation.error || updateMutation.error) as any}
+          />
+          <div>
+            <Typography.Text strong>名称</Typography.Text>
+            <Input
+              style={{ marginTop: 4 }}
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="如: 运维 Telegram"
+            />
+          </div>
+          <div>
+            <Typography.Text strong>通知类型</Typography.Text>
+            <Select
+              style={{ width: "100%", marginTop: 4 }}
+              value={formData.type}
+              onChange={(val: NotificationType) =>
+                setFormData({
+                  ...formData,
+                  type: val,
+                  config: defaultConfigForType(val),
+                })
+              }
+              options={[
+                { value: "telegram", label: "Telegram Bot" },
+                { value: "webhook", label: "Generic Webhook" },
+                { value: "email", label: "Email SMTP" },
+              ]}
+            />
+          </div>
 
-              <div className="space-y-4 border rounded-md p-4 bg-muted/20">
-                <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">渠道配置</Label>
-                {formData.type === "telegram" ? (
-                  <>
-                    <div className="space-y-2">
-                      <Label htmlFor="bot_token">Bot Token</Label>
-                      <Input
-                        id="bot_token"
-                        type="password"
-                        value={configString(formData.config, "bot_token")}
-                        onChange={(e) => updateConfig("bot_token", e.target.value)}
-                        placeholder={configString(formData.config, "bot_token") === "[redacted]" ? "已加密 (输入以修改)" : "123456789:ABC..."}
-                        required={configString(formData.config, "bot_token") !== "[redacted]"}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="chat_id">Chat ID</Label>
-                      <Input
-                        id="chat_id"
-                        value={configString(formData.config, "chat_id")}
-                        onChange={(e) => updateConfig("chat_id", e.target.value)}
-                        placeholder="-100..."
-                        required
-                      />
-                    </div>
-                  </>
-                ) : formData.type === "webhook" ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="webhook_url">Webhook URL</Label>
-                    <Input
-                      id="webhook_url"
-                      value={configString(formData.config, "url")}
-                      onChange={(e) => updateConfig("url", e.target.value)}
-                      placeholder="https://hooks.slack.com/..."
-                      required
+          <div
+            style={{
+              border: "1px solid #f0f0f0",
+              borderRadius: 6,
+              padding: 12,
+              background: "#fafafa",
+            }}
+          >
+            <Typography.Text strong>渠道配置</Typography.Text>
+            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 12 }}>
+              {formData.type === "telegram" && (
+                <>
+                  <div>
+                    <Typography.Text style={{ fontSize: 13 }}>Bot Token</Typography.Text>
+                    <Input.Password
+                      style={{ marginTop: 4 }}
+                      value={configString(formData.config, "bot_token")}
+                      onChange={(e) => updateConfig("bot_token", e.target.value)}
+                      placeholder={
+                        configString(formData.config, "bot_token") === "[redacted]"
+                          ? "已加密 (输入以修改)"
+                          : "123456789:ABC..."
+                      }
                     />
                   </div>
-                ) : (
-                  <>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <Label htmlFor="smtp_host">SMTP 主机</Label>
-                        <Input
-                          id="smtp_host"
-                          value={configString(formData.config, "smtp_host")}
-                          onChange={(e) => updateConfig("smtp_host", e.target.value)}
-                          placeholder="smtp.example.com"
-                          required
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="smtp_port">端口</Label>
-                        <Input
-                          id="smtp_port"
-                          type="number"
-                          min={1}
-                          max={65535}
-                          value={configString(formData.config, "smtp_port")}
-                          onChange={(e) => updateConfig("smtp_port", Number(e.target.value))}
-                          required
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="smtp_security">加密方式</Label>
-                      <Select value={configString(formData.config, "smtp_security") || "starttls"} onValueChange={(value) => updateConfig("smtp_security", value)}>
-                        <SelectTrigger id="smtp_security">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="starttls">STARTTLS</SelectItem>
-                          <SelectItem value="tls">TLS</SelectItem>
-                          <SelectItem value="none">无</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <Label htmlFor="smtp_username">用户名</Label>
-                        <Input
-                          id="smtp_username"
-                          value={configString(formData.config, "smtp_username")}
-                          onChange={(e) => updateConfig("smtp_username", e.target.value)}
-                          placeholder="ops@example.com"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="smtp_password">密码</Label>
-                        <Input
-                          id="smtp_password"
-                          type="password"
-                          value={configString(formData.config, "smtp_password")}
-                          onChange={(e) => updateConfig("smtp_password", e.target.value)}
-                          placeholder={configString(formData.config, "smtp_password") === "[redacted]" ? "已加密 (输入以修改)" : "SMTP 密码"}
-                        />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <Label htmlFor="from">发件人邮箱</Label>
-                        <Input
-                          id="from"
-                          type="email"
-                          value={configString(formData.config, "from")}
-                          onChange={(e) => updateConfig("from", e.target.value)}
-                          placeholder="ops@example.com"
-                          required
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="from_name">发件人名称</Label>
-                        <Input
-                          id="from_name"
-                          value={configString(formData.config, "from_name")}
-                          onChange={(e) => updateConfig("from_name", e.target.value)}
-                          placeholder="VaultFleet"
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="email_to">收件人</Label>
-                      <Textarea
-                        id="email_to"
-                        value={configListText(formData.config, "to")}
-                        onChange={(e) => updateConfig("to", parseConfigList(e.target.value))}
-                        placeholder="admin@example.com"
-                        required
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <Label htmlFor="email_cc">抄送</Label>
-                        <Textarea
-                          id="email_cc"
-                          value={configListText(formData.config, "cc")}
-                          onChange={(e) => updateConfig("cc", parseConfigList(e.target.value))}
-                          placeholder="cc@example.com"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="email_bcc">密送</Label>
-                        <Textarea
-                          id="email_bcc"
-                          value={configListText(formData.config, "bcc")}
-                          onChange={(e) => updateConfig("bcc", parseConfigList(e.target.value))}
-                          placeholder="bcc@example.com"
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="subject_template">主题模板</Label>
+                  <div>
+                    <Typography.Text style={{ fontSize: 13 }}>Chat ID</Typography.Text>
+                    <Input
+                      style={{ marginTop: 4 }}
+                      value={configString(formData.config, "chat_id")}
+                      onChange={(e) => updateConfig("chat_id", e.target.value)}
+                      placeholder="-100..."
+                    />
+                  </div>
+                </>
+              )}
+
+              {formData.type === "webhook" && (
+                <div>
+                  <Typography.Text style={{ fontSize: 13 }}>Webhook URL</Typography.Text>
+                  <Input
+                    style={{ marginTop: 4 }}
+                    value={configString(formData.config, "url")}
+                    onChange={(e) => updateConfig("url", e.target.value)}
+                    placeholder="https://hooks.slack.com/..."
+                  />
+                </div>
+              )}
+
+              {formData.type === "email" && (
+                <>
+                  <Row gutter={[8, 8]}>
+                    <Col xs={24} sm={14}>
+                      <Typography.Text style={{ fontSize: 13 }}>SMTP 主机</Typography.Text>
                       <Input
-                        id="subject_template"
-                        value={configString(formData.config, "subject_template")}
-                        onChange={(e) => updateConfig("subject_template", e.target.value)}
-                        required
+                        style={{ marginTop: 4 }}
+                        value={configString(formData.config, "smtp_host")}
+                        onChange={(e) => updateConfig("smtp_host", e.target.value)}
+                        placeholder="smtp.example.com"
                       />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="body_format">正文格式</Label>
-                      <Select value={configString(formData.config, "body_format") || "text"} onValueChange={(value) => updateConfig("body_format", value)}>
-                        <SelectTrigger id="body_format">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="text">纯文本</SelectItem>
-                          <SelectItem value="html">HTML</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="body_template">正文模板</Label>
-                      <Textarea
-                        id="body_template"
-                        className="min-h-36 font-mono text-xs"
-                        value={configString(formData.config, "body_template")}
-                        onChange={(e) => updateConfig("body_template", e.target.value)}
-                        required
+                    </Col>
+                    <Col xs={24} sm={10}>
+                      <Typography.Text style={{ fontSize: 13 }}>端口</Typography.Text>
+                      <Input
+                        style={{ marginTop: 4 }}
+                        type="number"
+                        value={configString(formData.config, "smtp_port")}
+                        onChange={(e) =>
+                          updateConfig("smtp_port", Number(e.target.value))
+                        }
                       />
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <div className="space-y-4">
-                <Label>触发事件</Label>
-                <div className="grid gap-4">
-                  {EVENT_OPTIONS.map((opt) => (
-                    <div key={opt.id} className="flex items-center space-x-2">
-                      <Checkbox 
-                        id={`event-${opt.id}`} 
-                        checked={formData.events.includes(opt.id)}
-                        onCheckedChange={() => toggleEvent(opt.id)}
+                    </Col>
+                  </Row>
+                  <div>
+                    <Typography.Text style={{ fontSize: 13 }}>加密方式</Typography.Text>
+                    <Select
+                      style={{ width: "100%", marginTop: 4 }}
+                      value={configString(formData.config, "smtp_security") || "starttls"}
+                      onChange={(v) => updateConfig("smtp_security", v)}
+                      options={[
+                        { value: "starttls", label: "STARTTLS" },
+                        { value: "tls", label: "TLS" },
+                        { value: "none", label: "无" },
+                      ]}
+                    />
+                  </div>
+                  <Row gutter={[8, 8]}>
+                    <Col xs={24} sm={12}>
+                      <Typography.Text style={{ fontSize: 13 }}>用户名</Typography.Text>
+                      <Input
+                        style={{ marginTop: 4 }}
+                        value={configString(formData.config, "smtp_username")}
+                        onChange={(e) =>
+                          updateConfig("smtp_username", e.target.value)
+                        }
+                        placeholder="ops@example.com"
                       />
-                      <label htmlFor={`event-${opt.id}`} className="text-sm font-medium leading-none cursor-pointer">
-                        {opt.label}
-                      </label>
-                    </div>
-                  ))}
-                </div>
-              </div>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Typography.Text style={{ fontSize: 13 }}>密码</Typography.Text>
+                      <Input.Password
+                        style={{ marginTop: 4 }}
+                        value={configString(formData.config, "smtp_password")}
+                        onChange={(e) =>
+                          updateConfig("smtp_password", e.target.value)
+                        }
+                        placeholder={
+                          configString(formData.config, "smtp_password") ===
+                          "[redacted]"
+                            ? "已加密 (输入以修改)"
+                            : "SMTP 密码"
+                        }
+                      />
+                    </Col>
+                  </Row>
+                  <Row gutter={[8, 8]}>
+                    <Col xs={24} sm={12}>
+                      <Typography.Text style={{ fontSize: 13 }}>发件人邮箱</Typography.Text>
+                      <Input
+                        style={{ marginTop: 4 }}
+                        type="email"
+                        value={configString(formData.config, "from")}
+                        onChange={(e) => updateConfig("from", e.target.value)}
+                        placeholder="ops@example.com"
+                      />
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Typography.Text style={{ fontSize: 13 }}>发件人名称</Typography.Text>
+                      <Input
+                        style={{ marginTop: 4 }}
+                        value={configString(formData.config, "from_name")}
+                        onChange={(e) =>
+                          updateConfig("from_name", e.target.value)
+                        }
+                        placeholder="VaultFleet"
+                      />
+                    </Col>
+                  </Row>
+                  <div>
+                    <Typography.Text style={{ fontSize: 13 }}>收件人</Typography.Text>
+                    <Input.TextArea
+                      style={{ marginTop: 4 }}
+                      value={configListText(formData.config, "to")}
+                      onChange={(e) =>
+                        updateConfig("to", parseConfigList(e.target.value))
+                      }
+                      placeholder="admin@example.com"
+                      rows={2}
+                    />
+                  </div>
+                  <Row gutter={[8, 8]}>
+                    <Col xs={24} sm={12}>
+                      <Typography.Text style={{ fontSize: 13 }}>抄送</Typography.Text>
+                      <Input.TextArea
+                        style={{ marginTop: 4 }}
+                        value={configListText(formData.config, "cc")}
+                        onChange={(e) =>
+                          updateConfig("cc", parseConfigList(e.target.value))
+                        }
+                        placeholder="cc@example.com"
+                        rows={2}
+                      />
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Typography.Text style={{ fontSize: 13 }}>密送</Typography.Text>
+                      <Input.TextArea
+                        style={{ marginTop: 4 }}
+                        value={configListText(formData.config, "bcc")}
+                        onChange={(e) =>
+                          updateConfig("bcc", parseConfigList(e.target.value))
+                        }
+                        placeholder="bcc@example.com"
+                        rows={2}
+                      />
+                    </Col>
+                  </Row>
+                  <div>
+                    <Typography.Text style={{ fontSize: 13 }}>主题模板</Typography.Text>
+                    <Input
+                      style={{ marginTop: 4 }}
+                      value={configString(formData.config, "subject_template")}
+                      onChange={(e) =>
+                        updateConfig("subject_template", e.target.value)
+                      }
+                    />
+                  </div>
+                  <div>
+                    <Typography.Text style={{ fontSize: 13 }}>正文格式</Typography.Text>
+                    <Select
+                      style={{ width: "100%", marginTop: 4 }}
+                      value={configString(formData.config, "body_format") || "text"}
+                      onChange={(v) => updateConfig("body_format", v)}
+                      options={[
+                        { value: "text", label: "纯文本" },
+                        { value: "html", label: "HTML" },
+                      ]}
+                    />
+                  </div>
+                  <div>
+                    <Typography.Text style={{ fontSize: 13 }}>正文模板</Typography.Text>
+                    <Input.TextArea
+                      style={{ marginTop: 4, fontFamily: "monospace", fontSize: 12, minHeight: 140 }}
+                      value={configString(formData.config, "body_template")}
+                      onChange={(e) =>
+                        updateConfig("body_template", e.target.value)
+                      }
+                      rows={6}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
 
-              <div className="fixed bottom-0 right-0 left-0 bg-background border-t p-4 lg:left-auto lg:w-[var(--radix-sheet-width)]">
-                <div className="grid grid-cols-2 gap-3">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => testConfigMutation.mutate()}
-                    disabled={testConfigMutation.isPending || createMutation.isPending || updateMutation.isPending}
-                  >
-                    {testConfigMutation.isPending ? "正在测试..." : "测试当前配置"}
-                  </Button>
-                  <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending || testConfigMutation.isPending}>
-                  {createMutation.isPending || updateMutation.isPending ? "正在保存..." : "保存通知配置"}
-                  </Button>
-                </div>
-              </div>
-            </form>
-          </SheetContent>
-        </Sheet>
-      </div>
-
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>名称</TableHead>
-              <TableHead>类型</TableHead>
-              <TableHead>订阅事件</TableHead>
-              <TableHead className="text-right">操作</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow><TableCell colSpan={4} className="h-24 text-center">正在加载...</TableCell></TableRow>
-            ) : notifications?.length === 0 ? (
-              <TableRow><TableCell colSpan={4} className="h-24 text-center text-muted-foreground">暂无通知配置</TableCell></TableRow>
-            ) : (
-              notifications?.map((n) => (
-                <TableRow key={n.id}>
-                  <TableCell className="font-medium">{n.name}</TableCell>
-                  <TableCell className="capitalize">{n.type}</TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      {n.events.map(ev => (
-                        <span key={ev} className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground border">
-                          {EVENT_OPTIONS.find(o => o.id === ev)?.label || ev}
-                        </span>
-                      ))}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                       <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        onClick={() => testMutation.mutate(n.id)}
-                        disabled={testMutation.isPending && testMutation.variables === n.id}
-                        title="发送测试消息"
-                      >
-                        {testSuccessId === n.id ? <Check className="h-4 w-4 text-green-500" /> : <Send className="h-4 w-4" />}
-                      </Button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => handleEdit(n)}>
-                            <Settings2 className="mr-2 h-4 w-4" /> 编辑
-                          </DropdownMenuItem>
-                          <DropdownMenuItem className="text-red-600" onClick={() => setConfirmDeleteId(n.id)}>
-                            <Trash2 className="mr-2 h-4 w-4" /> 删除
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
-
-      <ConfirmDialog
-        open={!!confirmDeleteId}
-        onOpenChange={(open) => !open && setConfirmDeleteId(null)}
-        title="确认删除通知配置？"
-        description="系统将停止向此渠道发送告警。此操作不可撤销。"
-        onConfirm={() => confirmDeleteId && deleteMutation.mutate(confirmDeleteId)}
-        loading={deleteMutation.isPending}
-      />
+          <div>
+            <Typography.Text strong>触发事件</Typography.Text>
+            <Space direction="vertical" style={{ marginTop: 8 }}>
+              {EVENT_OPTIONS.map((opt) => (
+                <Switch
+                  key={opt.id}
+                  checkedChildren={opt.label}
+                  unCheckedChildren={opt.label}
+                  checked={formData.events.includes(opt.id)}
+                  onChange={() => toggleEvent(opt.id)}
+                />
+              ))}
+            </Space>
+          </div>
+          <button type="submit" style={{ display: "none" }} />
+        </form>
+      </Drawer>
     </div>
   );
 }

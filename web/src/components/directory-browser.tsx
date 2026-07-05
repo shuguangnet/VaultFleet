@@ -1,22 +1,25 @@
-import { useState, useCallback, useRef } from "react";
-import { browseAgent, dirSizeAgent } from "@/services/agents";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import { useCallback, useRef, useState } from "react";
 import {
-  Folder,
-  FolderOpen,
-  FileText,
-  ChevronRight,
-  ChevronDown,
-  Home,
-  RefreshCw,
-  AlertCircle,
-  Ruler,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { BrowseEntry } from "@/types/api";
+  Alert,
+  Button,
+  Checkbox,
+  Empty,
+  Skeleton,
+  Space,
+  Tooltip,
+  Typography,
+} from "antd";
+import {
+  FileOutlined,
+  FolderOpenOutlined,
+  FolderOutlined,
+  HomeOutlined,
+  ReloadOutlined,
+  RightOutlined,
+  CaretDownOutlined,
+} from "@ant-design/icons";
+import { browseAgent, dirSizeAgent } from "@/services/agents";
+import type { BrowseEntry } from "@/types/api";
 
 interface DirectoryBrowserProps {
   agentId: string;
@@ -36,9 +39,7 @@ interface TreeNode {
 
 function sortEntries(entries: BrowseEntry[]): BrowseEntry[] {
   return [...entries].sort((a, b) => {
-    if (a.type !== b.type) {
-      return a.type === "dir" ? -1 : 1;
-    }
+    if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
     return a.path.localeCompare(b.path);
   });
 }
@@ -47,8 +48,7 @@ function formatSize(bytes: number): string {
   if (bytes < 0) return "0 B";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024)
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
@@ -66,7 +66,6 @@ export function DirectoryBrowser({
   onSelect,
   onDeselect,
   selectedPaths = [],
-  className,
 }: DirectoryBrowserProps) {
   const [nodes, setNodes] = useState<TreeNode[]>([]);
   const [rootLoading, setRootLoading] = useState(true);
@@ -98,6 +97,7 @@ export function DirectoryBrowser({
     }
   }, [fetchChildren]);
 
+  // 模拟 useEffect
   useState(() => {
     loadRoot();
   });
@@ -106,12 +106,10 @@ export function DirectoryBrowser({
     (
       nodeList: TreeNode[],
       targetPath: string,
-      updater: (node: TreeNode) => TreeNode
+      updater: (n: TreeNode) => TreeNode
     ): TreeNode[] => {
       return nodeList.map((node) => {
-        if (node.entry.path === targetPath) {
-          return updater(node);
-        }
+        if (node.entry.path === targetPath) return updater(node);
         if (node.children && targetPath.startsWith(node.entry.path + "/")) {
           return {
             ...node,
@@ -129,28 +127,15 @@ export function DirectoryBrowser({
       setNodes((prev) => {
         const node = findNode(prev, path);
         if (!node || node.entry.type !== "dir") return prev;
-
         if (node.expanded) {
-          return updateNodeAtPath(prev, path, (n) => ({
-            ...n,
-            expanded: false,
-          }));
+          return updateNodeAtPath(prev, path, (n) => ({ ...n, expanded: false }));
         }
-
         if (node.children !== null) {
-          return updateNodeAtPath(prev, path, (n) => ({
-            ...n,
-            expanded: true,
-          }));
+          return updateNodeAtPath(prev, path, (n) => ({ ...n, expanded: true }));
         }
-
         if (inflightRef.current.has(path)) {
-          return updateNodeAtPath(prev, path, (n) => ({
-            ...n,
-            expanded: true,
-          }));
+          return updateNodeAtPath(prev, path, (n) => ({ ...n, expanded: true }));
         }
-
         inflightRef.current.add(path);
         fetchChildren(path)
           .then((entries) => {
@@ -171,10 +156,7 @@ export function DirectoryBrowser({
               }))
             );
           })
-          .finally(() => {
-            inflightRef.current.delete(path);
-          });
-
+          .finally(() => inflightRef.current.delete(path));
         return updateNodeAtPath(prev, path, (n) => ({
           ...n,
           loading: true,
@@ -185,21 +167,8 @@ export function DirectoryBrowser({
     [fetchChildren, updateNodeAtPath]
   );
 
-  const handleCheck = useCallback(
-    (path: string, checked: boolean) => {
-      if (checked) {
-        onSelect(path);
-      } else {
-        onDeselect?.(path);
-      }
-    },
-    [onSelect, onDeselect]
-  );
-
   const isSelected = useCallback(
-    (path: string) => {
-      return selectedPaths.includes(path);
-    },
+    (path: string) => selectedPaths.includes(path),
     [selectedPaths]
   );
 
@@ -212,19 +181,11 @@ export function DirectoryBrowser({
       });
       try {
         const resp = await dirSizeAgent(agentId, { path });
-        if (resp.error && !resp.size) {
-          setDirSizes((prev) => {
-            const next = new Map(prev);
-            next.set(path, "error");
-            return next;
-          });
-        } else {
-          setDirSizes((prev) => {
-            const next = new Map(prev);
-            next.set(path, resp.size ?? 0);
-            return next;
-          });
-        }
+        setDirSizes((prev) => {
+          const next = new Map(prev);
+          next.set(path, resp.error && !resp.size ? "error" : resp.size ?? 0);
+          return next;
+        });
       } catch {
         setDirSizes((prev) => {
           const next = new Map(prev);
@@ -238,57 +199,75 @@ export function DirectoryBrowser({
 
   return (
     <div
-      className={cn("border rounded-md bg-card overflow-hidden", className)}
+      style={{
+        border: "1px solid #f0f0f0",
+        borderRadius: 6,
+        background: "#fff",
+        overflow: "hidden",
+      }}
     >
-      <div className="bg-muted/50 p-2 flex items-center gap-2 border-b">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={loadRoot}
-          disabled={rootLoading}
-        >
-          <Home className="h-4 w-4" />
-        </Button>
-        <div className="flex-1 text-xs font-mono truncate px-2 py-1 bg-background border rounded">
-          /
-        </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={loadRoot}
-          disabled={rootLoading}
-        >
-          <RefreshCw
-            className={cn("h-4 w-4", rootLoading && "animate-spin")}
+      <div
+        style={{
+          padding: 8,
+          background: "#fafafa",
+          borderBottom: "1px solid #f0f0f0",
+        }}
+      >
+        <Space>
+          <Button
+            type="text"
+            size="small"
+            icon={<HomeOutlined />}
+            onClick={loadRoot}
+            disabled={rootLoading}
           />
-        </Button>
+          <div
+            style={{
+              minWidth: 200,
+              padding: "4px 8px",
+              fontSize: 12,
+              fontFamily: "monospace",
+              background: "#fff",
+              border: "1px solid #f0f0f0",
+              borderRadius: 4,
+            }}
+          >
+            /
+          </div>
+          <Button
+            type="text"
+            size="small"
+            icon={<ReloadOutlined spin={rootLoading} />}
+            onClick={loadRoot}
+            disabled={rootLoading}
+          />
+        </Space>
       </div>
 
-      <div className="h-[300px] overflow-y-auto">
+      <div style={{ height: 300, overflowY: "auto" }}>
         {rootError ? (
-          <div className="p-4">
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>无法浏览目录</AlertTitle>
-              <AlertDescription className="text-xs">
-                {rootError}
-              </AlertDescription>
-            </Alert>
+          <div style={{ padding: 16 }}>
+            <Alert
+              type="error"
+              showIcon
+              message="无法浏览目录"
+              description={rootError}
+            />
           </div>
         ) : rootLoading ? (
-          <div className="p-2 space-y-2">
+          <div style={{ padding: 8 }}>
             {[1, 2, 3, 4, 5].map((i) => (
-              <Skeleton key={i} className="h-8 w-full" />
+              <Skeleton.Input key={i} active size="small" block style={{ height: 32, marginBottom: 4 }} />
             ))}
           </div>
         ) : nodes.length === 0 ? (
-          <div className="p-8 text-center text-muted-foreground text-sm">
-            目录为空
-          </div>
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="目录为空"
+            style={{ marginTop: 40 }}
+          />
         ) : (
-          <div className="py-1">
+          <div style={{ padding: "4px 0" }}>
             {nodes.map((node) => (
               <TreeNodeRow
                 key={node.entry.path}
@@ -296,7 +275,9 @@ export function DirectoryBrowser({
                 depth={0}
                 isSelected={isSelected}
                 onToggle={handleToggle}
-                onCheck={handleCheck}
+                onCheck={(p, checked) =>
+                  checked ? onSelect(p) : onDeselect?.(p)
+                }
                 onCalcSize={handleCalcSize}
                 dirSizes={dirSizes}
               />
@@ -334,104 +315,135 @@ function TreeNodeRow({
   return (
     <>
       <div
-        className="flex items-center gap-1 px-2 py-1.5 hover:bg-muted/50 group"
-        style={{ paddingLeft: `${depth * 20 + 8}px` }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          padding: "4px 8px",
+          paddingLeft: depth * 20 + 8,
+          cursor: isDir ? "pointer" : "default",
+        }}
+        onMouseOver={(e) => {
+          (e.currentTarget as HTMLElement).style.background = "#fafafa";
+        }}
+        onMouseOut={(e) => {
+          (e.currentTarget as HTMLElement).style.background = "transparent";
+        }}
       >
         {isDir ? (
           <button
             type="button"
-            className="h-5 w-5 flex items-center justify-center shrink-0 text-muted-foreground hover:text-foreground rounded"
             onClick={() => onToggle(node.entry.path)}
+            style={{
+              background: "transparent",
+              border: "none",
+              padding: 0,
+              cursor: "pointer",
+              fontSize: 12,
+              color: "rgba(0,0,0,0.45)",
+              width: 16,
+            }}
           >
             {node.loading ? (
-              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              <ReloadOutlined spin style={{ fontSize: 10 }} />
             ) : node.expanded ? (
-              <ChevronDown className="h-3.5 w-3.5" />
+              <CaretDownOutlined style={{ fontSize: 10 }} />
             ) : (
-              <ChevronRight className="h-3.5 w-3.5" />
+              <RightOutlined style={{ fontSize: 10 }} />
             )}
           </button>
         ) : (
-          <span className="h-5 w-5 shrink-0" />
+          <span style={{ width: 16 }} />
         )}
 
-        <div
-          className={cn(
-            "flex items-center gap-1.5 flex-1 min-w-0",
-            isDir && "cursor-pointer"
-          )}
-          onClick={isDir ? () => onToggle(node.entry.path) : undefined}
+        <span
+          onClick={() => isDir && onToggle(node.entry.path)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            flex: 1,
+            minWidth: 0,
+          }}
         >
           {isDir ? (
             node.expanded ? (
-              <FolderOpen className="h-4 w-4 text-blue-500 fill-blue-500/20 shrink-0" />
+              <FolderOpenOutlined style={{ color: "#1677ff", fontSize: 14 }} />
             ) : (
-              <Folder className="h-4 w-4 text-blue-500 fill-blue-500/20 shrink-0" />
+              <FolderOutlined style={{ color: "#1677ff", fontSize: 14 }} />
             )
           ) : (
-            <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+            <FileOutlined style={{ color: "rgba(0,0,0,0.45)", fontSize: 14 }} />
           )}
-          <span className="text-sm truncate select-none">{name}</span>
-        </div>
+          <Typography.Text ellipsis style={{ fontSize: 13, flex: 1 }}>
+            {name}
+          </Typography.Text>
+        </span>
 
         {!isDir && node.entry.size > 0 && (
-          <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {formatSize(node.entry.size)}
-          </span>
+          </Typography.Text>
         )}
 
         {isDir && dirSize === undefined && (
-          <button
-            type="button"
-            className="h-5 w-5 flex items-center justify-center shrink-0 text-muted-foreground hover:text-foreground rounded opacity-0 group-hover:opacity-100 transition-opacity"
-            onClick={(e) => {
-              e.stopPropagation();
-              onCalcSize(node.entry.path);
-            }}
-            title="计算目录大小"
-          >
-            <Ruler className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip title="计算目录大小">
+            <Button
+              type="text"
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCalcSize(node.entry.path);
+              }}
+            />
+          </Tooltip>
         )}
         {isDir && dirSize === "loading" && (
-          <RefreshCw className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
+          <ReloadOutlined spin style={{ fontSize: 10, color: "rgba(0,0,0,0.45)" }} />
         )}
         {isDir && dirSize === "error" && (
-          <span className="text-xs text-destructive shrink-0">错误</span>
+          <Typography.Text type="danger" style={{ fontSize: 12 }}>
+            错误
+          </Typography.Text>
         )}
         {isDir && typeof dirSize === "number" && (
-          <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {formatSize(dirSize)}
-          </span>
+          </Typography.Text>
         )}
 
         <Checkbox
           checked={checked}
-          onCheckedChange={(val) => onCheck(node.entry.path, !!val)}
-          className="shrink-0"
+          onChange={(e) => onCheck(node.entry.path, e.target.checked)}
+          style={{ marginLeft: 4 }}
         />
       </div>
 
       {node.expanded && node.error && (
         <div
-          className="text-xs text-destructive px-2 py-1"
-          style={{ paddingLeft: `${(depth + 1) * 20 + 8}px` }}
+          style={{
+            padding: "2px 8px",
+            paddingLeft: (depth + 1) * 20 + 8,
+            fontSize: 12,
+            color: "#ff4d4f",
+          }}
         >
           {node.error}
         </div>
       )}
 
-      {node.expanded &&
-        node.children &&
-        node.children.length === 0 &&
-        !node.loading && (
-          <div
-            className="text-xs text-muted-foreground px-2 py-1"
-            style={{ paddingLeft: `${(depth + 1) * 20 + 8}px` }}
-          >
-            空目录
-          </div>
-        )}
+      {node.expanded && node.children && node.children.length === 0 && !node.loading && (
+        <div
+          style={{
+            padding: "2px 8px",
+            paddingLeft: (depth + 1) * 20 + 8,
+            fontSize: 12,
+            color: "rgba(0,0,0,0.45)",
+          }}
+        >
+          空目录
+        </div>
+      )}
 
       {node.expanded &&
         node.children?.map((child) => (

@@ -1,19 +1,24 @@
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertCircle } from "lucide-react";
+import { Alert } from "antd";
+import { ExclamationCircleOutlined } from "@ant-design/icons";
 
 interface ErrorPanelProps {
   error: string | null;
   title?: string;
 }
 
-export function ErrorPanel({ error, title = "出错了" }: ErrorPanelProps) {
+export function ErrorPanel({
+  error,
+  title = "出错了",
+}: ErrorPanelProps) {
   if (!error) return null;
-
   return (
-    <Alert variant="destructive">
-      <AlertCircle className="h-4 w-4" />
-      <AlertTitle>{title}</AlertTitle>
-      <AlertDescription>{error}</AlertDescription>
-    </Alert>
+    <Alert
+      type="error"
+      showIcon
+      icon={<ExclamationCircleOutlined />}
+      message={title}
+      description={error}
+      style={{ marginBottom: 16 }}
+    />
   );
 }

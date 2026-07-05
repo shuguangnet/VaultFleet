@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { App as AntdApp } from "antd";
 import {
   cleanup,
   fireEvent,
@@ -105,7 +106,9 @@ describe("PoliciesPage rclone form state", () => {
 
     render(
       <QueryClientProvider client={newTestQueryClient()}>
-        <PoliciesPage />
+        <AntdApp>
+          <PoliciesPage />
+        </AntdApp>
       </QueryClientProvider>,
     );
 
@@ -177,7 +180,9 @@ describe("PoliciesPage rclone form state", () => {
 
     render(
       <QueryClientProvider client={newTestQueryClient()}>
-        <PoliciesPage />
+        <AntdApp>
+          <PoliciesPage />
+        </AntdApp>
       </QueryClientProvider>,
     );
 
@@ -255,7 +260,9 @@ describe("PoliciesPage rclone form state", () => {
 
     render(
       <QueryClientProvider client={newTestQueryClient()}>
-        <PoliciesPage />
+        <AntdApp>
+          <PoliciesPage />
+        </AntdApp>
       </QueryClientProvider>,
     );
 
@@ -364,7 +371,9 @@ describe("PoliciesPage rclone form state", () => {
 
     render(
       <QueryClientProvider client={newTestQueryClient()}>
-        <PoliciesPage />
+        <AntdApp>
+          <PoliciesPage />
+        </AntdApp>
       </QueryClientProvider>,
     );
 
@@ -417,7 +426,9 @@ describe("PoliciesPage rclone form state", () => {
 
     render(
       <QueryClientProvider client={newTestQueryClient()}>
-        <PoliciesPage />
+        <AntdApp>
+          <PoliciesPage />
+        </AntdApp>
       </QueryClientProvider>,
     );
 

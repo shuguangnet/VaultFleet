@@ -1,30 +1,62 @@
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { listStorage, createStorage, updateStorage, deleteStorage, testUnsavedStorage, testSavedStorage, listProviders } from "@/services/storage";
-import { StorageConfig, StorageInput } from "@/types/storage";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Database, Settings2, Trash2, MoreHorizontal, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger, SheetFooter } from "@/components/ui/sheet";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+  App,
+  Button,
+  Card,
+  Col,
+  Drawer,
+  Dropdown,
+  Empty,
+  Form,
+  Input,
+  Popconfirm,
+  Row,
+  Select,
+  Space,
+  Spin,
+  Table,
+  Tabs,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
+import {
+  CheckCircleTwoTone,
+  CloseCircleTwoTone,
+  DeleteOutlined,
+  EditOutlined,
+  EllipsisOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  ThunderboltOutlined,
+} from "@ant-design/icons";
+import type { ColumnsType } from "antd/es/table";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  createStorage,
+  deleteStorage,
+  listProviders,
+  listStorage,
+  testSavedStorage,
+  testUnsavedStorage,
+  updateStorage,
+} from "@/services/storage";
+import type { StorageConfig, StorageInput } from "@/types/storage";
+import { ErrorPanel } from "@/components/error-panel";
 import { KeyValueEditor } from "@/components/key-value-editor";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { ErrorPanel } from "@/components/error-panel";
-import { format } from "date-fns";
-import { zhCN } from "date-fns/locale";
-import { toast } from "sonner";
-import { StorageTestResult } from "@/types/health";
+import dayjs from "dayjs";
+import { safeFormatDate } from "@/lib/date";
+import type { StorageTestResult } from "@/types/health";
 
-export const STORAGE_TEMPLATES: Record<string, { name: string; defaults: Record<string, string>; fields: { key: string; label: string; type?: string }[] }> = {
+export const STORAGE_TEMPLATES: Record<
+  string,
+  {
+    name: string;
+    defaults: Record<string, string>;
+    fields: { key: string; label: string; type?: string }[];
+  }
+> = {
   s3: {
     name: "Amazon S3 / 兼容对象存储",
     defaults: { provider: "AWS", region: "us-east-1" },
@@ -75,81 +107,107 @@ export const STORAGE_TEMPLATES: Record<string, { name: string; defaults: Record<
     name: "本地路径",
     defaults: {},
     fields: [],
-  }
+  },
 };
 
+interface StorageFormValues {
+  name: string;
+  rclone_type: string;
+  rclone_config: Record<string, string>;
+}
+
 export function StoragePage() {
+  const { message } = App.useApp();
   const queryClient = useQueryClient();
-  const [isDrawerOpen, setIsAddDrawerOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<StorageTestResult | null>(null);
-  
-  const [formData, setFormData] = useState<StorageInput>({
-    name: "",
-    rclone_type: "s3",
-    rclone_config: STORAGE_TEMPLATES.s3.defaults,
+  const [form] = Form.useForm<StorageFormValues>();
+
+  const { data: storageList, isLoading } = useQuery({
+    queryKey: ["storage"],
+    queryFn: listStorage,
+  });
+  const { data: s3Providers } = useQuery({
+    queryKey: ["s3-providers"],
+    queryFn: listProviders,
   });
 
-  const { data: storageList, isLoading } = useQuery({ queryKey: ["storage"], queryFn: listStorage });
-  const { data: s3Providers } = useQuery({ queryKey: ["s3-providers"], queryFn: listProviders });
+  const openAddDrawer = () => {
+    setEditingId(null);
+    setTestResult(null);
+    form.resetFields();
+    form.setFieldsValue({
+      name: "",
+      rclone_type: "s3",
+      rclone_config: STORAGE_TEMPLATES.s3.defaults,
+    });
+    setDrawerOpen(true);
+  };
+
+  const openEditDrawer = (storage: StorageConfig) => {
+    setEditingId(storage.id);
+    setTestResult(null);
+    form.setFieldsValue({
+      name: storage.name,
+      rclone_type: storage.rclone_type,
+      rclone_config: storage.rclone_config,
+    });
+    setDrawerOpen(true);
+  };
+
+  const closeDrawer = () => {
+    setDrawerOpen(false);
+    setEditingId(null);
+  };
 
   const testMutation = useMutation({
-    mutationFn: (body: { rclone_type: string; rclone_config: Record<string, string> }) => 
-      testUnsavedStorage(body),
+    mutationFn: (body: {
+      rclone_type: string;
+      rclone_config: Record<string, string>;
+    }) => testUnsavedStorage(body),
     onSuccess: (data) => {
       setTestResult(data);
       if (data.ok) {
-        toast.success(`连接成功 (${data.latency_ms}ms)`);
+        message.success(`连接成功 (${data.latency_ms}ms)`);
       } else {
-        toast.error(`连接失败: ${data.error}`);
+        message.error(`连接失败: ${data.error}`);
       }
     },
-    onError: (error: any) => {
-      toast.error(`测试请求失败: ${error.message}`);
-    }
+    onError: (error: any) => message.error(`测试请求失败: ${error.message}`),
   });
 
   const listTestMutation = useMutation({
     mutationFn: (id: string) => testSavedStorage(id),
     onSuccess: (data) => {
       if (data.ok) {
-        toast.success(`连接成功 (${data.latency_ms}ms)`);
+        message.success(`连接成功 (${data.latency_ms}ms)`);
       } else {
-        toast.error(`连接失败: ${data.error}`);
+        message.error(`连接失败: ${data.error}`);
       }
     },
-    onError: (error: any) => {
-      toast.error(`测试请求失败: ${error.message}`);
-    }
+    onError: (error: any) => message.error(`测试请求失败: ${error.message}`),
   });
-
-  const handleTestStorage = (id: string) => {
-    listTestMutation.mutate(id);
-  };
 
   const createMutation = useMutation({
     mutationFn: createStorage,
     onSuccess: () => {
-      setIsAddDrawerOpen(false);
+      setDrawerOpen(false);
       queryClient.invalidateQueries({ queryKey: ["storage"] });
-      toast.success("存储配置已创建");
+      message.success("存储配置已创建");
     },
-    onError: (error: any) => {
-      toast.error("创建存储失败", { description: error.message });
-    },
+    onError: (error: any) => message.error("创建存储失败", error.message),
   });
 
   const updateMutation = useMutation({
     mutationFn: (data: StorageInput) => updateStorage(editingId!, data),
     onSuccess: () => {
-      setIsAddDrawerOpen(false);
+      setDrawerOpen(false);
       queryClient.invalidateQueries({ queryKey: ["storage"] });
-      toast.success("存储配置已更新");
+      message.success("存储配置已更新");
     },
-    onError: (error: any) => {
-      toast.error("更新存储失败", { description: error.message });
-    },
+    onError: (error: any) => message.error("更新存储失败", error.message),
   });
 
   const deleteMutation = useMutation({
@@ -157,248 +215,339 @@ export function StoragePage() {
     onSuccess: () => {
       setConfirmDeleteId(null);
       queryClient.invalidateQueries({ queryKey: ["storage"] });
-      toast.success("存储配置已删除");
+      message.success("存储配置已删除");
     },
-    onError: (error: any) => {
-      toast.error("删除存储失败", { description: error.message });
-    },
+    onError: (error: any) => message.error("删除存储失败", error.message),
   });
 
-  const handleEdit = (storage: StorageConfig) => {
-    setEditingId(storage.id);
-    setFormData({
-      name: storage.name,
-      rclone_type: storage.rclone_type,
-      rclone_config: storage.rclone_config,
-    });
-    setIsAddDrawerOpen(true);
-  };
-
-  const handleDrawerClose = (open: boolean) => {
-    setIsAddDrawerOpen(open);
-    if (!open) {
-      setEditingId(null);
-      setFormData({ name: "", rclone_type: "s3", rclone_config: STORAGE_TEMPLATES.s3.defaults });
-      createMutation.reset();
-      updateMutation.reset();
-    }
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = (values: StorageFormValues) => {
+    const payload: StorageInput = {
+      name: values.name,
+      rclone_type: values.rclone_type,
+      rclone_config: values.rclone_config,
+    };
     if (editingId) {
-      updateMutation.mutate(formData);
+      updateMutation.mutate(payload);
     } else {
-      createMutation.mutate(formData);
+      createMutation.mutate(payload);
     }
   };
 
-  const template = STORAGE_TEMPLATES[formData.rclone_type];
+  const handleTest = () => {
+    const values = form.getFieldsValue();
+    testMutation.mutate({
+      rclone_type: values.rclone_type,
+      rclone_config: values.rclone_config,
+    });
+  };
+
+  const columns: ColumnsType<StorageConfig> = [
+    {
+      title: "名称",
+      dataIndex: "name",
+      key: "name",
+      render: (v: string) => <Typography.Text strong>{v}</Typography.Text>,
+    },
+    {
+      title: "类型",
+      dataIndex: "rclone_type",
+      key: "rclone_type",
+      render: (v: string) => <Tag>{v}</Tag>,
+    },
+    {
+      title: "创建时间",
+      dataIndex: "created_at",
+      key: "created_at",
+      responsive: ["md"],
+      render: (v: string) => (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {safeFormatDate(v, "yyyy-MM-dd HH:mm")}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: "操作",
+      key: "action",
+      align: "right",
+      render: (_, record) => (
+        <Space>
+          <Button
+            size="small"
+            icon={<ThunderboltOutlined />}
+            onClick={() => listTestMutation.mutate(record.id)}
+            loading={listTestMutation.isPending && listTestMutation.variables === record.id}
+          >
+            测试
+          </Button>
+          <Dropdown
+            menu={{
+              items: [
+                {
+                  key: "edit",
+                  icon: <EditOutlined />,
+                  label: "编辑",
+                  onClick: () => openEditDrawer(record),
+                },
+                { type: "divider" },
+                {
+                  key: "delete",
+                  icon: <DeleteOutlined />,
+                  label: (
+                    <span style={{ color: "#ff4d4f" }}>删除</span>
+                  ),
+                  onClick: () => setConfirmDeleteId(record.id),
+                },
+              ],
+            }}
+            trigger={["click"]}
+          >
+            <Button type="text" icon={<EllipsisOutlined />} size="small" />
+          </Dropdown>
+        </Space>
+      ),
+    },
+  ];
+
+  const currentTemplate =
+    STORAGE_TEMPLATES[Form.useWatch("rclone_type", form) || "s3"];
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">存储配置</h1>
-        <Sheet open={isDrawerOpen} onOpenChange={handleDrawerClose}>
-          <SheetTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" /> 添加存储
-            </Button>
-          </SheetTrigger>
-          <SheetContent className="sm:max-w-lg overflow-y-auto">
-            <SheetHeader>
-              <SheetTitle>{editingId ? "编辑存储" : "添加新存储"}</SheetTitle>
-              <SheetDescription>
-                配置用于存放备份数据的 rclone 存储端点。
-              </SheetDescription>
-            </SheetHeader>
-            <form onSubmit={handleSubmit} className="space-y-6 py-6 pb-20">
-              <ErrorPanel error={(createMutation.error || updateMutation.error) as any} />
-              
-              <div className="space-y-2">
-                <Label htmlFor="name">名称</Label>
-                <Input
-                  id="name"
-                  placeholder="如: Production-S3"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  required
-                />
-              </div>
+    <div className="vf-page">
+      <div
+        className="vf-page-header"
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          存储配置
+        </Typography.Title>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openAddDrawer}>
+          添加存储
+        </Button>
+      </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="type">存储类型</Label>
-                <Select
-                  value={formData.rclone_type}
-                  onValueChange={(val) => setFormData({ 
-                    ...formData, 
-                    rclone_type: val, 
-                    rclone_config: STORAGE_TEMPLATES[val]?.defaults || {} 
-                  })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(STORAGE_TEMPLATES).map(([k, v]) => (
-                      <SelectItem key={k} value={k}>{v.name}</SelectItem>
-                    ))}
-                    <SelectItem value="other">其他 (手动配置)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+      <Card className="vf-table-card" styles={{ body: { padding: 0 } }}>
+        <Table<StorageConfig>
+          columns={columns}
+          dataSource={storageList || []}
+          rowKey="id"
+          loading={isLoading}
+          pagination={{ pageSize: 10 }}
+          scroll={{ x: 560 }}
+          size="middle"
+          locale={{
+            emptyText: (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="暂无存储配置"
+              />
+            ),
+          }}
+        />
+      </Card>
 
-              <Tabs defaultValue="template" className="w-full">
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="template">模版模式</TabsTrigger>
-                  <TabsTrigger value="advanced">高级模式</TabsTrigger>
-                </TabsList>
-                <TabsContent value="template" className="space-y-4 pt-4">
-                  {template ? (
-                    template.fields.length > 0 ? (
-                      template.fields.map((f) => (
-                        <div key={f.key} className="space-y-2">
-                          <Label htmlFor={`field-${f.key}`}>{f.label}</Label>
-                          {f.key === "provider" && formData.rclone_type === "s3" && s3Providers && s3Providers.length > 0 ? (
-                            <Select
-                              value={formData.rclone_config[f.key] || ""}
-                              onValueChange={(val) => setFormData({
-                                ...formData,
-                                rclone_config: { ...formData.rclone_config, [f.key]: val }
-                              })}
-                            >
-                              <SelectTrigger id={`field-${f.key}`}>
-                                <SelectValue placeholder="选择 Provider" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {s3Providers.map((p) => (
-                                  <SelectItem key={p.value} value={p.value}>
-                                    {p.value}
-                                    {p.help && <span className="ml-2 text-muted-foreground text-xs">— {p.help}</span>}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            <Input
-                              id={`field-${f.key}`}
-                              type={f.type || "text"}
-                              value={formData.rclone_config[f.key] || ""}
-                              onChange={(e) => setFormData({
-                                ...formData,
-                                rclone_config: { ...formData.rclone_config, [f.key]: e.target.value }
-                              })}
-                              placeholder={formData.rclone_config[f.key] === "[redacted]" ? "已加密 (输入以修改)" : ""}
-                            />
-                          )}
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-sm text-muted-foreground py-4">此类型无需额外字段配置。</p>
-                    )
+      <Drawer
+        title={editingId ? "编辑存储" : "添加新存储"}
+        open={drawerOpen}
+        onClose={closeDrawer}
+        width="min(100vw, 540px)"
+        destroyOnClose
+        footer={
+          <div
+            className="vf-drawer-footer"
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 8,
+              padding: "10px 16px",
+              background: "#fff",
+              borderTop: "1px solid #f0f0f0",
+            }}
+          >
+            <Space>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                连接测试:
+              </Typography.Text>
+              {testMutation.isPending ? (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  <Spin size="small" /> 测试中...
+                </Typography.Text>
+              ) : testResult ? (
+                testResult.ok ? (
+                  <Typography.Text type="success" style={{ fontSize: 12 }}>
+                    <CheckCircleTwoTone twoToneColor="#52c41a" /> 通过 (
+                    {testResult.latency_ms}ms)
+                  </Typography.Text>
+                ) : (
+                  <Tooltip title={testResult.error}>
+                    <Typography.Text type="danger" style={{ fontSize: 12 }}>
+                      <CloseCircleTwoTone twoToneColor="#ff4d4f" /> 失败
+                    </Typography.Text>
+                  </Tooltip>
+                )
+              ) : (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  尚未测试
+                </Typography.Text>
+              )}
+            </Space>
+            <Space>
+              <Button onClick={handleTest} loading={testMutation.isPending}>
+                测试连接
+              </Button>
+              <Button
+                type="primary"
+                onClick={() => form.submit()}
+                loading={createMutation.isPending || updateMutation.isPending}
+              >
+                保存配置
+              </Button>
+            </Space>
+          </div>
+        }
+      >
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={handleSubmit}
+          initialValues={{
+            name: "",
+            rclone_type: "s3",
+            rclone_config: STORAGE_TEMPLATES.s3.defaults,
+          }}
+        >
+          <ErrorPanel
+            error={(createMutation.error || updateMutation.error) as any}
+          />
+          <Form.Item
+            label="名称"
+            name="name"
+            rules={[{ required: true, message: "请输入名称" }]}
+          >
+            <Input placeholder="如: Production-S3" />
+          </Form.Item>
+          <Form.Item label="存储类型" name="rclone_type">
+            <Select
+              onChange={(val) => {
+                form.setFieldValue(
+                  "rclone_config",
+                  STORAGE_TEMPLATES[val]?.defaults || {}
+                );
+              }}
+              options={[
+                ...Object.entries(STORAGE_TEMPLATES).map(([k, v]) => ({
+                  value: k,
+                  label: v.name,
+                })),
+                { value: "other", label: "其他 (手动配置)" },
+              ]}
+            />
+          </Form.Item>
+          <Tabs
+            defaultActiveKey="template"
+            items={[
+              {
+                key: "template",
+                label: "模版模式",
+                children: currentTemplate ? (
+                  currentTemplate.fields.length > 0 ? (
+                    <Row gutter={[12, 12]}>
+                      {currentTemplate.fields.map((f) => (
+                        <Col span={24} key={f.key}>
+                          <Form.Item label={f.label}>
+                            {f.key === "provider" &&
+                            Form.useWatch("rclone_type", form) === "s3" &&
+                            s3Providers &&
+                            s3Providers.length > 0 ? (
+                              <Select
+                                value={form.getFieldValue("rclone_config")?.[f.key] || ""}
+                                onChange={(val) => {
+                                  const cfg = form.getFieldValue("rclone_config");
+                                  form.setFieldValue("rclone_config", {
+                                    ...cfg,
+                                    [f.key]: val,
+                                  });
+                                }}
+                                options={s3Providers.map((p: any) => ({
+                                  value: p.value,
+                                  label: p.help
+                                    ? `${p.value} — ${p.help}`
+                                    : p.value,
+                                }))}
+                              />
+                            ) : (
+                              <Input
+                                type={f.type || "text"}
+                                value={form.getFieldValue("rclone_config")?.[f.key] || ""}
+                                onChange={(e) => {
+                                  const cfg = form.getFieldValue("rclone_config");
+                                  form.setFieldValue("rclone_config", {
+                                    ...cfg,
+                                    [f.key]: e.target.value,
+                                  });
+                                }}
+                                placeholder={
+                                  form.getFieldValue("rclone_config")?.[f.key] ===
+                                  "[redacted]"
+                                    ? "已加密 (输入以修改)"
+                                    : ""
+                                }
+                              />
+                            )}
+                          </Form.Item>
+                        </Col>
+                      ))}
+                    </Row>
                   ) : (
-                    <p className="text-sm text-muted-foreground py-4">请切换到高级模式进行手动配置。</p>
-                  )}
-                </TabsContent>
-                <TabsContent value="advanced" className="pt-4">
-                  <KeyValueEditor
-                    value={formData.rclone_config}
-                    onChange={(val) => setFormData({ ...formData, rclone_config: val })}
-                  />
-                </TabsContent>
-              </Tabs>
-
-              <div className="fixed bottom-0 right-0 left-0 bg-background border-t p-4 lg:left-auto lg:w-[var(--radix-sheet-width)] space-y-2">
-                 <div className="flex items-center justify-between text-xs px-1">
-                   <span>连接测试:</span>
-                   {testMutation.isPending ? (
-                     <span className="flex items-center text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin mr-1" /> 测试中...</span>
-                   ) : testResult ? (
-                     testResult.ok ? (
-                       <span className="flex items-center text-green-600 font-medium"><CheckCircle2 className="h-3 w-3 mr-1" /> 通过 ({testResult.latency_ms}ms)</span>
-                     ) : (
-                       <span className="flex items-center text-red-500 font-medium" title={testResult.error}><XCircle className="h-3 w-3 mr-1" /> 失败</span>
-                     )
-                   ) : (
-                     <span className="text-muted-foreground">尚未测试</span>
-                   )}
-                 </div>
-                 <div className="flex gap-2">
-                   <Button 
-                    type="button" 
-                    variant="outline" 
-                    className="flex-1" 
-                    onClick={() => testMutation.mutate({ rclone_type: formData.rclone_type, rclone_config: formData.rclone_config })}
-                    disabled={testMutation.isPending}
-                   >
-                     测试连接
-                   </Button>
-                   <Button type="submit" className="flex-[2]" disabled={createMutation.isPending || updateMutation.isPending}>
-                    {createMutation.isPending || updateMutation.isPending ? "正在保存..." : "保存配置"}
-                  </Button>
-                 </div>
-              </div>
-            </form>
-          </SheetContent>
-        </Sheet>
-      </div>
-
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>名称</TableHead>
-              <TableHead>类型</TableHead>
-              <TableHead className="hidden md:table-cell">创建时间</TableHead>
-              <TableHead className="text-right">操作</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow><TableCell colSpan={4} className="h-24 text-center">正在加载...</TableCell></TableRow>
-            ) : storageList?.length === 0 ? (
-              <TableRow><TableCell colSpan={4} className="h-24 text-center text-muted-foreground">暂无存储配置</TableCell></TableRow>
-            ) : (
-              storageList?.map((s) => (
-                <TableRow key={s.id}>
-                  <TableCell className="font-medium">{s.name}</TableCell>
-                  <TableCell className="capitalize">{s.rclone_type}</TableCell>
-                  <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
-                    {format(new Date(s.created_at), "yyyy-MM-dd HH:mm", { locale: zhCN })}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleTestStorage(s.id)}>
-                          <CheckCircle2 className="mr-2 h-4 w-4" /> 测试连接
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleEdit(s)}>
-                          <Settings2 className="mr-2 h-4 w-4" /> 编辑
-                        </DropdownMenuItem>
-                        <DropdownMenuItem className="text-red-600" onClick={() => setConfirmDeleteId(s.id)}>
-                          <Trash2 className="mr-2 h-4 w-4" /> 删除
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+                    <Typography.Text type="secondary">
+                      此类型无需额外字段配置。
+                    </Typography.Text>
+                  )
+                ) : (
+                  <Typography.Text type="secondary">
+                    请切换到高级模式进行手动配置。
+                  </Typography.Text>
+                ),
+              },
+              {
+                key: "advanced",
+                label: "高级模式",
+                children: (
+                  <Form.Item name="rclone_config">
+                    <KeyValueEditorWrapper />
+                  </Form.Item>
+                ),
+              },
+            ]}
+          />
+        </Form>
+      </Drawer>
 
       <ConfirmDialog
         open={!!confirmDeleteId}
         onOpenChange={(open) => !open && setConfirmDeleteId(null)}
         title="确认删除存储配置？"
         description="如果已有策略正在使用此存储，删除将导致备份失败。此操作不可撤销。"
-        onConfirm={() => confirmDeleteId && deleteMutation.mutate(confirmDeleteId)}
+        onConfirm={() =>
+          confirmDeleteId && deleteMutation.mutate(confirmDeleteId)
+        }
         loading={deleteMutation.isPending}
       />
     </div>
   );
+}
+
+// 包装 KeyValueEditor 以适配 Form.Item 的 value/onChange 协议
+function KeyValueEditorWrapper({
+  value,
+  onChange,
+}: {
+  value?: Record<string, string>;
+  onChange?: (val: Record<string, string>) => void;
+}) {
+  return <KeyValueEditor value={value || {}} onChange={onChange || (() => {})} />;
 }

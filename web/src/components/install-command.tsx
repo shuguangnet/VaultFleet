@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Copy, Check } from "lucide-react";
+import {
+  Button,
+  Input,
+  Typography,
+} from "antd";
+import { CheckOutlined, CopyOutlined } from "@ant-design/icons";
 import { copyToClipboard } from "@/lib/utils";
 
 type ScriptSource = "github" | "github-proxy" | "master";
@@ -28,7 +30,6 @@ export function InstallCommand({ enrollToken }: InstallCommandProps) {
           `  --server ${masterHost} \\`,
           `  --token ${enrollToken}`,
         ].join("\n");
-
       case "github-proxy":
         return [
           `curl -fsSL ${githubProxy}${GITHUB_RAW_URL} | bash -s -- \\`,
@@ -36,7 +37,6 @@ export function InstallCommand({ enrollToken }: InstallCommandProps) {
           `  --token ${enrollToken} \\`,
           `  --github-proxy ${githubProxy}`,
         ].join("\n");
-
       case "master":
         return [
           `curl -fsSL ${masterHost}/install.sh | bash -s -- \\`,
@@ -55,26 +55,37 @@ export function InstallCommand({ enrollToken }: InstallCommandProps) {
     });
   };
 
+  const sources: { value: ScriptSource; label: string; desc: string }[] = [
+    { value: "github", label: "GitHub（推荐）", desc: "直接从 GitHub 下载" },
+    {
+      value: "github-proxy",
+      label: "GitHub + 代理",
+      desc: "通过代理加速，适合国内网络",
+    },
+    { value: "master", label: "Master 服务器", desc: "从 Master 下载脚本" },
+  ];
+
   return (
-    <div className="space-y-4">
-      {/* Script source selection */}
-      <div className="space-y-2">
-        <Label>脚本来源</Label>
-        <div className="space-y-2">
-          {(
-            [
-              { value: "github", label: "GitHub（推荐）", desc: "直接从 GitHub 下载" },
-              { value: "github-proxy", label: "GitHub + 代理", desc: "通过代理加速，适合国内网络" },
-              { value: "master", label: "Master 服务器", desc: "从 Master 下载脚本" },
-            ] as const
-          ).map((option) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div>
+        <Typography.Text strong>脚本来源</Typography.Text>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+          {sources.map((option) => (
             <label
               key={option.value}
-              className={`flex items-start gap-3 rounded-md border p-3 cursor-pointer transition-colors ${
-                scriptSource === option.value
-                  ? "border-primary bg-primary/5"
-                  : "border-border hover:bg-muted/50"
-              }`}
+              style={{
+                display: "flex",
+                gap: 10,
+                alignItems: "flex-start",
+                padding: "10px 12px",
+                borderRadius: 6,
+                border: `1px solid ${
+                  scriptSource === option.value ? "#1668dc" : "#f0f0f0"
+                }`,
+                background:
+                  scriptSource === option.value ? "rgba(22,104,220,0.04)" : "transparent",
+                cursor: "pointer",
+              }}
             >
               <input
                 type="radio"
@@ -82,59 +93,72 @@ export function InstallCommand({ enrollToken }: InstallCommandProps) {
                 value={option.value}
                 checked={scriptSource === option.value}
                 onChange={() => setScriptSource(option.value)}
-                className="mt-0.5 accent-primary"
+                style={{ marginTop: 2, accentColor: "#1668dc" }}
               />
-              <div className="flex flex-col">
-                <span className="text-sm font-medium">{option.label}</span>
-                <span className="text-xs text-muted-foreground">{option.desc}</span>
-              </div>
+              <span>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>{option.label}</div>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {option.desc}
+                </Typography.Text>
+              </span>
             </label>
           ))}
         </div>
       </div>
 
-      {/* GitHub proxy input (only for github-proxy mode) */}
       {scriptSource === "github-proxy" && (
-        <div className="space-y-2">
-          <Label htmlFor="github-proxy">GitHub 代理地址</Label>
+        <div>
+          <Typography.Text strong>GitHub 代理地址</Typography.Text>
           <Input
-            id="github-proxy"
             value={githubProxy}
             onChange={(e) => setGithubProxy(e.target.value)}
             placeholder="https://hk.gh-proxy.org/"
+            style={{ marginTop: 6 }}
           />
         </div>
       )}
 
-      {/* Master host input */}
-      <div className="space-y-2">
-        <Label htmlFor="master-host">Master 地址</Label>
+      <div>
+        <Typography.Text strong>Master 地址</Typography.Text>
         <Input
-          id="master-host"
           value={masterHost}
           onChange={(e) => setMasterHost(e.target.value)}
           placeholder="http://master-ip:8080"
+          style={{ marginTop: 6 }}
         />
-        <p className="text-xs text-muted-foreground">
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           Agent 将连接此地址与 Master 通信
-        </p>
+        </Typography.Text>
       </div>
 
-      {/* Generated install command */}
-      <div className="space-y-2">
-        <Label>安装指令</Label>
-        <div className="relative">
-          <pre className="bg-muted p-4 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap break-all font-mono leading-relaxed">
+      <div>
+        <Typography.Text strong>安装指令</Typography.Text>
+        <div style={{ position: "relative", marginTop: 6 }}>
+          <pre
+            style={{
+              background: "#f5f7fa",
+              padding: 16,
+              paddingRight: 48,
+              borderRadius: 6,
+              fontSize: 12,
+              lineHeight: 1.6,
+              margin: 0,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-all",
+              fontFamily:
+                "JetBrains Mono, Fira Code, SFMono-Regular, Menlo, Consolas, monospace",
+              border: "1px solid #f0f0f0",
+            }}
+          >
             {command}
           </pre>
           <Button
-            size="icon"
-            variant="ghost"
-            className="absolute top-2 right-2 h-8 w-8"
+            type="text"
+            icon={copied ? <CheckOutlined style={{ color: "#52c41a" }} /> : <CopyOutlined />}
             onClick={handleCopy}
-          >
-            {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
-          </Button>
+            className="vf-icon-button"
+            style={{ position: "absolute", top: 8, right: 8 }}
+          />
         </div>
       </div>
     </div>

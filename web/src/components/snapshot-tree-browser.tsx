@@ -1,21 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertCircle,
-  ChevronDown,
-  ChevronRight,
-  FileText,
-  Folder,
-  FolderOpen,
-  FolderSearch,
-  RefreshCw,
-} from "lucide-react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
+  Alert,
+  Button,
+  Checkbox,
+  Empty,
+  Skeleton,
+  Tooltip,
+  Typography,
+} from "antd";
+import {
+  CaretDownOutlined,
+  FileOutlined,
+  FolderOpenOutlined,
+  FolderOutlined,
+  ReloadOutlined,
+  RightOutlined,
+  SearchOutlined,
+} from "@ant-design/icons";
 import { browseSnapshot } from "@/services/snapshots";
-import { SnapshotFileEntry } from "@/types/snapshot";
+import type { SnapshotFileEntry } from "@/types/snapshot";
 
 export interface SnapshotTreeBrowserProps {
   agentId: string;
@@ -48,6 +51,7 @@ export function SnapshotTreeBrowser({
   const [rootLoading, setRootLoading] = useState(false);
   const [rootError, setRootError] = useState<string | null>(null);
   const inflightRef = useRef<Set<string>>(new Set());
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
 
   const selectedPathSet = useMemo(() => new Set(selectedPaths), [selectedPaths]);
 
@@ -64,12 +68,10 @@ export function SnapshotTreeBrowser({
         snapshot_id: snapshotId,
         ...(path ? { path } : {}),
       });
-      if (resp.error) {
-        throw new Error(resp.error);
-      }
+      if (resp.error) throw new Error(resp.error);
       return buildTreeNodes(resp.entries ?? [], path);
     },
-    [agentId, snapshotId],
+    [agentId, snapshotId]
   );
 
   const handleExpand = useCallback(async () => {
@@ -105,12 +107,10 @@ export function SnapshotTreeBrowser({
     (
       nodeList: TreeNode[],
       targetPath: string,
-      updater: (node: TreeNode) => TreeNode,
+      updater: (n: TreeNode) => TreeNode
     ): TreeNode[] => {
       return nodeList.map((node) => {
-        if (node.path === targetPath) {
-          return updater(node);
-        }
+        if (node.path === targetPath) return updater(node);
         if (node.children && targetPath.startsWith(node.path + "/")) {
           return {
             ...node,
@@ -120,16 +120,13 @@ export function SnapshotTreeBrowser({
         return node;
       });
     },
-    [],
+    []
   );
-
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
 
   const handleToggle = useCallback(
     (path: string) => {
       const node = findNode(rootNodes, path);
       if (!node || node.type !== "dir") return;
-
       const isExpanded = expandedNodes.has(path);
       if (isExpanded) {
         setExpandedNodes((prev) => {
@@ -139,48 +136,41 @@ export function SnapshotTreeBrowser({
         });
         return;
       }
-
       setExpandedNodes((prev) => {
         const next = new Set(prev);
         next.add(path);
         return next;
       });
-
       if (node.children !== null) return;
-
       if (inflightRef.current.has(path)) return;
       inflightRef.current.add(path);
-
       setRootNodes((prev) =>
-        updateNodeAtPath(prev, path, (n) => ({ ...n, loading: true })),
+        updateNodeAtPath(prev, path, (n) => ({ ...n, loading: true }))
       );
-
       loadChildren(path)
-        .then((children) => {
+        .then((children) =>
           setRootNodes((prev) =>
             updateNodeAtPath(prev, path, (n) => ({
               ...n,
               children,
               loading: false,
               error: undefined,
-            })),
-          );
-        })
-        .catch((err: any) => {
+            }))
+          )
+        )
+        .catch((err: any) =>
           setRootNodes((prev) =>
             updateNodeAtPath(prev, path, (n) => ({
               ...n,
               children: [],
               loading: false,
               error: err?.message || "加载失败",
-            })),
-          );
-        })
-        .finally(() => {
-          inflightRef.current.delete(path);
-        });
+            }))
+          )
+        )
+        .finally(() => inflightRef.current.delete(path));
     },
-    [rootNodes, expandedNodes, loadChildren, updateNodeAtPath],
+    [rootNodes, expandedNodes, loadChildren, updateNodeAtPath]
   );
 
   const handleCheck = useCallback(
@@ -188,53 +178,39 @@ export function SnapshotTreeBrowser({
       if (checked) {
         const next = [...selectedPaths];
         for (const path of collectLoadedPaths(node)) {
-          if (!next.includes(path)) {
-            next.push(path);
-          }
+          if (!next.includes(path)) next.push(path);
         }
         onSelectedPathsChange(next);
         return;
       }
-
-      const selectedAncestors = selectedPaths.filter((path) =>
-        isAncestorPath(path, node.path),
+      const selectedAncestors = selectedPaths.filter((p) =>
+        isAncestorPath(p, node.path)
       );
-      const next = selectedPaths.filter((path) => {
-        if (isSameOrDescendantPath(path, node.path)) {
-          return false;
-        }
-        return !isAncestorPath(path, node.path);
+      const next = selectedPaths.filter((p) => {
+        if (isSameOrDescendantPath(p, node.path)) return false;
+        return !isAncestorPath(p, node.path);
       });
-
       for (const ancestorPath of selectedAncestors) {
         const ancestor = findNode(rootNodes, ancestorPath);
-        if (!ancestor) {
-          continue;
-        }
+        if (!ancestor) continue;
         for (const path of collectLoadedPathsExcluding(ancestor, node.path)) {
-          if (!next.includes(path)) {
-            next.push(path);
-          }
+          if (!next.includes(path)) next.push(path);
         }
       }
-
       onSelectedPathsChange(next);
     },
-    [onSelectedPathsChange, rootNodes, selectedPaths],
+    [onSelectedPathsChange, rootNodes, selectedPaths]
   );
 
   if (!expanded) {
     return (
-      <div className="rounded-md border bg-card p-3">
+      <div style={{ border: "1px solid #f0f0f0", borderRadius: 6, padding: 12, background: "#fff" }}>
         <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="w-full"
+          block
+          icon={<SearchOutlined />}
           disabled={!isAgentOnline}
           onClick={handleExpand}
         >
-          <FolderSearch className="h-4 w-4" />
           {isAgentOnline ? "浏览快照内容" : "需要节点在线才能浏览"}
         </Button>
       </div>
@@ -242,39 +218,80 @@ export function SnapshotTreeBrowser({
   }
 
   return (
-    <div className="overflow-hidden rounded-md border bg-card">
-      <div className="flex items-center justify-between gap-2 border-b bg-muted/50 px-3 py-2">
-        <span className="min-w-0 truncate text-xs font-medium">快照内容</span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 shrink-0"
-          disabled={!isAgentOnline || rootLoading}
-          onClick={handleRefresh}
-          aria-label="刷新快照内容"
-        >
-          <RefreshCw className={cn("h-3.5 w-3.5", rootLoading && "animate-spin")} />
-        </Button>
+    <div
+      style={{
+        overflow: "hidden",
+        border: "1px solid #f0f0f0",
+        borderRadius: 6,
+        background: "#fff",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          padding: "4px 12px",
+          background: "#fafafa",
+          borderBottom: "1px solid #f0f0f0",
+        }}
+      >
+        <Typography.Text style={{ fontSize: 12, fontWeight: 500 }}>
+          快照内容
+        </Typography.Text>
+        <Tooltip title="刷新">
+          <Button
+            type="text"
+            size="small"
+            aria-label="刷新快照内容"
+            disabled={!isAgentOnline || rootLoading}
+            onClick={handleRefresh}
+            icon={<ReloadOutlined spin={rootLoading} />}
+          />
+        </Tooltip>
       </div>
 
-      <div className="max-h-[350px] overflow-y-auto">
+      <div style={{ maxHeight: 350, overflowY: "auto" }}>
         {rootLoading ? (
-          <LoadingRows />
+          <div style={{ padding: 8 }}>
+            {[1, 2, 3, 4, 5].map((i) => (
+              <Skeleton.Input
+                key={i}
+                active
+                size="small"
+                block
+                style={{ height: 28, marginBottom: 4 }}
+              />
+            ))}
+            <Typography.Text
+              type="secondary"
+              style={{
+                display: "block",
+                textAlign: "center",
+                fontSize: 12,
+                paddingTop: 8,
+              }}
+            >
+              正在读取快照内容...
+            </Typography.Text>
+          </div>
         ) : rootError ? (
-          <div className="p-4">
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>无法读取快照内容</AlertTitle>
-              <AlertDescription className="text-xs">
-                {rootError}
-              </AlertDescription>
-            </Alert>
+          <div style={{ padding: 16 }}>
+            <Alert
+              type="error"
+              showIcon
+              message="无法读取快照内容"
+              description={rootError}
+            />
           </div>
         ) : rootNodes.length === 0 ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">快照为空</div>
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="快照为空"
+            style={{ marginTop: 32 }}
+          />
         ) : (
-          <div className="py-1">
+          <div style={{ padding: "4px 0" }}>
             {rootNodes.map((node) => (
               <TreeNodeRow
                 key={node.path}
@@ -291,15 +308,22 @@ export function SnapshotTreeBrowser({
       </div>
 
       {selectedPaths.length > 0 && (
-        <div className="flex items-center justify-between gap-3 border-t bg-muted/30 px-3 py-2">
-          <span className="min-w-0 truncate text-xs text-muted-foreground">
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            padding: "4px 12px",
+            background: "#fafafa",
+            borderTop: "1px solid #f0f0f0",
+          }}
+        >
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             已选中 {selectedPaths.length} 项
-          </span>
+          </Typography.Text>
           <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 shrink-0 px-2 text-xs"
+            type="link"
+            size="small"
             onClick={() => onSelectedPathsChange([])}
           >
             清除选择
@@ -332,79 +356,119 @@ function TreeNodeRow({
   return (
     <>
       <div
-        className="group flex min-h-8 items-center gap-1 px-2 py-1 hover:bg-muted/50"
         data-snapshot-tree-row=""
-        style={{ paddingLeft: `${depth * 16 + 8}px` }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          padding: "2px 8px",
+          paddingLeft: depth * 16 + 8,
+          minHeight: 32,
+        }}
+        onMouseOver={(e) => (e.currentTarget.style.background = "#fafafa")}
+        onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
       >
         {isDir ? (
           <button
             type="button"
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
             onClick={() => onToggle(node.path)}
             aria-label={`${isExpanded ? "折叠" : "展开"} ${node.path}`}
+            style={{
+              background: "transparent",
+              border: "none",
+              padding: 0,
+              cursor: "pointer",
+              fontSize: 10,
+              color: "rgba(0,0,0,0.45)",
+              width: 16,
+            }}
           >
             {node.loading ? (
-              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              <ReloadOutlined spin style={{ fontSize: 10 }} />
             ) : isExpanded ? (
-              <ChevronDown className="h-3.5 w-3.5" />
+              <CaretDownOutlined />
             ) : (
-              <ChevronRight className="h-3.5 w-3.5" />
+              <RightOutlined />
             )}
           </button>
         ) : (
-          <span className="h-5 w-5 shrink-0" aria-hidden="true" />
+          <span style={{ width: 16 }} />
         )}
 
         <button
           type="button"
-          className={cn(
-            "flex min-w-0 flex-1 items-center gap-1.5 text-left",
-            isDir ? "cursor-pointer" : "cursor-default",
-          )}
-          onClick={() => {
-            if (isDir) onToggle(node.path);
+          onClick={() => isDir && onToggle(node.path)}
+          style={{
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            background: "transparent",
+            border: "none",
+            padding: 0,
+            cursor: isDir ? "pointer" : "default",
+            textAlign: "left",
+            minWidth: 0,
+            color: "inherit",
           }}
-          disabled={!isDir}
         >
           {isDir ? (
             isExpanded ? (
-              <FolderOpen className="h-4 w-4 shrink-0 fill-blue-500/20 text-blue-500" />
+              <FolderOpenOutlined style={{ color: "#1677ff", fontSize: 14 }} />
             ) : (
-              <Folder className="h-4 w-4 shrink-0 fill-blue-500/20 text-blue-500" />
+              <FolderOutlined style={{ color: "#1677ff", fontSize: 14 }} />
             )
           ) : (
-            <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <FileOutlined style={{ color: "rgba(0,0,0,0.45)", fontSize: 12 }} />
           )}
-          <span className="min-w-0 truncate text-xs text-foreground">{node.name}</span>
+          <Typography.Text ellipsis style={{ fontSize: 12 }}>
+            {node.name}
+          </Typography.Text>
         </button>
 
-        <span className="w-16 shrink-0 truncate text-right text-[10px] text-muted-foreground">
+        <Typography.Text
+          type="secondary"
+          style={{ fontSize: 11, width: 64, textAlign: "right" }}
+        >
           {formatSize(node.size)}
-        </span>
+        </Typography.Text>
 
         <Checkbox
           checked={checked}
-          onCheckedChange={(value) => onCheck(node, value === true)}
-          className="shrink-0"
+          onChange={(e) => onCheck(node, e.target.checked)}
           aria-label={`选择 ${node.path}`}
+          aria-checked={checked}
         />
       </div>
 
-      {isDir && isExpanded && node.error && (
-        <div
-          className="px-2 py-1 text-[10px] text-destructive"
-          style={{ paddingLeft: `${(depth + 1) * 16 + 28}px` }}
-        >
-          {node.error}
-        </div>
-      )}
-
+      {isDir &&
+        isExpanded &&
+        node.error &&
+        (() => {
+          const padLeft = (depth + 1) * 16 + 28;
+          return (
+            <div
+              style={{
+                padding: "2px 8px",
+                paddingLeft: padLeft,
+                fontSize: 10,
+                color: "#ff4d4f",
+              }}
+            >
+              {node.error}
+            </div>
+          );
+        })()}
       {isDir && isExpanded && node.children !== null && (
         <>
           {node.children.length === 0 && !node.loading && !node.error ? (
             <div
-              className="px-2 py-1 text-[10px] text-muted-foreground"
-              style={{ paddingLeft: `${(depth + 1) * 16 + 28}px` }}
+              style={{
+                padding: "2px 8px",
+                paddingLeft: (depth + 1) * 16 + 28,
+                fontSize: 10,
+                color: "rgba(0,0,0,0.45)",
+              }}
             >
               空目录
             </div>
@@ -427,17 +491,6 @@ function TreeNodeRow({
   );
 }
 
-function LoadingRows() {
-  return (
-    <div className="space-y-2 p-2">
-      {[1, 2, 3, 4, 5].map((i) => (
-        <Skeleton key={i} className="h-7 w-full" />
-      ))}
-      <p className="pt-2 text-center text-xs text-muted-foreground">正在读取快照内容...</p>
-    </div>
-  );
-}
-
 function sortEntries(entries: SnapshotFileEntry[]): SnapshotFileEntry[] {
   return [...entries].sort((a, b) => {
     if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
@@ -445,14 +498,16 @@ function sortEntries(entries: SnapshotFileEntry[]): SnapshotFileEntry[] {
   });
 }
 
-function buildTreeNodes(entries: SnapshotFileEntry[], parentPath?: string): TreeNode[] {
+function buildTreeNodes(
+  entries: SnapshotFileEntry[],
+  parentPath?: string
+): TreeNode[] {
   const nodeMap = new Map<string, TreeNode>();
   const roots: TreeNode[] = [];
-  const scopedEntries = sortEntries(entries).filter((entry) =>
-    isInBrowseScope(entry.path, parentPath),
+  const scoped = sortEntries(entries).filter((e) =>
+    isInBrowseScope(e.path, parentPath)
   );
-
-  for (const entry of scopedEntries) {
+  for (const entry of scoped) {
     nodeMap.set(entry.path, {
       name: getPathName(entry.path),
       path: entry.path,
@@ -463,22 +518,16 @@ function buildTreeNodes(entries: SnapshotFileEntry[], parentPath?: string): Tree
       loading: false,
     });
   }
-
-  for (const entry of scopedEntries) {
+  for (const entry of scoped) {
     const node = nodeMap.get(entry.path);
-    if (!node) {
-      continue;
-    }
-
+    if (!node) continue;
     const parent = nodeMap.get(getParentPath(entry.path) ?? "");
     if (parent) {
       parent.children = [...(parent.children ?? []), node];
       continue;
     }
-
     roots.push(node);
   }
-
   return sortTreeNodes(roots);
 }
 
@@ -488,16 +537,14 @@ function sortTreeNodes(nodes: TreeNode[]): TreeNode[] {
       if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
       return a.path.localeCompare(b.path);
     })
-    .map((node) => ({
-      ...node,
-      children: node.children ? sortTreeNodes(node.children) : node.children,
+    .map((n) => ({
+      ...n,
+      children: n.children ? sortTreeNodes(n.children) : n.children,
     }));
 }
 
 function isInBrowseScope(path: string, parentPath?: string): boolean {
-  if (!parentPath) {
-    return path !== "/";
-  }
+  if (!parentPath) return path !== "/";
   return isDescendantPath(path, parentPath);
 }
 
@@ -508,9 +555,7 @@ function getPathName(path: string): string {
 
 function getParentPath(path: string): string | null {
   const parts = path.split("/").filter(Boolean);
-  if (parts.length <= 1) {
-    return null;
-  }
+  if (parts.length <= 1) return null;
   const prefix = path.startsWith("/") ? "/" : "";
   return `${prefix}${parts.slice(0, -1).join("/")}`;
 }
@@ -518,57 +563,47 @@ function getParentPath(path: string): string | null {
 function collectLoadedPaths(node: TreeNode): string[] {
   return [
     node.path,
-    ...(node.children?.flatMap((child) => collectLoadedPaths(child)) ?? []),
+    ...(node.children?.flatMap((c) => collectLoadedPaths(c)) ?? []),
   ];
 }
 
-function collectLoadedPathsExcluding(node: TreeNode, excludedPath: string): string[] {
-  if (isSameOrDescendantPath(node.path, excludedPath)) {
-    return [];
-  }
-  if (isAncestorPath(node.path, excludedPath)) {
-    return node.children?.flatMap((child) =>
-      collectLoadedPathsExcluding(child, excludedPath),
+function collectLoadedPathsExcluding(node: TreeNode, excluded: string): string[] {
+  if (isSameOrDescendantPath(node.path, excluded)) return [];
+  if (isAncestorPath(node.path, excluded)) {
+    return node.children?.flatMap((c) =>
+      collectLoadedPathsExcluding(c, excluded)
     ) ?? [];
   }
   return collectLoadedPaths(node);
 }
 
-function isNodeChecked(node: TreeNode, selectedPathSet: Set<string>): boolean {
-  if (selectedPathSet.has(node.path) || hasSelectedAncestor(node.path, selectedPathSet)) {
-    return true;
-  }
+function isNodeChecked(node: TreeNode, set: Set<string>): boolean {
+  if (set.has(node.path) || hasSelectedAncestor(node.path, set)) return true;
   if (node.type === "dir" && node.children && node.children.length > 0) {
-    return node.children.every((child) => isNodeChecked(child, selectedPathSet));
+    return node.children.every((c) => isNodeChecked(c, set));
   }
   return false;
 }
 
-function hasSelectedAncestor(path: string, selectedPathSet: Set<string>): boolean {
-  for (const selectedPath of selectedPathSet) {
-    if (isAncestorPath(selectedPath, path)) {
-      return true;
-    }
+function hasSelectedAncestor(path: string, set: Set<string>): boolean {
+  for (const p of set) {
+    if (isAncestorPath(p, path)) return true;
   }
   return false;
 }
 
-function isSameOrDescendantPath(path: string, parentPath: string): boolean {
-  return path === parentPath || isDescendantPath(path, parentPath);
+function isSameOrDescendantPath(path: string, parent: string): boolean {
+  return path === parent || isDescendantPath(path, parent);
 }
 
-function isDescendantPath(path: string, parentPath: string): boolean {
-  if (parentPath === "/") {
-    return path !== "/" && path.startsWith("/");
-  }
-  const prefix = parentPath.endsWith("/") ? parentPath : `${parentPath}/`;
+function isDescendantPath(path: string, parent: string): boolean {
+  if (parent === "/") return path !== "/" && path.startsWith("/");
+  const prefix = parent.endsWith("/") ? parent : `${parent}/`;
   return path.startsWith(prefix);
 }
 
 function isAncestorPath(candidate: string, path: string): boolean {
-  if (candidate === path) {
-    return false;
-  }
+  if (candidate === path) return false;
   return isDescendantPath(path, candidate);
 }
 

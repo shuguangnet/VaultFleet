@@ -1,29 +1,58 @@
 import React, { useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getAgent, backupNow, updateAgent } from "@/services/agents";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Alert,
+  App,
+  Button,
+  Card,
+  Checkbox,
+  Col,
+  Descriptions,
+  Drawer,
+  Empty,
+  Form,
+  Input,
+  Modal,
+  Row,
+  Space,
+  Spin,
+  Table,
+  Tabs,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
+import {
+  CheckCircleOutlined,
+  CloudUploadOutlined,
+  CopyOutlined,
+  FolderOpenOutlined,
+  InfoCircleOutlined,
+  PlayCircleOutlined,
+  RedoOutlined,
+  ReloadOutlined,
+  WarningOutlined,
+} from "@ant-design/icons";
+import type { ColumnsType } from "antd/es/table";
+import {
+  backupNow,
+  getAgent,
+  updateAgent,
+} from "@/services/agents";
 import { listPolicies } from "@/services/policies";
-import { copyToClipboard } from "@/lib/utils";
 import { listTasks } from "@/services/tasks";
-import { listSnapshots, restoreSnapshot } from "@/services/snapshots";
+import {
+  listSnapshots,
+  restoreSnapshot,
+} from "@/services/snapshots";
 import { listAgentCommands } from "@/services/commands";
 import { StatusBadge } from "@/components/status-badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Skeleton } from "@/components/ui/skeleton";
 import { DirectoryBrowser } from "@/components/directory-browser";
-import { Button } from "@/components/ui/button";
-import { Play, RotateCcw, Info, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, RefreshCw, UploadCloud } from "lucide-react";
-import { ConfirmDialog } from "@/components/confirm-dialog";
-import { toast } from "sonner";
-import { Snapshot } from "@/types/snapshot";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { safeFormatDate } from "@/lib/date";
+import { copyToClipboard } from "@/lib/utils";
 import { formatBytes } from "@/pages/tasks/tasks-page";
+import type { Snapshot } from "@/types/snapshot";
 
 const COMMAND_TYPE_LABELS: Record<string, string> = {
   backup_now: "手动备份",
@@ -35,47 +64,50 @@ const COMMAND_TYPE_LABELS: Record<string, string> = {
 };
 
 export function NodeDetailPage() {
+  const { message } = App.useApp();
   const { agentId } = useParams<{ agentId: string }>();
   const queryClient = useQueryClient();
   const [selectedSnapshot, setSelectedSnapshot] = useState<Snapshot | null>(null);
   const [targetPath, setTargetPath] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
-  const [confirmBackupOpen, setConfirmBackupOpen] = useState(false);
-  const [confirmUpdateOpen, setConfirmUpdateOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState("overview");
 
   const { data: agent, isLoading: agentLoading } = useQuery({
     queryKey: ["agent", agentId],
     queryFn: () => getAgent(agentId!),
     enabled: !!agentId,
   });
-
   const { data: policies } = useQuery({
     queryKey: ["policies", { agent_id: agentId }],
     queryFn: () => listPolicies(agentId),
     enabled: !!agentId,
   });
-
   const { data: snapshots } = useQuery({
     queryKey: ["snapshots", agentId],
     queryFn: () => listSnapshots(agentId!),
     enabled: !!agentId,
   });
-
   const { data: tasks } = useQuery({
     queryKey: ["tasks", { agent_id: agentId }],
     queryFn: () => listTasks({ agent_id: agentId }),
     enabled: !!agentId,
   });
-
-  const { data: commands, isFetching: commandsFetching, refetch: refetchCommands } = useQuery({
+  const {
+    data: commands,
+    isFetching: commandsFetching,
+    refetch: refetchCommands,
+  } = useQuery({
     queryKey: ["commands", agentId],
     queryFn: () => listAgentCommands(agentId!),
     enabled: !!agentId,
     refetchInterval: (query) => {
       const data = query.state.data;
       const hasActive = data?.some(
-        (c) => c.status === "pending" || c.status === "dispatched" || c.status === "running"
+        (c) =>
+          c.status === "pending" ||
+          c.status === "dispatched" ||
+          c.status === "running"
       );
       return hasActive ? 5000 : false;
     },
@@ -85,418 +117,567 @@ export function NodeDetailPage() {
     mutationFn: () => backupNow(agentId!),
     onSuccess: (data) => {
       if (agent?.status === "online") {
-        toast.success("备份命令已下发", { description: `Message ID: ${data.message_id}` });
+        message.success(`备份命令已下发 (Message ID: ${data.message_id})`);
       } else {
-        toast.info("备份命令已排队", { description: "Agent 上线后将自动执行" });
+        message.info("备份命令已排队，Agent 上线后将自动执行");
       }
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
       queryClient.invalidateQueries({ queryKey: ["commands"] });
     },
-    onError: (error: any) => {
-      toast.error("发起备份失败", { description: error.message });
-    }
+    onError: (error: any) => message.error(error.message),
   });
 
   const updateMutation = useMutation({
     mutationFn: () => updateAgent(agentId!),
     onSuccess: (data) => {
-      toast.success("Agent 更新请求已确认", { description: `目标版本: ${data.version}` });
+      message.success(`Agent 更新请求已确认 (目标版本: ${data.version})`);
       queryClient.invalidateQueries({ queryKey: ["agent", agentId] });
       queryClient.invalidateQueries({ queryKey: ["commands"] });
     },
-    onError: (error: any) => {
-      toast.error("更新 Agent 失败", { description: error.message });
-    }
+    onError: (error: any) => message.error(error.message),
   });
 
   const restoreMutation = useMutation({
-    mutationFn: (body: { snapshot_id: string; target_path: string }) => 
+    mutationFn: (body: { snapshot_id: string; target_path: string }) =>
       restoreSnapshot(agentId!, body),
     onSuccess: (data) => {
-      const msg = data.message === "restore queued" ? "恢复命令已排队" : "恢复任务已开始";
-      toast.success(msg, { description: `Message ID: ${data.message_id}` });
+      const msg =
+        data.message === "restore queued" ? "恢复命令已排队" : "恢复任务已开始";
+      message.success(`${msg} (Message ID: ${data.message_id})`);
       setSelectedSnapshot(null);
       setConfirmed(false);
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
     },
-    onError: (error: any) => {
-      toast.error("发起恢复失败", { description: error.message });
-    }
+    onError: (error: any) => message.error(error.message),
   });
 
   if (agentLoading) {
-    return <div className="space-y-4"><Skeleton className="h-12 w-full" /><Skeleton className="h-[400px] w-full" /></div>;
+    return (
+      <div style={{ padding: 40, textAlign: "center" }}>
+        <Spin size="large" />
+      </div>
+    );
   }
-
   if (!agent) {
-    return <div>节点未找到</div>;
+    return <Alert type="warning" message="节点未找到" showIcon />;
   }
 
-  const handleRestoreClick = (s: Snapshot) => {
-    setSelectedSnapshot(s);
-    setTargetPath(s.paths[0] || "");
-    setConfirmed(false);
-  };
+  const policyColumns: ColumnsType<any> = [
+    {
+      title: "调度",
+      dataIndex: "schedule",
+      key: "schedule",
+      render: (v: string) => <Typography.Text code style={{ fontSize: 12 }}>{v}</Typography.Text>,
+    },
+    {
+      title: "备份路径",
+      dataIndex: "backup_dirs",
+      key: "backup_dirs",
+      render: (v: string[]) => (
+        <Typography.Text ellipsis style={{ fontSize: 12, maxWidth: 240 }}>
+          {v.join(", ")}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: "状态",
+      dataIndex: "synced",
+      key: "synced",
+      render: (v: boolean) => <StatusBadge status={v ? "success" : "unsynced"} />,
+    },
+    {
+      title: "操作",
+      key: "action",
+      align: "right",
+      render: (_, record) => (
+        <Link to={`/policies?id=${record.id}`}>
+          <Button type="link" size="small">详情</Button>
+        </Link>
+      ),
+    },
+  ];
+
+  const snapshotColumns: ColumnsType<Snapshot> = [
+    {
+      title: "ID",
+      dataIndex: "id",
+      key: "id",
+      render: (v: string) => (
+        <Typography.Text code style={{ fontSize: 12 }}>{v.substring(0, 8)}</Typography.Text>
+      ),
+    },
+    {
+      title: "时间",
+      dataIndex: "time",
+      key: "time",
+      render: (v: string) => (
+        <Typography.Text style={{ fontSize: 12 }}>
+          {safeFormatDate(v, "yyyy-MM-dd HH:mm:ss")}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: "路径",
+      dataIndex: "paths",
+      key: "paths",
+      render: (v: string[]) => (
+        <Typography.Text ellipsis style={{ fontSize: 12, maxWidth: 300 }}>
+          {v.join(", ")}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: "操作",
+      key: "action",
+      align: "right",
+      render: (_, record) => (
+        <Button
+          type="link"
+          size="small"
+          icon={<RedoOutlined />}
+          onClick={() => {
+            setSelectedSnapshot(record);
+            setTargetPath(record.paths[0] || "");
+            setConfirmed(false);
+          }}
+        >
+          恢复
+        </Button>
+      ),
+    },
+  ];
+
+  const taskColumns: ColumnsType<any> = [
+    {
+      key: "expand",
+      width: 40,
+      render: (_, record) => (
+        <Button
+          type="text"
+          size="small"
+          icon={expandedTaskId === record.id ? <InfoCircleOutlined /> : <InfoCircleOutlined />}
+          onClick={() =>
+            setExpandedTaskId(expandedTaskId === record.id ? null : record.id)
+          }
+        />
+      ),
+    },
+    {
+      title: "类型",
+      dataIndex: "type",
+      key: "type",
+      render: (t: string) => (t === "backup" ? "备份" : "恢复"),
+    },
+    {
+      title: "状态",
+      dataIndex: "status",
+      key: "status",
+      render: (s: string) => <StatusBadge status={s as any} />,
+    },
+    {
+      title: "时间",
+      dataIndex: "created_at",
+      key: "created_at",
+      render: (v: string) => (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {safeFormatDate(v, "yyyy-MM-dd HH:mm:ss")}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: "操作",
+      key: "action",
+      align: "right",
+      render: (_, record) => (
+        <Button
+          type="link"
+          size="small"
+          onClick={() =>
+            setExpandedTaskId(expandedTaskId === record.id ? null : record.id)
+          }
+        >
+          详情
+        </Button>
+      ),
+    },
+  ];
+
+  const commandColumns: ColumnsType<any> = [
+    {
+      title: "类型",
+      dataIndex: "type",
+      key: "type",
+      render: (v: string) => COMMAND_TYPE_LABELS[v] || v,
+    },
+    {
+      title: "状态",
+      dataIndex: "status",
+      key: "status",
+      render: (s: string) => <StatusBadge status={s as any} />,
+    },
+    { title: "尝试", dataIndex: "attempts", key: "attempts" },
+    {
+      title: "创建时间",
+      dataIndex: "created_at",
+      key: "created_at",
+      render: (v: string) => (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {safeFormatDate(v, "MM-dd HH:mm:ss")}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: "完成时间",
+      dataIndex: "completed_at",
+      key: "completed_at",
+      render: (v: string) => (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {safeFormatDate(v, "MM-dd HH:mm:ss")}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: "错误信息",
+      dataIndex: "error_message",
+      key: "error_message",
+      render: (v: string) =>
+        v ? (
+          <Tooltip title={v}>
+            <Typography.Text type="danger" ellipsis style={{ fontSize: 12, maxWidth: 160 }}>
+              {v}
+            </Typography.Text>
+          </Tooltip>
+        ) : (
+          "-"
+        ),
+    },
+  ];
+
+  const expandedRowRender = (record: any) => (
+    <div style={{ padding: "8px 24px", background: "#fafafa" }}>
+      <Row gutter={24}>
+        <Col xs={24} md={12}>
+          <Descriptions column={1} size="small" colon labelStyle={{ width: 120 }}>
+            <Descriptions.Item label="Message ID">
+              <Typography.Text code>{record.message_id}</Typography.Text>
+            </Descriptions.Item>
+            {record.command_id && (
+              <Descriptions.Item label="Command ID">
+                <Typography.Text code>{record.command_id}</Typography.Text>
+              </Descriptions.Item>
+            )}
+            {record.snapshot_id && (
+              <Descriptions.Item label="Snapshot ID">
+                <Typography.Text code>{record.snapshot_id}</Typography.Text>
+              </Descriptions.Item>
+            )}
+            <Descriptions.Item label="开始时间">
+              {safeFormatDate(record.started_at, "yyyy-MM-dd HH:mm:ss")}
+            </Descriptions.Item>
+            <Descriptions.Item label="结束时间">
+              {safeFormatDate(record.finished_at, "yyyy-MM-dd HH:mm:ss")}
+            </Descriptions.Item>
+          </Descriptions>
+        </Col>
+        <Col xs={24} md={12}>
+          <Descriptions column={1} size="small" colon labelStyle={{ width: 120 }}>
+            {record.duration_ms !== undefined && (
+              <Descriptions.Item label="耗时">
+                {(record.duration_ms / 1000).toFixed(2)}s
+              </Descriptions.Item>
+            )}
+            {record.repo_size !== undefined && (
+              <Descriptions.Item label="仓库大小">
+                {formatBytes(record.repo_size)}
+              </Descriptions.Item>
+            )}
+          </Descriptions>
+          {record.error_log && (
+            <Alert
+              type="error"
+              style={{ marginTop: 8 }}
+              message={
+                <pre
+                  style={{
+                    margin: 0,
+                    whiteSpace: "pre-wrap",
+                    fontSize: 11,
+                    fontFamily: "monospace",
+                    maxHeight: 200,
+                    overflow: "auto",
+                  }}
+                >
+                  {record.error_log}
+                </pre>
+              }
+            />
+          )}
+        </Col>
+      </Row>
+    </div>
+  );
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-bold tracking-tight">{agent.name}</h1>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <StatusBadge status={agent.status} />
-            <span>ID: {agent.id}</span>
-          </div>
-        </div>
-        <div className="flex flex-wrap justify-end gap-2">
+    <div className="vf-page">
+      <div
+        className="vf-page-header"
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        <Space direction="vertical" size={4}>
+          <Typography.Title level={4} style={{ margin: 0 }}>
+            {agent.name}
+          </Typography.Title>
+          <Space>
+            <StatusBadge status={agent.status as any} />
+            <Typography.Text type="secondary">ID: {agent.id}</Typography.Text>
+          </Space>
+        </Space>
+        <Space className="vf-page-actions">
           <Button
-            variant="outline"
+            icon={<CloudUploadOutlined />}
             disabled={agent.status !== "online" || updateMutation.isPending}
-            onClick={() => setConfirmUpdateOpen(true)}
+            onClick={() => updateMutation.mutate()}
+            loading={updateMutation.isPending}
           >
-            <UploadCloud className="mr-2 h-4 w-4" />
             更新 Agent
           </Button>
-          <Button disabled={backupMutation.isPending} onClick={() => setConfirmBackupOpen(true)}>
-            <Play className="mr-2 h-4 w-4" />
+          <Button
+            type="primary"
+            icon={<PlayCircleOutlined />}
+            onClick={() => backupMutation.mutate()}
+            loading={backupMutation.isPending}
+            disabled={backupMutation.isPending}
+          >
             立即备份
           </Button>
-          <ConfirmDialog
-            open={confirmBackupOpen}
-            onOpenChange={setConfirmBackupOpen}
-            title="确认立即备份"
-            description={`将对节点 ${agent.name} 发起立即备份请求。`}
-            onConfirm={() => {
-              setConfirmBackupOpen(false);
-              backupMutation.mutate();
-            }}
-            loading={backupMutation.isPending}
-            variant="default"
-            confirmText="立即备份"
-          />
-          <ConfirmDialog
-            open={confirmUpdateOpen}
-            onOpenChange={setConfirmUpdateOpen}
-            title="确认更新 Agent？"
-            description={`将请求节点 ${agent.name} 更新到当前 Master 版本。更新过程中 Agent 会下载新二进制并重启。`}
-            onConfirm={() => {
-              setConfirmUpdateOpen(false);
-              updateMutation.mutate();
-            }}
-            loading={updateMutation.isPending}
-            variant="default"
-            confirmText="更新 Agent"
-          />
-        </div>
+        </Space>
       </div>
 
-      <Tabs defaultValue="overview" className="w-full">
-        <TabsList className="grid w-full grid-cols-6 lg:w-[720px]">
-          <TabsTrigger value="overview">概览</TabsTrigger>
-          <TabsTrigger value="policy">策略</TabsTrigger>
-          <TabsTrigger value="snapshots">快照</TabsTrigger>
-          <TabsTrigger value="tasks">任务</TabsTrigger>
-          <TabsTrigger value="commands">命令</TabsTrigger>
-          <TabsTrigger value="browser">文件浏览</TabsTrigger>
-        </TabsList>
-        
-        <TabsContent value="overview" className="mt-6 space-y-4">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm font-medium">系统信息</CardTitle>
-              </CardHeader>
-              <CardContent className="text-sm space-y-2">
-                <div className="flex justify-between"><span className="text-muted-foreground">操作系统</span><span>{agent.os}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">架构</span><span>{agent.arch}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">主机名</span><span>{agent.hostname}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Agent 版本</span><span>{agent.version ? `v${agent.version}` : "未知"}</span></div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm font-medium">连接状态</CardTitle>
-              </CardHeader>
-              <CardContent className="text-sm space-y-2">
-                <div className="flex justify-between"><span className="text-muted-foreground">当前状态</span><StatusBadge status={agent.status} /></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">最后在线</span><span>{safeFormatDate(agent.last_seen, "yyyy-MM-dd HH:mm:ss", "从未")}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">创建时间</span><span>{safeFormatDate(agent.created_at, "yyyy-MM-dd HH:mm:ss")}</span></div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="policy" className="mt-6">
-          <Card>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>调度</TableHead>
-                  <TableHead>备份路径</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {policies?.map((policy) => (
-                  <TableRow key={policy.id}>
-                    <TableCell className="font-mono text-xs">{policy.schedule}</TableCell>
-                    <TableCell className="text-xs truncate max-w-[200px]">{policy.backup_dirs.join(", ")}</TableCell>
-                    <TableCell><StatusBadge status={policy.synced ? "success" : "unsynced"} /></TableCell>
-                    <TableCell className="text-right">
-                      <Link to={`/policies?id=${policy.id}`} className="text-primary hover:underline text-sm">详情</Link>
-                    </TableCell>
-                  </TableRow>
-                )) || <TableRow><TableCell colSpan={4} className="text-center py-4">无关联策略</TableCell></TableRow>}
-              </TableBody>
-            </Table>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="snapshots" className="mt-6">
-           <Card>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead>时间</TableHead>
-                  <TableHead>路径</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {snapshots?.map((s) => (
-                  <TableRow key={s.id}>
-                    <TableCell className="font-mono text-xs">{s.id.substring(0, 8)}</TableCell>
-                    <TableCell className="text-xs">{safeFormatDate(s.time, "yyyy-MM-dd HH:mm:ss")}</TableCell>
-                    <TableCell className="text-xs truncate max-w-[300px]">{s.paths.join(", ")}</TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" className="text-primary" onClick={() => handleRestoreClick(s)}>
-                        <RotateCcw className="mr-1 h-3 w-3" />
-                        恢复
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                )) || <TableRow><TableCell colSpan={4} className="text-center py-4">暂无快照</TableCell></TableRow>}
-              </TableBody>
-            </Table>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="tasks" className="mt-6">
-           <Card>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10"></TableHead>
-                  <TableHead>类型</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>时间</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tasks?.map((t) => (
-                  <React.Fragment key={t.id}>
-                    <TableRow className="group">
-                      <TableCell>
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          className="h-8 w-8"
-                          onClick={() => setExpandedTaskId(expandedTaskId === t.id ? null : t.id)}
-                        >
-                          {expandedTaskId === t.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                        </Button>
-                      </TableCell>
-                      <TableCell>{t.type === "backup" ? "备份" : "恢复"}</TableCell>
-                      <TableCell><StatusBadge status={t.status} /></TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{safeFormatDate(t.created_at, "yyyy-MM-dd HH:mm:ss")}</TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="ghost" size="sm" className="text-primary" onClick={() => setExpandedTaskId(expandedTaskId === t.id ? null : t.id)}>
-                          详情
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                    {expandedTaskId === t.id && (
-                      <TableRow className="bg-muted/30">
-                        <TableCell colSpan={5}>
-                          <div className="p-4 grid gap-4 md:grid-cols-2 text-xs">
-                            <div className="space-y-2">
-                              <div className="flex items-center gap-2">
-                                <span className="font-semibold w-24">Message ID:</span>
-                                <code className="bg-muted px-1 rounded">{t.message_id}</code>
-                              </div>
-                              {t.command_id && (
-                                <div className="flex items-center gap-2">
-                                  <span className="font-semibold w-24">Command ID:</span>
-                                  <code className="bg-muted px-1 rounded">{t.command_id}</code>
-                                </div>
-                              )}
-                              {t.snapshot_id && (
-                                <div className="flex items-center gap-2">
-                                  <span className="font-semibold w-24">Snapshot ID:</span>
-                                  <code className="bg-muted px-1 rounded">{t.snapshot_id}</code>
-                                </div>
-                              )}
-                              <div className="flex items-center gap-2">
-                                <span className="font-semibold w-24">开始时间:</span>
-                                <span>{safeFormatDate(t.started_at, "yyyy-MM-dd HH:mm:ss")}</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="font-semibold w-24">结束时间:</span>
-                                <span>{safeFormatDate(t.finished_at, "yyyy-MM-dd HH:mm:ss")}</span>
-                              </div>
-                            </div>
-                            <div className="space-y-2">
-                              {t.duration_ms !== undefined && (
-                                <div className="flex items-center gap-2">
-                                  <span className="font-semibold w-24">耗时:</span>
-                                  <span>{(t.duration_ms / 1000).toFixed(2)}s</span>
-                                </div>
-                              )}
-                              {t.repo_size !== undefined && (
-                                <div className="flex items-center gap-2">
-                                  <span className="font-semibold w-24">仓库大小:</span>
-                                  <span>{formatBytes(t.repo_size)}</span>
-                                </div>
-                              )}
-                              {t.error_log && (
-                                <div className="space-y-1">
-                                  <span className="font-semibold block">错误日志:</span>
-                                  <pre className="bg-red-50 text-red-600 p-2 rounded whitespace-pre-wrap font-mono text-[10px] max-h-32 overflow-y-auto">
-                                    {t.error_log}
-                                  </pre>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </React.Fragment>
-                )) || <TableRow><TableCell colSpan={5} className="text-center py-4">暂无任务</TableCell></TableRow>}
-              </TableBody>
-            </Table>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="commands" className="mt-6">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <div className="space-y-1">
-                <CardTitle className="text-base">命令队列</CardTitle>
-                <CardDescription>下发给 Agent 的指令历史</CardDescription>
-              </div>
-              <Button 
-                variant="outline" 
-                size="icon" 
-                onClick={() => refetchCommands()} 
-                disabled={commandsFetching}
-                className={commandsFetching ? "animate-spin" : ""}
-              >
-                <RefreshCw className="h-4 w-4" />
-              </Button>
-            </CardHeader>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>类型</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>尝试</TableHead>
-                  <TableHead>创建时间</TableHead>
-                  <TableHead>完成时间</TableHead>
-                  <TableHead>错误信息</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {commands?.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell className="font-medium">{COMMAND_TYPE_LABELS[c.type] || c.type}</TableCell>
-                    <TableCell><StatusBadge status={c.status} /></TableCell>
-                    <TableCell>{c.attempts}</TableCell>
-                    <TableCell className="text-xs">{safeFormatDate(c.created_at, "MM-dd HH:mm:ss")}</TableCell>
-                    <TableCell className="text-xs">{safeFormatDate(c.completed_at, "MM-dd HH:mm:ss")}</TableCell>
-                    <TableCell className="text-xs text-red-500 max-w-[150px] truncate" title={c.error_message}>{c.error_message || "-"}</TableCell>
-                  </TableRow>
-                )) || <TableRow><TableCell colSpan={6} className="text-center py-4">暂无命令</TableCell></TableRow>}
-              </TableBody>
-            </Table>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="browser" className="mt-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>文件浏览器</CardTitle>
-              <CardDescription>实时浏览 Agent 上的目录</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {agent.status === "online" ? (
-                <DirectoryBrowser 
-                  agentId={agent.id} 
-                  onSelect={(path) => {
-                    copyToClipboard(path);
-                    toast.success(`路径已复制: ${path}`);
-                  }} 
+      <Card styles={{ body: { padding: 16 } }}>
+        <Tabs
+          activeKey={activeTab}
+          onChange={setActiveTab}
+          items={[
+            {
+              key: "overview",
+              label: "概览",
+              children: (
+                <Row gutter={16}>
+                  <Col xs={24} md={12} lg={8}>
+                    <Card type="inner" title="系统信息" size="small">
+                      <Descriptions column={1} size="small">
+                        <Descriptions.Item label="操作系统">{agent.os}</Descriptions.Item>
+                        <Descriptions.Item label="架构">{agent.arch}</Descriptions.Item>
+                        <Descriptions.Item label="主机名">{agent.hostname}</Descriptions.Item>
+                        <Descriptions.Item label="Agent 版本">
+                          {agent.version ? `v${agent.version}` : "未知"}
+                        </Descriptions.Item>
+                      </Descriptions>
+                    </Card>
+                  </Col>
+                  <Col xs={24} md={12} lg={8}>
+                    <Card type="inner" title="连接状态" size="small">
+                      <Descriptions column={1} size="small">
+                        <Descriptions.Item label="当前状态">
+                          <StatusBadge status={agent.status as any} />
+                        </Descriptions.Item>
+                        <Descriptions.Item label="最后在线">
+                          {safeFormatDate(agent.last_seen, "yyyy-MM-dd HH:mm:ss", "从未")}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="创建时间">
+                          {safeFormatDate(agent.created_at, "yyyy-MM-dd HH:mm:ss")}
+                        </Descriptions.Item>
+                      </Descriptions>
+                    </Card>
+                  </Col>
+                </Row>
+              ),
+            },
+            {
+              key: "policy",
+              label: "策略",
+              children: (
+                <Table
+                  columns={policyColumns}
+                  dataSource={policies || []}
+                  rowKey="id"
+                  pagination={false}
+                  scroll={{ x: 620 }}
+                  size="middle"
+                  locale={{
+                    emptyText: (
+                      <Empty
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        description="无关联策略"
+                      />
+                    ),
+                  }}
                 />
-              ) : (
-                <div className="h-64 flex flex-col items-center justify-center text-muted-foreground border-2 border-dashed rounded-lg space-y-2">
-                  <div className="h-2 w-2 rounded-full bg-red-500" />
-                  <p>节点离线，无法使用文件浏览器</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+              ),
+            },
+            {
+              key: "snapshots",
+              label: "快照",
+              children: (
+                <Table
+                  columns={snapshotColumns}
+                  dataSource={snapshots || []}
+                  rowKey="id"
+                  pagination={{ pageSize: 10 }}
+                  scroll={{ x: 720 }}
+                  size="middle"
+                  locale={{
+                    emptyText: (
+                      <Empty
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        description="暂无快照"
+                      />
+                    ),
+                  }}
+                />
+              ),
+            },
+            {
+              key: "tasks",
+              label: "任务",
+              children: (
+                <Table
+                  columns={taskColumns}
+                  dataSource={tasks || []}
+                  rowKey="id"
+                  pagination={{ pageSize: 10 }}
+                  scroll={{ x: 720 }}
+                  expandable={{
+                    expandedRowKeys: expandedTaskId ? [expandedTaskId] : [],
+                    onExpand: (exp, record) =>
+                      setExpandedTaskId(exp ? record.id : null),
+                    expandedRowRender,
+                  }}
+                  size="middle"
+                  locale={{
+                    emptyText: (
+                      <Empty
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        description="暂无任务"
+                      />
+                    ),
+                  }}
+                />
+              ),
+            },
+            {
+              key: "commands",
+              label: "命令",
+              children: (
+                <Card
+                  size="small"
+                  styles={{ body: { padding: 0 } }}
+                  title="命令队列"
+                  extra={
+                    <Button
+                      icon={<ReloadOutlined />}
+                      onClick={() => refetchCommands()}
+                      loading={commandsFetching}
+                      size="small"
+                      type="text"
+                    />
+                  }
+                >
+                  <Table
+                    columns={commandColumns}
+                    dataSource={commands || []}
+                    rowKey="id"
+                    pagination={{ pageSize: 10 }}
+                    scroll={{ x: 860 }}
+                    size="small"
+                    locale={{
+                      emptyText: (
+                        <Empty
+                          image={Empty.PRESENTED_IMAGE_SIMPLE}
+                          description="暂无命令"
+                        />
+                      ),
+                    }}
+                  />
+                </Card>
+              ),
+            },
+            {
+              key: "browser",
+              label: "文件浏览",
+              children: (
+                <Card size="small" title="文件浏览器">
+                  {agent.status === "online" ? (
+                    <DirectoryBrowser
+                      agentId={agent.id}
+                      onSelect={(path) => {
+                        copyToClipboard(path);
+                        message.success(`路径已复制: ${path}`);
+                      }}
+                    />
+                  ) : (
+                    <Empty
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                      description="节点离线，无法使用文件浏览器"
+                    />
+                  )}
+                </Card>
+              ),
+            },
+          ]}
+        />
+      </Card>
 
-      <Dialog open={!!selectedSnapshot} onOpenChange={(open) => !open && setSelectedSnapshot(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>恢复快照</DialogTitle>
-            <DialogDescription>
-              将快照 {selectedSnapshot?.id.substring(0, 8)} 恢复到指定路径。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="target-path">恢复目标路径</Label>
-              <Input
-                id="target-path"
-                value={targetPath}
-                onChange={(e) => setTargetPath(e.target.value)}
-                placeholder="/path/to/restore"
-              />
-            </div>
-            <div className="flex items-center space-x-2 bg-amber-50 p-3 rounded border border-amber-200">
-              <Checkbox 
-                id="confirm" 
-                checked={confirmed} 
-                onCheckedChange={(checked) => setConfirmed(checked as boolean)} 
-              />
-              <label
-                htmlFor="confirm"
-                className="text-xs font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 text-amber-800"
-              >
-                我理解恢复操作可能会覆盖目标路径下的现有文件
-              </label>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSelectedSnapshot(null)}>取消</Button>
-            <Button 
-              disabled={!confirmed || !targetPath || restoreMutation.isPending}
-              onClick={() => restoreMutation.mutate({ 
-                snapshot_id: selectedSnapshot!.id, 
-                target_path: targetPath 
-              })}
+      <Modal
+        open={!!selectedSnapshot}
+        title="恢复快照"
+        onCancel={() => setSelectedSnapshot(null)}
+        onOk={() =>
+          restoreMutation.mutate({
+            snapshot_id: selectedSnapshot!.id,
+            target_path: targetPath,
+          })
+        }
+        okText="确认恢复"
+        cancelText="取消"
+        okButtonProps={{ disabled: !confirmed || !targetPath, loading: restoreMutation.isPending }}
+        destroyOnClose
+      >
+        <Form layout="vertical" style={{ marginTop: 12 }}>
+          <Form.Item label="恢复目标路径">
+            <Input
+              value={targetPath}
+              onChange={(e) => setTargetPath(e.target.value)}
+              placeholder="/path/to/restore"
+            />
+          </Form.Item>
+          <div
+            style={{
+              background: "#fffbe6",
+              border: "1px solid #ffe58f",
+              borderRadius: 6,
+              padding: 12,
+              display: "flex",
+              gap: 8,
+            }}
+          >
+            <Checkbox
+              checked={confirmed}
+              onChange={(e) => setConfirmed(e.target.checked)}
             >
-              {restoreMutation.isPending ? "提交中..." : "确认恢复"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              <Typography.Text style={{ fontSize: 12 }}>
+                我理解恢复操作可能会覆盖目标路径下的现有文件
+              </Typography.Text>
+            </Checkbox>
+          </div>
+        </Form>
+      </Modal>
     </div>
   );
 }

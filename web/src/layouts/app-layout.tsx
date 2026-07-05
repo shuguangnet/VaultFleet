@@ -1,52 +1,82 @@
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
-import { AuthUser } from "@/types/api";
-import {
-  LayoutDashboard,
-  Server,
-  Database,
-  ShieldCheck,
-  History,
-  Camera,
-  Bell,
-  Settings,
-  User,
-  ChevronRight,
-  Menu,
-  LogOut,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { cn } from "@/lib/utils";
+import { useEffect, useMemo, useState } from "react";
+import { Link, Outlet, useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Avatar,
+  Badge,
+  Breadcrumb,
+  Drawer,
+  Grid,
+  Dropdown,
+  Layout,
+  Menu,
+  Space,
+  Tooltip,
+  Typography,
+} from "antd";
+import {
+  BellOutlined,
+  CameraOutlined,
+  DatabaseOutlined,
+  DashboardOutlined,
+  DesktopOutlined,
+  HistoryOutlined,
+  LogoutOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  ReloadOutlined,
+  SafetyCertificateOutlined,
+  SettingOutlined,
+  UserOutlined,
+} from "@ant-design/icons";
+import type { MenuProps } from "antd";
 import { listAgents } from "@/services/agents";
 import { logout } from "@/services/auth";
+import type { AuthUser } from "@/types/api";
+import { antdTheme } from "../../src/styles/antd-theme";
+
+const { Header, Sider, Content } = Layout;
+const { useBreakpoint } = Grid;
 
 interface AppLayoutProps {
   user: AuthUser;
 }
 
-const navItems = [
-  { label: "仪表盘", icon: LayoutDashboard, path: "/" },
-  { label: "节点管理", icon: Server, path: "/nodes" },
-  { label: "存储配置", icon: Database, path: "/storage" },
-  { label: "备份策略", icon: ShieldCheck, path: "/policies" },
-  { label: "任务历史", icon: History, path: "/tasks" },
-  { label: "快照浏览", icon: Camera, path: "/snapshots" },
-  { label: "通知设置", icon: Bell, path: "/notifications" },
-  { label: "系统管理", icon: Settings, path: "/system" },
+interface NavItem {
+  key: string;
+  label: string;
+  icon: React.ReactNode;
+  path: string;
+}
+
+const navItems: NavItem[] = [
+  { key: "/", label: "仪表盘", icon: <DashboardOutlined />, path: "/" },
+  { key: "/nodes", label: "节点管理", icon: <DesktopOutlined />, path: "/nodes" },
+  { key: "/storage", label: "存储配置", icon: <DatabaseOutlined />, path: "/storage" },
+  { key: "/policies", label: "备份策略", icon: <SafetyCertificateOutlined />, path: "/policies" },
+  { key: "/tasks", label: "任务历史", icon: <HistoryOutlined />, path: "/tasks" },
+  { key: "/snapshots", label: "快照浏览", icon: <CameraOutlined />, path: "/snapshots" },
+  { key: "/notifications", label: "通知设置", icon: <BellOutlined />, path: "/notifications" },
+  { key: "/system", label: "系统管理", icon: <SettingOutlined />, path: "/system" },
 ];
+
+function findActiveLabel(pathname: string): string {
+  const exact = navItems.find((item) => item.path === pathname);
+  if (exact) return exact.label;
+  const matched = navItems
+    .filter((item) => item.path !== "/" && pathname.startsWith(item.path))
+    .sort((a, b) => b.path.length - a.path.length)[0];
+  return matched?.label ?? "页面";
+}
 
 export function AppLayout({ user }: AppLayoutProps) {
   const location = useLocation();
   const queryClient = useQueryClient();
+  const screens = useBreakpoint();
+  const isMobile = !screens.md;
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
   const { data: agents } = useQuery({
     queryKey: ["agents"],
     queryFn: listAgents,
@@ -55,107 +85,229 @@ export function AppLayout({ user }: AppLayoutProps) {
   const onlineCount = agents?.filter((a) => a.status === "online").length || 0;
   const totalCount = agents?.length || 0;
 
-  const activeItem = navItems.find((item) =>
-    item.path === "/" ? location.pathname === "/" : location.pathname.startsWith(item.path)
+  const activeLabel = useMemo(
+    () => findActiveLabel(location.pathname),
+    [location.pathname]
   );
 
-  const sidebarContent = (
-    <div className="flex h-full flex-col gap-2">
-      <div className="flex h-14 items-center border-b px-6">
-        <Link to="/" className="flex items-center gap-2 font-bold text-xl">
-          <ShieldCheck className="h-6 w-6 text-primary" />
-          <span>VaultFleet</span>
-        </Link>
-      </div>
-      <div className="flex-1 overflow-auto py-2">
-        <nav className="grid items-start px-4 text-sm font-medium">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              className={({ isActive }) =>
-                cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2 transition-all hover:text-primary",
-                  isActive ? "bg-muted text-primary" : "text-muted-foreground"
-                )
-              }
-            >
-              <item.icon className="h-4 w-4" />
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-      </div>
+  const menuItems: MenuProps["items"] = navItems.map((item) => ({
+    key: item.path,
+    icon: item.icon,
+    label: <Link to={item.path}>{item.label}</Link>,
+  }));
+
+  const selectedKey = useMemo(() => {
+    const matched = navItems
+      .filter((item) =>
+        item.path === "/"
+          ? location.pathname === "/"
+          : location.pathname.startsWith(item.path)
+      )
+      .sort((a, b) => b.path.length - a.path.length)[0];
+    return matched?.path ?? "/";
+  }, [location.pathname]);
+
+  const userMenuItems: MenuProps["items"] = [
+    { key: "username", label: user.username, disabled: true },
+    { type: "divider" },
+    {
+      key: "change-password",
+      label: <Link to="/system">修改密码</Link>,
+    },
+    { type: "divider" },
+    {
+      key: "logout",
+      icon: <LogoutOutlined />,
+      label: "退出登录",
+      onClick: () => {
+        logout().finally(() => {
+          queryClient.clear();
+          window.location.href = "/login";
+        });
+      },
+    },
+  ];
+
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!isMobile) setMobileNavOpen(false);
+  }, [isMobile]);
+
+  const brand = (
+    <div
+      className="vf-app-brand"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: collapsed && !isMobile ? "center" : "flex-start",
+        gap: 10,
+        height: 56,
+        padding: isMobile ? "0 40px" : collapsed ? "0" : "0 18px",
+        color: "#fff",
+        fontWeight: 700,
+        fontSize: 18,
+        letterSpacing: 0,
+        borderBottom: "1px solid rgba(255,255,255,0.06)",
+      }}
+    >
+      <SafetyCertificateOutlined
+        style={{
+          flexShrink: 0,
+          fontSize: 22,
+          color: antdTheme.token?.colorPrimary,
+        }}
+      />
+      {(!collapsed || isMobile) && <span>云备份</span>}
     </div>
   );
 
   return (
-    <div className="grid min-h-screen w-full lg:grid-cols-[240px_1fr]">
-      <div className="hidden border-r bg-muted/40 lg:block">
-        {sidebarContent}
-      </div>
-      <div className="flex flex-col">
-        <header className="flex h-14 items-center gap-4 border-b bg-muted/40 px-6">
-          <Sheet>
-            <SheetTrigger asChild>
-              <Button variant="outline" size="icon" className="shrink-0 lg:hidden">
-                <Menu className="h-5 w-5" />
-                <span className="sr-only">Toggle navigation menu</span>
-              </Button>
-            </SheetTrigger>
-            <SheetContent side="left" className="w-[240px] p-0">
-              {sidebarContent}
-            </SheetContent>
-          </Sheet>
-          <div className="flex-1">
-            <nav className="flex items-center text-sm font-medium text-muted-foreground">
-              <span className="flex items-center gap-2">
-                控制台
-                <ChevronRight className="h-4 w-4" />
-                <span className="text-foreground font-semibold">
-                  {activeItem?.label || "页面"}
-                </span>
-              </span>
-            </nav>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="hidden md:flex items-center gap-2 text-sm text-muted-foreground mr-4">
-              <div className={cn("h-2 w-2 rounded-full", onlineCount > 0 ? "bg-green-500" : "bg-red-500")} />
-              <span>{onlineCount} / {totalCount} 节点在线</span>
-            </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="rounded-full">
-                  <User className="h-5 w-5" />
-                  <span className="sr-only">Toggle user menu</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>{user.username}</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem asChild>
-                  <Link to="/system">修改密码</Link>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() => {
-                    logout().finally(() => {
-                      queryClient.clear();
-                      window.location.href = "/login";
-                    });
-                  }}
-                >
-                  <LogOut className="mr-2 h-4 w-4" />
-                  退出登录
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </header>
-        <main className="flex-1 overflow-auto p-4 md:p-6 bg-background">
+    <Layout className="vf-app-shell">
+      {!isMobile && (
+        <Sider
+          collapsible
+          collapsed={collapsed}
+          onCollapse={setCollapsed}
+          width={220}
+          collapsedWidth={64}
+          trigger={null}
+          theme="dark"
+          style={{
+            position: "sticky",
+            top: 0,
+            height: "100vh",
+            overflow: "auto",
+          }}
+        >
+          {brand}
+          <Menu
+            theme="dark"
+            mode="inline"
+            selectedKeys={[selectedKey]}
+            items={menuItems}
+            style={{
+              marginTop: 8,
+              borderInlineEnd: "none",
+            }}
+          />
+        </Sider>
+      )}
+
+      <Drawer
+        title={null}
+        placement="left"
+        open={mobileNavOpen}
+        onClose={() => setMobileNavOpen(false)}
+        width="min(86vw, 320px)"
+        className="vf-mobile-nav-drawer"
+        styles={{
+          body: { padding: 0, background: "#0f1f3d" },
+          header: { display: "none" },
+        }}
+      >
+        {brand}
+        <Menu
+          theme="dark"
+          mode="inline"
+          selectedKeys={[selectedKey]}
+          items={menuItems}
+          onClick={() => setMobileNavOpen(false)}
+          style={{
+            marginTop: 8,
+            borderInlineEnd: "none",
+            background: "transparent",
+          }}
+        />
+      </Drawer>
+
+      <Layout>
+        <Header
+          className="vf-app-header"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "0 20px",
+            background: "#fff",
+            borderBottom: "1px solid #f0f0f0",
+            position: "sticky",
+            top: 0,
+            zIndex: 10,
+          }}
+        >
+          <Space size="middle" align="center">
+            <button
+              type="button"
+              onClick={() =>
+                isMobile
+                  ? setMobileNavOpen(true)
+                  : setCollapsed((c) => !c)
+              }
+              aria-label={isMobile ? "打开导航" : "切换侧栏"}
+              className="vf-icon-button"
+              style={{
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                fontSize: 16,
+                color: "rgba(0,0,0,0.65)",
+              }}
+            >
+              {isMobile || collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            </button>
+            <Breadcrumb
+              className="vf-app-breadcrumb"
+              items={[
+                ...(!isMobile ? [{ title: "控制台" }] : []),
+                { title: <strong>{activeLabel}</strong> },
+              ]}
+            />
+          </Space>
+
+          <Space size={isMobile ? "middle" : "large"} align="center">
+            <Tooltip title={`${onlineCount} / ${totalCount} 节点在线`}>
+              <Space size={6}>
+                <Badge
+                  status={onlineCount > 0 ? "success" : "error"}
+                  showZero
+                />
+                <Typography.Text className="vf-header-online-text" style={{ fontSize: 13 }}>
+                  {onlineCount} / {totalCount} 节点在线
+                </Typography.Text>
+              </Space>
+            </Tooltip>
+
+            <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
+              <Space style={{ cursor: "pointer" }}>
+                <Avatar
+                  size={32}
+                  icon={<UserOutlined />}
+                  style={{ background: antdTheme.token?.colorPrimary }}
+                />
+                <Typography.Text className="vf-header-username" style={{ fontSize: 13 }}>
+                  {user.username}
+                </Typography.Text>
+              </Space>
+            </Dropdown>
+          </Space>
+        </Header>
+
+        <Content
+          className="vf-app-content"
+          style={{
+            background: "#f5f7fa",
+            overflow: "auto",
+          }}
+        >
           <Outlet />
-        </main>
-      </div>
-    </div>
+        </Content>
+      </Layout>
+    </Layout>
   );
 }
+
+// 重新导出 ReloadOutlined 以便其他位置使用
+export { ReloadOutlined };

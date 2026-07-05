@@ -1,5 +1,5 @@
-import { ReactNode } from "react";
-import { cn } from "@/lib/utils";
+import { Empty } from "antd";
+import type { ReactNode } from "react";
 
 interface EmptyStateProps {
   icon?: ReactNode;
@@ -9,13 +9,26 @@ interface EmptyStateProps {
   className?: string;
 }
 
-export function EmptyState({ icon, title, description, action, className }: EmptyStateProps) {
+export function EmptyState({
+  title,
+  description,
+  action,
+  className,
+}: EmptyStateProps) {
   return (
-    <div className={cn("flex flex-col items-center justify-center p-8 text-center", className)}>
-      {icon && <div className="mb-4 text-muted-foreground">{icon}</div>}
-      <h3 className="text-lg font-semibold">{title}</h3>
-      <p className="mb-6 text-sm text-muted-foreground max-w-xs">{description}</p>
-      {action}
-    </div>
+    <Empty
+      image={Empty.PRESENTED_IMAGE_SIMPLE}
+      description={
+        <div>
+          <div style={{ fontSize: 14, color: "rgba(0,0,0,0.88)" }}>{title}</div>
+          <div style={{ fontSize: 12, color: "rgba(0,0,0,0.45)" }}>
+            {description}
+          </div>
+        </div>
+      }
+      className={className}
+    >
+      {action as ReactNode}
+    </Empty>
   );
 }

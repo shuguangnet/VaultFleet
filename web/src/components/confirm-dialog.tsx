@@ -1,19 +1,12 @@
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+import { Modal } from "antd";
+import type { ReactNode } from "react";
 
 interface ConfirmDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
-  title: string;
-  description: string;
+  title: ReactNode;
+  description: ReactNode;
   confirmText?: string;
   cancelText?: string;
   variant?: "default" | "destructive";
@@ -32,21 +25,23 @@ export function ConfirmDialog({
   loading = false,
 }: ConfirmDialogProps) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
-            {cancelText}
-          </Button>
-          <Button variant={variant} onClick={onConfirm} disabled={loading}>
-            {loading ? "正在处理..." : confirmText}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <Modal
+      open={open}
+      title={title}
+      width="min(92vw, 520px)"
+      onCancel={() => onOpenChange(false)}
+      onOk={onConfirm}
+      okText={confirmText}
+      cancelText={cancelText}
+      okButtonProps={{
+        danger: variant === "destructive",
+        loading,
+      }}
+      cancelButtonProps={{ disabled: loading }}
+      centered
+      destroyOnClose
+    >
+      <div style={{ paddingTop: 8, color: "rgba(0,0,0,0.65)" }}>{description}</div>
+    </Modal>
   );
 }
