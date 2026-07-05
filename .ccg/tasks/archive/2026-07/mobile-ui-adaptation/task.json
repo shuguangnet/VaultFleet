@@ -1,0 +1,12 @@
+{
+  "id": "mobile-ui-adaptation",
+  "title": "项目 UI 适配手机端",
+  "status": "in_progress",
+  "complexity": "L+",
+  "risk": "medium",
+  "domain": "frontend",
+  "currentPhase": "completed",
+  "nextAction": "归档任务",
+  "createdAt": "2026-07-05T00:00:00Z",
+  "branch": "frontend-antd-refactor"
+}
