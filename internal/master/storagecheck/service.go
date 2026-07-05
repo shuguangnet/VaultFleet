@@ -167,21 +167,47 @@ func rcloneConfigContents(request Request) (string, error) {
 }
 
 func rcloneTestTarget(request Request) string {
-	if request.RcloneType == "s3" {
-		bucket := S3BucketPathSegment(request.RcloneConfig["bucket"])
-		if bucket != "" {
-			return "vaultfleet:" + bucket
-		}
+	pathSegment := RemotePathSegment(request.RcloneType, request.RcloneConfig)
+	if pathSegment != "" {
+		return "vaultfleet:" + pathSegment
 	}
 	return "vaultfleet:"
 }
 
 func S3BucketPathSegment(bucket string) string {
-	return strings.Trim(strings.TrimSpace(bucket), "/")
+	return cleanRemotePathSegment(bucket)
+}
+
+func SwiftContainerPathSegment(container string) string {
+	return cleanRemotePathSegment(container)
+}
+
+func RemotePathSegment(rcloneType string, rcloneConfig map[string]string) string {
+	key, ok := RemotePathConfigKey(rcloneType)
+	if !ok {
+		return ""
+	}
+	return cleanRemotePathSegment(rcloneConfig[key])
+}
+
+func RemotePathConfigKey(rcloneType string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(rcloneType)) {
+	case "s3":
+		return "bucket", true
+	case "swift":
+		return "container", true
+	default:
+		return "", false
+	}
 }
 
 func shouldOmitConfigKey(rcloneType string, key string) bool {
-	return rcloneType == "s3" && key == "bucket"
+	pathKey, ok := RemotePathConfigKey(rcloneType)
+	return ok && key == pathKey
+}
+
+func cleanRemotePathSegment(value string) string {
+	return strings.Trim(strings.TrimSpace(value), "/")
 }
 
 func ValidateRequest(request Request) error {

@@ -25,6 +25,7 @@ export interface BackupPolicy {
   restic_password?: string;
   rclone_args?: Record<string, string>;
   timeout_hours?: number;
+  backup_sources?: BackupSource[];
 }
 
 export interface RetentionConfig {
@@ -50,4 +51,27 @@ export interface PolicyInput {
   retention: RetentionConfig;
   rclone_args?: Record<string, string>;
   timeout_hours?: number;
+  backup_sources?: BackupSource[];
+}
+
+export type BackupSourceType = "path" | "docker_container";
+
+export interface BackupSource {
+  type: BackupSourceType;
+  path?: string;
+  docker_container?: DockerContainerBackupSource;
+}
+
+export interface DockerContainerBackupSource {
+  container_id?: string;
+  name?: string;
+  image?: string;
+  labels?: Record<string, string>;
+  compose_project?: string;
+  compose_service?: string;
+  compose_working_dir?: string;
+  compose_config_files?: string[];
+  include_bind_mounts: boolean;
+  include_volumes: boolean;
+  include_compose_files: boolean;
 }

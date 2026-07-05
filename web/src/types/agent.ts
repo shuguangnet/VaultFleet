@@ -7,6 +7,7 @@ export interface Agent {
   hostname: string;
   os: string;
   arch: string;
+  capabilities?: string[];
   created_at: string;
 }
 
@@ -20,6 +21,7 @@ export interface ApiAgent {
   hostname?: string | null;
   os?: string | null;
   arch?: string | null;
+  capabilities?: string[] | null;
   system_info?: string | null;
   created_at: string;
 }

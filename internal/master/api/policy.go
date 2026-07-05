@@ -37,54 +37,57 @@ func NewPolicyHandler(database *db.Database, eventBus *events.Bus) *PolicyHandle
 }
 
 type createPolicyRequest struct {
-	AgentID         string            `json:"agent_id" binding:"required"`
-	StorageID       string            `json:"storage_id" binding:"required"`
-	BackupMode      string            `json:"backup_mode"`
-	ArchiveFormat   string            `json:"archive_format"`
-	RepoPath        string            `json:"repo_path"`
-	ResticPassword  string            `json:"restic_password"`
-	BackupDirs      []string          `json:"backup_dirs" binding:"required"`
-	ExcludePatterns []string          `json:"exclude_patterns"`
-	PreBackupHook   *policyHookInput  `json:"pre_backup_hook"`
-	PostBackupHook  *policyHookInput  `json:"post_backup_hook"`
-	Schedule        string            `json:"schedule" binding:"required"`
-	Retention       map[string]any    `json:"retention" binding:"required"`
-	RcloneArgs      map[string]string `json:"rclone_args"`
-	TimeoutHours    *int              `json:"timeout_hours"`
+	AgentID         string                  `json:"agent_id" binding:"required"`
+	StorageID       string                  `json:"storage_id" binding:"required"`
+	BackupMode      string                  `json:"backup_mode"`
+	ArchiveFormat   string                  `json:"archive_format"`
+	RepoPath        string                  `json:"repo_path"`
+	ResticPassword  string                  `json:"restic_password"`
+	BackupDirs      []string                `json:"backup_dirs"`
+	BackupSources   []protocol.BackupSource `json:"backup_sources"`
+	ExcludePatterns []string                `json:"exclude_patterns"`
+	PreBackupHook   *policyHookInput        `json:"pre_backup_hook"`
+	PostBackupHook  *policyHookInput        `json:"post_backup_hook"`
+	Schedule        string                  `json:"schedule" binding:"required"`
+	Retention       map[string]any          `json:"retention" binding:"required"`
+	RcloneArgs      map[string]string       `json:"rclone_args"`
+	TimeoutHours    *int                    `json:"timeout_hours"`
 }
 
 type updatePolicyRequest struct {
-	StorageID       string            `json:"storage_id"`
-	BackupMode      string            `json:"backup_mode"`
-	ArchiveFormat   string            `json:"archive_format"`
-	BackupDirs      []string          `json:"backup_dirs"`
-	ExcludePatterns []string          `json:"exclude_patterns"`
-	PreBackupHook   *policyHookInput  `json:"pre_backup_hook"`
-	PostBackupHook  *policyHookInput  `json:"post_backup_hook"`
-	Schedule        string            `json:"schedule"`
-	Retention       map[string]any    `json:"retention"`
-	RcloneArgs      map[string]string `json:"rclone_args"`
-	TimeoutHours    *int              `json:"timeout_hours"`
+	StorageID       string                  `json:"storage_id"`
+	BackupMode      string                  `json:"backup_mode"`
+	ArchiveFormat   string                  `json:"archive_format"`
+	BackupDirs      []string                `json:"backup_dirs"`
+	BackupSources   []protocol.BackupSource `json:"backup_sources"`
+	ExcludePatterns []string                `json:"exclude_patterns"`
+	PreBackupHook   *policyHookInput        `json:"pre_backup_hook"`
+	PostBackupHook  *policyHookInput        `json:"post_backup_hook"`
+	Schedule        string                  `json:"schedule"`
+	Retention       map[string]any          `json:"retention"`
+	RcloneArgs      map[string]string       `json:"rclone_args"`
+	TimeoutHours    *int                    `json:"timeout_hours"`
 }
 
 type policyResponse struct {
-	ID              string            `json:"id"`
-	AgentID         string            `json:"agent_id"`
-	StorageID       string            `json:"storage_id"`
-	BackupMode      string            `json:"backup_mode"`
-	ArchiveFormat   string            `json:"archive_format,omitempty"`
-	RepoPath        string            `json:"repo_path"`
-	BackupDirs      []string          `json:"backup_dirs"`
-	ExcludePatterns []string          `json:"exclude_patterns"`
-	PreBackupHook   *policyHookInput  `json:"pre_backup_hook,omitempty"`
-	PostBackupHook  *policyHookInput  `json:"post_backup_hook,omitempty"`
-	Schedule        string            `json:"schedule"`
-	Retention       map[string]any    `json:"retention"`
-	RcloneArgs      map[string]string `json:"rclone_args"`
-	TimeoutHours    int               `json:"timeout_hours"`
-	Synced          bool              `json:"synced"`
-	CreatedAt       time.Time         `json:"created_at"`
-	UpdatedAt       time.Time         `json:"updated_at"`
+	ID              string                  `json:"id"`
+	AgentID         string                  `json:"agent_id"`
+	StorageID       string                  `json:"storage_id"`
+	BackupMode      string                  `json:"backup_mode"`
+	ArchiveFormat   string                  `json:"archive_format,omitempty"`
+	RepoPath        string                  `json:"repo_path"`
+	BackupDirs      []string                `json:"backup_dirs"`
+	BackupSources   []protocol.BackupSource `json:"backup_sources"`
+	ExcludePatterns []string                `json:"exclude_patterns"`
+	PreBackupHook   *policyHookInput        `json:"pre_backup_hook,omitempty"`
+	PostBackupHook  *policyHookInput        `json:"post_backup_hook,omitempty"`
+	Schedule        string                  `json:"schedule"`
+	Retention       map[string]any          `json:"retention"`
+	RcloneArgs      map[string]string       `json:"rclone_args"`
+	TimeoutHours    int                     `json:"timeout_hours"`
+	Synced          bool                    `json:"synced"`
+	CreatedAt       time.Time               `json:"created_at"`
+	UpdatedAt       time.Time               `json:"updated_at"`
 }
 
 type policyHookInput struct {
@@ -124,7 +127,15 @@ func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
 		return
 	}
 
-	backupDirs, ok := marshalPolicyJSON(c, request.BackupDirs)
+	normalizedDirs, normalizedSources, ok := h.normalizePolicySources(c, request.AgentID, request.BackupDirs, request.BackupSources)
+	if !ok {
+		return
+	}
+	backupDirs, ok := marshalPolicyJSON(c, normalizedDirs)
+	if !ok {
+		return
+	}
+	backupSources, ok := marshalPolicyJSON(c, normalizedSources)
 	if !ok {
 		return
 	}
@@ -176,6 +187,7 @@ func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
 		RepoPath:        repoPath,
 		ResticPassword:  encryptedPassword,
 		BackupDirs:      backupDirs,
+		BackupSources:   backupSources,
 		ExcludePatterns: excludePatterns,
 		PreBackupHook:   preBackupHookRaw,
 		PostBackupHook:  postBackupHookRaw,
@@ -253,12 +265,29 @@ func (h *PolicyHandler) UpdatePolicy(c *gin.Context) {
 	if request.ArchiveFormat != "" {
 		policy.ArchiveFormat = normalizeArchiveFormat(request.ArchiveFormat)
 	}
-	if request.BackupDirs != nil {
-		backupDirs, ok := marshalPolicyJSON(c, request.BackupDirs)
+	if request.BackupDirs != nil || request.BackupSources != nil {
+		var nextDirs []string
+		var nextSources []protocol.BackupSource
+		if request.BackupDirs != nil {
+			nextDirs = request.BackupDirs
+		}
+		if request.BackupSources != nil {
+			nextSources = request.BackupSources
+		}
+		normalizedDirs, normalizedSources, ok := h.normalizePolicySources(c, policy.AgentID, nextDirs, nextSources)
+		if !ok {
+			return
+		}
+		backupDirs, ok := marshalPolicyJSON(c, normalizedDirs)
+		if !ok {
+			return
+		}
+		backupSources, ok := marshalPolicyJSON(c, normalizedSources)
 		if !ok {
 			return
 		}
 		policy.BackupDirs = backupDirs
+		policy.BackupSources = backupSources
 	}
 	if request.ExcludePatterns != nil {
 		excludePatterns, ok := marshalPolicyJSON(c, request.ExcludePatterns)
@@ -412,8 +441,12 @@ func (h *PolicyHandler) publishPolicyChanged(agentID string, action string) {
 }
 
 func newPolicyResponse(policy db.BackupPolicy) (policyResponse, error) {
-	var backupDirs []string
-	if err := json.Unmarshal([]byte(policy.BackupDirs), &backupDirs); err != nil {
+	backupDirs, err := policyBackupDirs(policy)
+	if err != nil {
+		return policyResponse{}, err
+	}
+	backupSources, err := policyBackupSources(policy)
+	if err != nil {
 		return policyResponse{}, err
 	}
 
@@ -450,6 +483,7 @@ func newPolicyResponse(policy db.BackupPolicy) (policyResponse, error) {
 		ArchiveFormat:   normalizeArchiveFormat(policy.ArchiveFormat),
 		RepoPath:        policy.RepoPath,
 		BackupDirs:      backupDirs,
+		BackupSources:   backupSources,
 		ExcludePatterns: excludePatterns,
 		PreBackupHook:   preBackupHook,
 		PostBackupHook:  postBackupHook,
@@ -495,6 +529,138 @@ func unmarshalPolicyHook(raw string) (*policyHookInput, error) {
 		return nil, err
 	}
 	return &hook, nil
+}
+
+func (h *PolicyHandler) normalizePolicySources(c *gin.Context, agentID string, backupDirs []string, backupSources []protocol.BackupSource) ([]string, []protocol.BackupSource, bool) {
+	dirs := normalizePolicyPathList(backupDirs)
+	sources := normalizeBackupSources(backupSources)
+	if len(sources) == 0 {
+		for _, dir := range dirs {
+			sources = append(sources, protocol.BackupSource{Type: protocol.BackupSourceTypePath, Path: dir})
+		}
+	}
+
+	mergedDirs := append([]string(nil), dirs...)
+	hasDocker := false
+	for i := range sources {
+		switch sources[i].Type {
+		case protocol.BackupSourceTypePath:
+			sources[i].Path = strings.TrimSpace(sources[i].Path)
+			if sources[i].Path == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "backup source path is required"})
+				return nil, nil, false
+			}
+			mergedDirs = append(mergedDirs, sources[i].Path)
+		case protocol.BackupSourceTypeDockerContainer:
+			if sources[i].DockerContainer == nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "docker container source is required"})
+				return nil, nil, false
+			}
+			normalizeDockerContainerSource(sources[i].DockerContainer)
+			if sources[i].DockerContainer.ContainerID == "" &&
+				sources[i].DockerContainer.Name == "" &&
+				(sources[i].DockerContainer.ComposeProject == "" || sources[i].DockerContainer.ComposeService == "") {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "docker container source needs a container id, name, or compose identity"})
+				return nil, nil, false
+			}
+			if !sources[i].DockerContainer.IncludeBindMounts &&
+				!sources[i].DockerContainer.IncludeVolumes &&
+				!sources[i].DockerContainer.IncludeComposeFiles {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "docker container source must include at least one data category"})
+				return nil, nil, false
+			}
+			hasDocker = true
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported backup source type"})
+			return nil, nil, false
+		}
+	}
+	mergedDirs = normalizePolicyPathList(mergedDirs)
+	if len(sources) == 0 && len(mergedDirs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "at least one backup source is required"})
+		return nil, nil, false
+	}
+	if hasDocker {
+		supported, err := agentHasCapability(h.DB, agentID, protocol.CapabilityDockerWorkloadBackups)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "agent not found"})
+			return nil, nil, false
+		}
+		if !supported {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "agent does not support Docker workload backups"})
+			return nil, nil, false
+		}
+	}
+	return mergedDirs, sources, true
+}
+
+func normalizePolicyPathList(paths []string) []string {
+	seen := make(map[string]struct{}, len(paths))
+	normalized := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		normalized = append(normalized, path)
+	}
+	return normalized
+}
+
+func normalizeBackupSources(sources []protocol.BackupSource) []protocol.BackupSource {
+	normalized := make([]protocol.BackupSource, 0, len(sources))
+	for _, source := range sources {
+		source.Type = strings.TrimSpace(source.Type)
+		if source.Type == "" {
+			continue
+		}
+		normalized = append(normalized, source)
+	}
+	return normalized
+}
+
+func normalizeDockerContainerSource(source *protocol.DockerContainerBackupSource) {
+	source.ContainerID = strings.TrimSpace(source.ContainerID)
+	source.Name = strings.Trim(strings.TrimSpace(source.Name), "/")
+	source.Image = strings.TrimSpace(source.Image)
+	source.ComposeProject = strings.TrimSpace(source.ComposeProject)
+	source.ComposeService = strings.TrimSpace(source.ComposeService)
+	source.ComposeWorkingDir = strings.TrimSpace(source.ComposeWorkingDir)
+	source.ComposeConfigFiles = normalizePolicyPathList(source.ComposeConfigFiles)
+}
+
+func policyBackupDirs(policy db.BackupPolicy) ([]string, error) {
+	backupDirs := []string{}
+	if strings.TrimSpace(policy.BackupDirs) == "" {
+		return backupDirs, nil
+	}
+	if err := json.Unmarshal([]byte(policy.BackupDirs), &backupDirs); err != nil {
+		return nil, err
+	}
+	return normalizePolicyPathList(backupDirs), nil
+}
+
+func policyBackupSources(policy db.BackupPolicy) ([]protocol.BackupSource, error) {
+	var sources []protocol.BackupSource
+	if strings.TrimSpace(policy.BackupSources) != "" {
+		if err := json.Unmarshal([]byte(policy.BackupSources), &sources); err != nil {
+			return nil, err
+		}
+		return normalizeBackupSources(sources), nil
+	}
+	dirs, err := policyBackupDirs(policy)
+	if err != nil {
+		return nil, err
+	}
+	sources = make([]protocol.BackupSource, 0, len(dirs))
+	for _, dir := range dirs {
+		sources = append(sources, protocol.BackupSource{Type: protocol.BackupSourceTypePath, Path: dir})
+	}
+	return sources, nil
 }
 
 func validatePolicyTimeoutHours(c *gin.Context, timeoutHours *int) (int, bool) {

@@ -14,6 +14,7 @@ import (
 
 	agenthandler "vaultfleet/internal/agent"
 	"vaultfleet/internal/agent/connect"
+	agentdocker "vaultfleet/internal/agent/docker"
 	enrollpkg "vaultfleet/internal/agent/enroll"
 	"vaultfleet/internal/agent/policy"
 	"vaultfleet/internal/agent/selfupdate"
@@ -124,6 +125,9 @@ func runClient(ctx context.Context, cfg *AgentConfig) error {
 		info := connect.DefaultSystemInfoCollector()
 		info.AgentVersion = version
 		info.Capabilities = protocol.DefaultAgentCapabilities()
+		if agentdocker.Available(context.Background()) {
+			info.Capabilities = append(info.Capabilities, protocol.CapabilityDockerWorkloadBackups)
+		}
 		return info
 	}
 	client = connect.NewClient(cfg.Server, cfg.AgentToken, handler.Handle)

@@ -2,6 +2,7 @@ package enroll
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	agentdocker "vaultfleet/internal/agent/docker"
 	"vaultfleet/pkg/protocol"
 
 	"gopkg.in/yaml.v3"
@@ -124,12 +126,20 @@ func collectSystemInfo(version string) string {
 		OS:           runtime.GOOS,
 		Arch:         runtime.GOARCH,
 		Version:      version,
-		Capabilities: protocol.DefaultAgentCapabilities(),
+		Capabilities: collectCapabilities(),
 	})
 	if err != nil {
 		return fmt.Sprintf("hostname=%s os=%s arch=%s", hostname, runtime.GOOS, runtime.GOARCH)
 	}
 	return string(data)
+}
+
+func collectCapabilities() []string {
+	capabilities := protocol.DefaultAgentCapabilities()
+	if agentdocker.Available(context.Background()) {
+		capabilities = append(capabilities, protocol.CapabilityDockerWorkloadBackups)
+	}
+	return capabilities
 }
 
 func enrollHTTPClient() *http.Client {

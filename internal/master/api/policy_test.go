@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"vaultfleet/internal/master/db"
 	"vaultfleet/internal/master/events"
+	"vaultfleet/pkg/protocol"
 )
 
 type testPolicySetup struct {
@@ -127,6 +129,71 @@ func TestCreatePolicySupportsArchiveBackupMode(t *testing.T) {
 	assert.Equal(t, "zip", payload.ArchiveFormat)
 	assert.Empty(t, payload.ResticPassword)
 	assert.True(t, payload.PlainBackup)
+}
+
+func TestCreatePolicyWithDockerBackupSources(t *testing.T) {
+	setup := setupTestPolicyAPI(t)
+	agent := createPolicyTestAgent(t, setup.database)
+	markPolicyAgentCapabilities(t, setup.database, agent.ID, []string{protocol.CapabilityDockerWorkloadBackups})
+	storage := createPolicyTestStorage(t, setup.database)
+
+	w := postAnyJSON(t, setup.router, "/api/policies", map[string]any{
+		"agent_id":    agent.ID,
+		"storage_id":  storage.ID,
+		"backup_dirs": []string{"/etc"},
+		"backup_sources": []map[string]any{
+			{"type": "path", "path": "/etc"},
+			{
+				"type": "docker_container",
+				"docker_container": map[string]any{
+					"container_id":          "container-1",
+					"name":                  "db",
+					"include_bind_mounts":   true,
+					"include_volumes":       true,
+					"include_compose_files": true,
+				},
+			},
+		},
+		"schedule":  "0 3 * * *",
+		"retention": map[string]any{"keep_last": 3},
+	})
+
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assertJSONList(t, body["backup_dirs"], []string{"/etc"})
+	sources := body["backup_sources"].([]any)
+	require.Len(t, sources, 2)
+	assert.Equal(t, "docker_container", sources[1].(map[string]any)["type"])
+
+	var stored db.BackupPolicy
+	require.NoError(t, setup.database.DB.First(&stored, "id = ?", body["id"]).Error)
+	assert.JSONEq(t, `[{"type":"path","path":"/etc"},{"type":"docker_container","docker_container":{"container_id":"container-1","name":"db","include_bind_mounts":true,"include_volumes":true,"include_compose_files":true}}]`, stored.BackupSources)
+}
+
+func TestCreatePolicyRejectsDockerSourceForUnsupportedAgent(t *testing.T) {
+	setup := setupTestPolicyAPI(t)
+	agent := createPolicyTestAgent(t, setup.database)
+	storage := createPolicyTestStorage(t, setup.database)
+
+	w := postAnyJSON(t, setup.router, "/api/policies", map[string]any{
+		"agent_id":   agent.ID,
+		"storage_id": storage.ID,
+		"backup_sources": []map[string]any{
+			{
+				"type": "docker_container",
+				"docker_container": map[string]any{
+					"container_id":        "container-1",
+					"include_bind_mounts": true,
+				},
+			},
+		},
+		"schedule":  "0 3 * * *",
+		"retention": map[string]any{"keep_last": 3},
+	})
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	body := parseJSON(t, w)
+	assert.Equal(t, "agent does not support Docker workload backups", body["error"])
 }
 
 func TestCreatePolicyPersistsTimeoutHours(t *testing.T) {
@@ -768,6 +835,13 @@ func createPolicyTestAgent(t *testing.T, database *db.Database) db.Agent {
 	}
 	require.NoError(t, database.DB.Create(&agent).Error)
 	return agent
+}
+
+func markPolicyAgentCapabilities(t *testing.T, database *db.Database, agentID string, capabilities []string) {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{"capabilities": capabilities})
+	require.NoError(t, err)
+	require.NoError(t, database.DB.Model(&db.Agent{}).Where("id = ?", agentID).Update("system_info", string(data)).Error)
 }
 
 func createPolicyTestStorage(t *testing.T, database *db.Database) db.StorageConfig {

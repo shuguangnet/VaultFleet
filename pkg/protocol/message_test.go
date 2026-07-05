@@ -79,8 +79,23 @@ func TestPolicyPushPayload(t *testing.T) {
 			},
 			RepoPath: "vaultfleet/agent-001",
 		},
-		ResticPassword:  "secure-password",
-		BackupDirs:      []string{"/etc", "/home", "/opt/myapp/data"},
+		ResticPassword: "secure-password",
+		BackupDirs:     []string{"/etc", "/home", "/opt/myapp/data"},
+		BackupSources: []BackupSource{
+			{Type: BackupSourceTypePath, Path: "/etc"},
+			{
+				Type: BackupSourceTypeDockerContainer,
+				DockerContainer: &DockerContainerBackupSource{
+					ContainerID:         "container-1",
+					Name:                "postgres",
+					ComposeProject:      "app",
+					ComposeService:      "db",
+					IncludeBindMounts:   true,
+					IncludeVolumes:      true,
+					IncludeComposeFiles: true,
+				},
+			},
+		},
 		ExcludePatterns: []string{"*.log", "*.tmp", "node_modules"},
 		PreBackupHook:   &PolicyHook{Command: "docker exec db pg_dumpall >/backup/db.sql", TimeoutSeconds: 120},
 		PostBackupHook:  &PolicyHook{Command: "docker compose start app", TimeoutSeconds: 30},
@@ -105,6 +120,12 @@ func TestPolicyPushPayload(t *testing.T) {
 	assert.Equal(t, "vaultfleet/agent-001", parsed.Storage.RepoPath)
 	assert.Equal(t, "secure-password", parsed.ResticPassword)
 	assert.Equal(t, []string{"/etc", "/home", "/opt/myapp/data"}, parsed.BackupDirs)
+	require.Len(t, parsed.BackupSources, 2)
+	assert.Equal(t, BackupSourceTypePath, parsed.BackupSources[0].Type)
+	assert.Equal(t, "/etc", parsed.BackupSources[0].Path)
+	require.NotNil(t, parsed.BackupSources[1].DockerContainer)
+	assert.Equal(t, "container-1", parsed.BackupSources[1].DockerContainer.ContainerID)
+	assert.Equal(t, "app", parsed.BackupSources[1].DockerContainer.ComposeProject)
 	assert.Equal(t, []string{"*.log", "*.tmp", "node_modules"}, parsed.ExcludePatterns)
 	if assert.NotNil(t, parsed.PreBackupHook) {
 		assert.Equal(t, "docker exec db pg_dumpall >/backup/db.sql", parsed.PreBackupHook.Command)
@@ -255,6 +276,41 @@ func TestTaskResultPayload(t *testing.T) {
 	assert.Equal(t, int64(4096), parsed.Snapshots[0].Size)
 }
 
+func TestTaskResultPayloadWithDockerMetadata(t *testing.T) {
+	result := TaskResultPayload{
+		AgentID:    "agent-002",
+		TaskType:   "backup",
+		Status:     "success",
+		StartedAt:  time.Now().UTC(),
+		FinishedAt: time.Now().UTC(),
+		Docker: &DockerBackupMetadata{
+			Sources: []DockerResolvedSource{
+				{
+					Selection: DockerContainerBackupSource{
+						ContainerID:       "container-1",
+						Name:              "postgres",
+						IncludeBindMounts: true,
+						IncludeVolumes:    true,
+					},
+					ContainerID:   "container-1",
+					Name:          "postgres",
+					Image:         "postgres:16",
+					State:         "running",
+					ResolvedPaths: []string{"/var/lib/docker/volumes/db/_data"},
+				},
+			},
+			Warnings: []string{"compose file not found"},
+		},
+	}
+
+	_, parsed := roundTripPayload[TaskResultPayload](t, TypeTaskResult, result)
+	require.NotNil(t, parsed.Docker)
+	require.Len(t, parsed.Docker.Sources, 1)
+	assert.Equal(t, "container-1", parsed.Docker.Sources[0].ContainerID)
+	assert.Equal(t, []string{"/var/lib/docker/volumes/db/_data"}, parsed.Docker.Sources[0].ResolvedPaths)
+	assert.Equal(t, []string{"compose file not found"}, parsed.Docker.Warnings)
+}
+
 func TestDirBrowseRoundTrip(t *testing.T) {
 	reqPayload := DirBrowseReqPayload{Path: "/home", Depth: 2}
 
@@ -279,6 +335,46 @@ func TestDirBrowseRoundTrip(t *testing.T) {
 	assert.Equal(t, "/home/user2", parsedResp.Entries[1].Path)
 	assert.Equal(t, "dir", parsedResp.Entries[1].Type)
 	assert.Equal(t, int64(2097152), parsedResp.Entries[1].Size)
+}
+
+func TestDockerDiscoveryRoundTrip(t *testing.T) {
+	req, parsedReq := roundTripPayload[DockerDiscoveryReqPayload](t, TypeDockerDiscoveryReq, DockerDiscoveryReqPayload{})
+	assert.Equal(t, TypeDockerDiscoveryReq, req.Type)
+	assert.Equal(t, DockerDiscoveryReqPayload{}, *parsedReq)
+
+	respPayload := DockerDiscoveryRespPayload{
+		Available: true,
+		Containers: []DockerContainer{
+			{
+				ID:    "container-1",
+				Names: []string{"postgres"},
+				Image: "postgres:16",
+				State: "running",
+				Labels: map[string]string{
+					"com.docker.compose.project": "app",
+				},
+				Compose: DockerComposeInfo{
+					Project:     "app",
+					Service:     "db",
+					WorkingDir:  "/srv/app",
+					ConfigFiles: []string{"compose.yml"},
+				},
+				Mounts: []DockerMount{
+					{Type: "volume", Name: "db-data", Source: "/var/lib/docker/volumes/db-data/_data", Destination: "/var/lib/postgresql/data", RW: true},
+					{Type: "bind", Source: "/srv/app/config", Destination: "/config", RW: false},
+				},
+				Selectable: true,
+				Warnings:   []string{"container is stopped"},
+			},
+		},
+	}
+
+	_, parsedResp := roundTripPayload[DockerDiscoveryRespPayload](t, TypeDockerDiscoveryResp, respPayload)
+	assert.True(t, parsedResp.Available)
+	require.Len(t, parsedResp.Containers, 1)
+	assert.Equal(t, "container-1", parsedResp.Containers[0].ID)
+	assert.Equal(t, "app", parsedResp.Containers[0].Compose.Project)
+	assert.Equal(t, "db-data", parsedResp.Containers[0].Mounts[0].Name)
 }
 
 func TestSnapshotListRoundTrip(t *testing.T) {
@@ -377,23 +473,36 @@ func TestDirSizeRoundTrip(t *testing.T) {
 func TestVersionInfoRoundTrip(t *testing.T) {
 	payload := VersionInfoPayload{
 		Version:    "v0.5.0",
-		GitHubRepo: "momo-z/VaultFleet",
+		GitHubRepo: "shuguangnet/VaultFleet",
 	}
 
 	_, parsed := roundTripPayload[VersionInfoPayload](t, TypeVersionInfo, payload)
 	assert.Equal(t, "v0.5.0", parsed.Version)
-	assert.Equal(t, "momo-z/VaultFleet", parsed.GitHubRepo)
+	assert.Equal(t, "shuguangnet/VaultFleet", parsed.GitHubRepo)
 }
 
 func TestUpdateAgentRoundTrip(t *testing.T) {
 	payload := UpdateAgentPayload{
 		Version:    "v0.5.0",
-		GitHubRepo: "momo-z/VaultFleet",
+		GitHubRepo: "shuguangnet/VaultFleet",
 	}
 
 	_, parsed := roundTripPayload[UpdateAgentPayload](t, TypeUpdateAgent, payload)
 	assert.Equal(t, "v0.5.0", parsed.Version)
-	assert.Equal(t, "momo-z/VaultFleet", parsed.GitHubRepo)
+	assert.Equal(t, "shuguangnet/VaultFleet", parsed.GitHubRepo)
+}
+
+func TestUpdateAgentRespRoundTrip(t *testing.T) {
+	payload := UpdateAgentRespPayload{
+		Accepted:   true,
+		Version:    "v0.5.0",
+		GitHubRepo: "shuguangnet/VaultFleet",
+	}
+
+	_, parsed := roundTripPayload[UpdateAgentRespPayload](t, TypeUpdateAgentResp, payload)
+	assert.True(t, parsed.Accepted)
+	assert.Equal(t, "v0.5.0", parsed.Version)
+	assert.Equal(t, "shuguangnet/VaultFleet", parsed.GitHubRepo)
 }
 
 func TestAllMessageTypeConstants(t *testing.T) {
@@ -401,6 +510,8 @@ func TestAllMessageTypeConstants(t *testing.T) {
 		TypeHeartbeat,
 		TypeDirBrowseReq,
 		TypeDirBrowseResp,
+		TypeDockerDiscoveryReq,
+		TypeDockerDiscoveryResp,
 		TypePolicyPush,
 		TypePolicyAck,
 		TypeBackupNow,
@@ -418,6 +529,7 @@ func TestAllMessageTypeConstants(t *testing.T) {
 		TypeDirSizeResp,
 		TypeVersionInfo,
 		TypeUpdateAgent,
+		TypeUpdateAgentResp,
 		TypeBackupProgress,
 		TypeCancelTask,
 	}
@@ -425,6 +537,8 @@ func TestAllMessageTypeConstants(t *testing.T) {
 		"heartbeat",
 		"dir_browse_req",
 		"dir_browse_resp",
+		"docker_discovery_req",
+		"docker_discovery_resp",
 		"policy_push",
 		"policy_ack",
 		"backup_now",
@@ -442,12 +556,13 @@ func TestAllMessageTypeConstants(t *testing.T) {
 		"dir_size_resp",
 		"version_info",
 		"update_agent",
+		"update_agent_resp",
 		"backup_progress",
 		"cancel_task",
 	}
 
 	assert.Equal(t, expected, types)
-	assert.Len(t, types, 22)
+	assert.Len(t, types, 25)
 	seen := make(map[string]bool)
 	for _, typ := range types {
 		assert.NotEmpty(t, typ)

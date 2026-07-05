@@ -21,7 +21,7 @@ type BrowseHandler struct {
 
 	timeout        time.Duration
 	dirSizeTimeout time.Duration
-	sendAndWait func(agentID string, msg protocol.Message, timeout time.Duration) (<-chan protocol.Message, error)
+	sendAndWait    func(agentID string, msg protocol.Message, timeout time.Duration) (<-chan protocol.Message, error)
 }
 
 type BrowseHub interface {
@@ -54,6 +54,7 @@ func NewBrowseHandler(database *db.Database, hub BrowseHub) *BrowseHandler {
 func RegisterBrowseRoutes(rg *gin.RouterGroup, h *BrowseHandler) {
 	rg.POST("/agents/:id/browse", h.BrowseAgent)
 	rg.POST("/agents/:id/dir-size", h.DirSize)
+	rg.POST("/agents/:id/docker/discover", h.DiscoverDocker)
 }
 
 func (h *BrowseHandler) BrowseAgent(c *gin.Context) {
@@ -165,6 +166,62 @@ func (h *BrowseHandler) DirSize(c *gin.Context) {
 			return
 		}
 		payload, err := protocol.ParsePayload[protocol.DirSizeRespPayload](&resp)
+		if err != nil {
+			writeErrorResponse(c, http.StatusBadGateway, "invalid agent response")
+			return
+		}
+		writeDataResponse(c, http.StatusOK, payload)
+	case <-c.Request.Context().Done():
+		writeErrorResponse(c, http.StatusGatewayTimeout, "request cancelled")
+	}
+}
+
+func (h *BrowseHandler) DiscoverDocker(c *gin.Context) {
+	agentID := c.Param("id")
+	if !h.agentExists(c, agentID) {
+		return
+	}
+	supported, err := agentHasCapability(h.DB, agentID, protocol.CapabilityDockerWorkloadBackups)
+	if err != nil {
+		writeErrorResponse(c, http.StatusInternalServerError, "database error")
+		return
+	}
+	if !supported {
+		writeErrorResponse(c, http.StatusBadRequest, "agent does not support Docker workload backups")
+		return
+	}
+	if h.Hub == nil || !h.Hub.IsOnline(agentID) {
+		writeErrorResponse(c, http.StatusBadGateway, "agent offline")
+		return
+	}
+
+	msg, err := protocol.NewMessage(protocol.TypeDockerDiscoveryReq, protocol.DockerDiscoveryReqPayload{})
+	if err != nil {
+		writeErrorResponse(c, http.StatusInternalServerError, "encode docker discovery request")
+		return
+	}
+
+	wait := h.sendAndWait
+	if wait == nil && h.Hub != nil {
+		wait = h.Hub.SendAndWait
+	}
+	if wait == nil {
+		writeErrorResponse(c, http.StatusBadGateway, "agent offline")
+		return
+	}
+	respCh, err := wait(agentID, *msg, h.timeout)
+	if err != nil {
+		writeErrorResponse(c, http.StatusBadGateway, "agent offline")
+		return
+	}
+
+	select {
+	case resp, ok := <-respCh:
+		if !ok {
+			writeErrorResponse(c, http.StatusGatewayTimeout, "timeout waiting for agent response")
+			return
+		}
+		payload, err := protocol.ParsePayload[protocol.DockerDiscoveryRespPayload](&resp)
 		if err != nil {
 			writeErrorResponse(c, http.StatusBadGateway, "invalid agent response")
 			return

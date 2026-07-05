@@ -11,14 +11,32 @@ import (
 	"gorm.io/gorm"
 
 	"vaultfleet/internal/master/db"
+	"vaultfleet/pkg/protocol"
 )
 
 type AgentHandler struct {
-	DB *db.Database
+	DB            *db.Database
+	Hub           AgentUpdateHub
+	Version       string
+	GitHubRepo    string
+	updateTimeout time.Duration
+	sendAndWait   func(agentID string, msg protocol.Message, timeout time.Duration) (<-chan protocol.Message, error)
 }
 
 func NewAgentHandler(database *db.Database) *AgentHandler {
-	return &AgentHandler{DB: database}
+	handler := &AgentHandler{
+		DB:            database,
+		updateTimeout: 15 * time.Second,
+	}
+	handler.sendAndWait = func(agentID string, msg protocol.Message, timeout time.Duration) (<-chan protocol.Message, error) {
+		return handler.Hub.SendAndWait(agentID, msg, timeout)
+	}
+	return handler
+}
+
+type AgentUpdateHub interface {
+	IsOnline(agentID string) bool
+	SendAndWait(agentID string, msg protocol.Message, timeout time.Duration) (<-chan protocol.Message, error)
 }
 
 type createAgentRequest struct {
@@ -26,18 +44,31 @@ type createAgentRequest struct {
 }
 
 type agentResponse struct {
-	ID         string     `json:"id"`
-	Name       string     `json:"name"`
-	Status     string     `json:"status"`
-	LastSeenAt *time.Time `json:"last_seen_at"`
-	LastSeen   *time.Time `json:"last_seen"`
-	SystemInfo string     `json:"system_info"`
-	Hostname   string     `json:"hostname"`
-	OS         string     `json:"os"`
-	Arch       string     `json:"arch"`
-	Version    string     `json:"version"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	Status       string     `json:"status"`
+	LastSeenAt   *time.Time `json:"last_seen_at"`
+	LastSeen     *time.Time `json:"last_seen"`
+	SystemInfo   string     `json:"system_info"`
+	Hostname     string     `json:"hostname"`
+	OS           string     `json:"os"`
+	Arch         string     `json:"arch"`
+	Version      string     `json:"version"`
+	Capabilities []string   `json:"capabilities"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+type updateAgentRequest struct {
+	Version    string `json:"version"`
+	GitHubRepo string `json:"github_repo"`
+}
+
+type updateAgentResponse struct {
+	Accepted   bool   `json:"accepted"`
+	MessageID  string `json:"message_id"`
+	Version    string `json:"version"`
+	GitHubRepo string `json:"github_repo,omitempty"`
 }
 
 func (h *AgentHandler) Create(c *gin.Context) {
@@ -170,6 +201,90 @@ func (h *AgentHandler) GetInstallToken(c *gin.Context) {
 	})
 }
 
+func (h *AgentHandler) UpdateAgent(c *gin.Context) {
+	agent, ok := h.findAgentByID(c, c.Param("id"))
+	if !ok {
+		return
+	}
+
+	var request updateAgentRequest
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "invalid request"})
+			return
+		}
+	}
+	targetVersion := strings.TrimSpace(request.Version)
+	if targetVersion == "" {
+		targetVersion = strings.TrimSpace(h.Version)
+	}
+	if targetVersion == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "target version is required"})
+		return
+	}
+	githubRepo := strings.TrimSpace(request.GitHubRepo)
+	if githubRepo == "" {
+		githubRepo = strings.TrimSpace(h.GitHubRepo)
+	}
+
+	if h.Hub == nil || !h.Hub.IsOnline(agent.ID) {
+		c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": "agent offline"})
+		return
+	}
+
+	msg, err := protocol.NewMessage(protocol.TypeUpdateAgent, protocol.UpdateAgentPayload{
+		Version:    targetVersion,
+		GitHubRepo: githubRepo,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "encode update request"})
+		return
+	}
+
+	wait := h.sendAndWait
+	if wait == nil && h.Hub != nil {
+		wait = h.Hub.SendAndWait
+	}
+	if wait == nil {
+		c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": "agent offline"})
+		return
+	}
+	respCh, err := wait(agent.ID, *msg, h.updateTimeout)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": "agent offline"})
+		return
+	}
+
+	select {
+	case resp, ok := <-respCh:
+		if !ok {
+			c.JSON(http.StatusGatewayTimeout, gin.H{"ok": false, "error": "timeout waiting for agent response"})
+			return
+		}
+		payload, err := protocol.ParsePayload[protocol.UpdateAgentRespPayload](&resp)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": "invalid agent response"})
+			return
+		}
+		if !payload.Accepted {
+			errorText := payload.Error
+			if errorText == "" {
+				errorText = "agent rejected update"
+			}
+			c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": errorText})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true, "data": updateAgentResponse{
+			Accepted:   true,
+			MessageID:  msg.ID,
+			Version:    targetVersion,
+			GitHubRepo: githubRepo,
+		}})
+	case <-c.Request.Context().Done():
+		c.JSON(http.StatusGatewayTimeout, gin.H{"ok": false, "error": "request cancelled"})
+	}
+}
+
 func (h *AgentHandler) findAgentByID(c *gin.Context, id string) (db.Agent, bool) {
 	var agent db.Agent
 	if err := h.DB.DB.First(&agent, "id = ?", id).Error; err != nil {
@@ -188,26 +303,28 @@ func (h *AgentHandler) findAgentByID(c *gin.Context, id string) (db.Agent, bool)
 func newAgentResponse(agent db.Agent) agentResponse {
 	systemInfo := parseAgentSystemInfo(agent.SystemInfo)
 	return agentResponse{
-		ID:         agent.ID,
-		Name:       agent.Name,
-		Status:     agent.Status,
-		LastSeenAt: agent.LastSeenAt,
-		LastSeen:   agent.LastSeenAt,
-		SystemInfo: agent.SystemInfo,
-		Hostname:   systemInfo.Hostname,
-		OS:         systemInfo.OS,
-		Arch:       systemInfo.Arch,
-		Version:    systemInfo.Version,
-		CreatedAt:  agent.CreatedAt,
-		UpdatedAt:  agent.UpdatedAt,
+		ID:           agent.ID,
+		Name:         agent.Name,
+		Status:       agent.Status,
+		LastSeenAt:   agent.LastSeenAt,
+		LastSeen:     agent.LastSeenAt,
+		SystemInfo:   agent.SystemInfo,
+		Hostname:     systemInfo.Hostname,
+		OS:           systemInfo.OS,
+		Arch:         systemInfo.Arch,
+		Version:      systemInfo.Version,
+		Capabilities: systemInfo.Capabilities,
+		CreatedAt:    agent.CreatedAt,
+		UpdatedAt:    agent.UpdatedAt,
 	}
 }
 
 type agentSystemInfo struct {
-	Hostname string `json:"hostname"`
-	OS       string `json:"os"`
-	Arch     string `json:"arch"`
-	Version  string `json:"version"`
+	Hostname     string   `json:"hostname"`
+	OS           string   `json:"os"`
+	Arch         string   `json:"arch"`
+	Version      string   `json:"version"`
+	Capabilities []string `json:"capabilities"`
 }
 
 func parseAgentSystemInfo(raw string) agentSystemInfo {

@@ -32,8 +32,23 @@ export interface TaskHistory {
   duration_ms?: number;
   error_log?: string;
   progress?: BackupProgress;
+  docker?: DockerBackupMetadata;
   created_at: string;
   updated_at?: string;
+}
+
+export interface DockerBackupMetadata {
+  sources?: DockerResolvedSource[];
+  warnings?: string[];
+}
+
+export interface DockerResolvedSource {
+  container_id?: string;
+  name?: string;
+  image?: string;
+  state?: string;
+  resolved_paths?: string[];
+  warnings?: string[];
 }
 
 export interface TaskFilters {

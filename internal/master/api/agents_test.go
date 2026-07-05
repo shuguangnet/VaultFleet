@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"vaultfleet/internal/master/db"
+	"vaultfleet/pkg/protocol"
 )
 
 type testAgentsSetup struct {
@@ -277,6 +278,25 @@ func TestListAgentsExposesAcceptanceFieldAliases(t *testing.T) {
 	assert.Equal(t, "0.1.0", item["version"])
 }
 
+func TestListAgentsExposesCapabilities(t *testing.T) {
+	setup := setupTestAgents(t)
+	agent := db.Agent{
+		Name:       "Docker Agent",
+		Status:     "online",
+		SystemInfo: `{"capabilities":["docker_workload_backups","typed_backup_sources"]}`,
+	}
+	require.NoError(t, setup.database.DB.Create(&agent).Error)
+
+	w := getJSON(t, setup.router, "/api/agents")
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	data := requireList(t, body["data"])
+	require.Len(t, data, 1)
+	item := requireMap(t, data[0])
+	assert.Equal(t, []any{"docker_workload_backups", "typed_backup_sources"}, item["capabilities"])
+}
+
 func TestListAgents_Empty(t *testing.T) {
 	setup := setupTestAgents(t)
 
@@ -439,6 +459,94 @@ func TestRegenerateToken_NotFound(t *testing.T) {
 	w := postJSON(t, setup.router, "/api/agents/nonexistent-id/regenerate-token", map[string]string{})
 
 	require.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestUpdateAgentSendsUpdateRequestToOnlineAgent(t *testing.T) {
+	setup := setupTestAgents(t)
+	agent := db.Agent{Name: "Update Agent", Status: "online"}
+	require.NoError(t, setup.database.DB.Create(&agent).Error)
+	hub := &fakeAgentUpdateHub{online: map[string]bool{agent.ID: true}, accepted: true}
+	setup.handler.Hub = hub
+	setup.handler.Version = "v0.5.13"
+	setup.handler.GitHubRepo = "shuguangnet/VaultFleet"
+	setup.router.POST("/api/agents/:id/update-agent", setup.handler.UpdateAgent)
+
+	w := postJSON(t, setup.router, "/api/agents/"+agent.ID+"/update-agent", map[string]string{})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	data := requireMap(t, body["data"])
+	assert.Equal(t, true, data["accepted"])
+	assert.Equal(t, "v0.5.13", data["version"])
+	assert.Equal(t, "shuguangnet/VaultFleet", data["github_repo"])
+	require.Len(t, hub.messages, 1)
+	assert.Equal(t, protocol.TypeUpdateAgent, hub.messages[0].Type)
+	payload, err := protocol.ParsePayload[protocol.UpdateAgentPayload](&hub.messages[0])
+	require.NoError(t, err)
+	assert.Equal(t, "v0.5.13", payload.Version)
+	assert.Equal(t, "shuguangnet/VaultFleet", payload.GitHubRepo)
+}
+
+func TestUpdateAgentRejectsOfflineAgent(t *testing.T) {
+	setup := setupTestAgents(t)
+	agent := db.Agent{Name: "Offline Agent", Status: "offline"}
+	require.NoError(t, setup.database.DB.Create(&agent).Error)
+	setup.handler.Hub = &fakeAgentUpdateHub{online: map[string]bool{}}
+	setup.handler.Version = "v0.5.13"
+	setup.router.POST("/api/agents/:id/update-agent", setup.handler.UpdateAgent)
+
+	w := postJSON(t, setup.router, "/api/agents/"+agent.ID+"/update-agent", map[string]string{})
+
+	require.Equal(t, http.StatusBadGateway, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assert.Equal(t, "agent offline", body["error"])
+}
+
+func TestUpdateAgentReturnsAgentRejection(t *testing.T) {
+	setup := setupTestAgents(t)
+	agent := db.Agent{Name: "No Update Agent", Status: "online"}
+	require.NoError(t, setup.database.DB.Create(&agent).Error)
+	setup.handler.Hub = &fakeAgentUpdateHub{
+		online:   map[string]bool{agent.ID: true},
+		accepted: false,
+		errText:  "agent self-update is disabled",
+	}
+	setup.handler.Version = "v0.5.13"
+	setup.router.POST("/api/agents/:id/update-agent", setup.handler.UpdateAgent)
+
+	w := postJSON(t, setup.router, "/api/agents/"+agent.ID+"/update-agent", map[string]string{})
+
+	require.Equal(t, http.StatusBadGateway, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assert.Equal(t, "agent self-update is disabled", body["error"])
+}
+
+type fakeAgentUpdateHub struct {
+	online   map[string]bool
+	accepted bool
+	errText  string
+	messages []protocol.Message
+}
+
+func (h *fakeAgentUpdateHub) IsOnline(agentID string) bool {
+	return h.online[agentID]
+}
+
+func (h *fakeAgentUpdateHub) SendAndWait(agentID string, msg protocol.Message, _ time.Duration) (<-chan protocol.Message, error) {
+	h.messages = append(h.messages, msg)
+	ch := make(chan protocol.Message, 1)
+	resp, err := protocol.NewMessage(protocol.TypeUpdateAgentResp, protocol.UpdateAgentRespPayload{
+		Accepted: h.accepted,
+		Error:    h.errText,
+	})
+	if err != nil {
+		close(ch)
+		return ch, err
+	}
+	resp.ID = msg.ID
+	ch <- *resp
+	close(ch)
+	return ch, nil
 }
 
 func TestEnrollAgent(t *testing.T) {

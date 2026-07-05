@@ -144,12 +144,18 @@ func expectedResponseType(requestType string) (string, error) {
 	switch requestType {
 	case protocol.TypeDirBrowseReq:
 		return protocol.TypeDirBrowseResp, nil
+	case protocol.TypeDirSizeReq:
+		return protocol.TypeDirSizeResp, nil
+	case protocol.TypeDockerDiscoveryReq:
+		return protocol.TypeDockerDiscoveryResp, nil
 	case protocol.TypeSnapshotListReq:
 		return protocol.TypeSnapshotListResp, nil
 	case protocol.TypeSnapshotBrowseReq:
 		return protocol.TypeSnapshotBrowseResp, nil
 	case protocol.TypeCollectLogsReq:
 		return protocol.TypeCollectLogsResp, nil
+	case protocol.TypeUpdateAgent:
+		return protocol.TypeUpdateAgentResp, nil
 	default:
 		return "", errors.New("unsupported request type for response waiter")
 	}

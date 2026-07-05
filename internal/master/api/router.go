@@ -36,6 +36,7 @@ type RouterConfig struct {
 	AgentWebSocket     gin.HandlerFunc
 	TaskProgressGetter func(agentID string, messageID string) *protocol.BackupProgressPayload
 	Version            string
+	GitHubRepo         string
 	LogBuf             *logbuf.RingBuffer
 }
 
@@ -129,6 +130,9 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 
 	authHandler := NewAuthHandler(cfg.Database)
 	agentHandler := NewAgentHandler(cfg.Database)
+	agentHandler.Hub = cfg.Hub
+	agentHandler.Version = cfg.Version
+	agentHandler.GitHubRepo = cfg.GitHubRepo
 	storageHandler := NewConfigHandler(cfg.Database)
 	storageHandler.EventBus = cfg.EventBus
 	storageHandler.ProviderLoader = storagecheck.NewProviderLoader()
@@ -170,6 +174,7 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	protected.GET("/agents/:id", agentHandler.Get)
 	protected.DELETE("/agents/:id", agentHandler.Delete)
 	protected.POST("/agents/:id/regenerate-token", agentHandler.RegenerateToken)
+	protected.POST("/agents/:id/update-agent", agentHandler.UpdateAgent)
 	protected.GET("/agents/:id/install-token", agentHandler.GetInstallToken)
 	RegisterStorageRoutes(protected, storageHandler)
 	RegisterPolicyRoutes(protected, policyHandler)
@@ -361,8 +366,12 @@ func policyPushPayload(database *db.Database, policy db.BackupPolicy, storage db
 		rclonePassObscured = true
 	}
 
-	var backupDirs []string
-	if err := json.Unmarshal([]byte(policy.BackupDirs), &backupDirs); err != nil {
+	backupDirs, err := policyBackupDirs(policy)
+	if err != nil {
+		return protocol.PolicyPushPayload{}, err
+	}
+	backupSources, err := policyBackupSources(policy)
+	if err != nil {
 		return protocol.PolicyPushPayload{}, err
 	}
 
@@ -405,6 +414,7 @@ func policyPushPayload(database *db.Database, policy db.BackupPolicy, storage db
 		BackupMode:      normalizeBackupMode(policy.BackupMode),
 		ArchiveFormat:   normalizeArchiveFormat(policy.ArchiveFormat),
 		BackupDirs:      backupDirs,
+		BackupSources:   backupSources,
 		ExcludePatterns: excludePatterns,
 		PreBackupHook:   preBackupHook,
 		PostBackupHook:  postBackupHook,
@@ -451,23 +461,21 @@ func decryptPolicyRcloneConfig(database *db.Database, rawConfig string) (map[str
 }
 
 func policyRepoPath(rcloneType string, rcloneConfig map[string]string, repoPath string) string {
-	if rcloneType != "s3" {
+	pathSegment := storagecheck.RemotePathSegment(rcloneType, rcloneConfig)
+	if pathSegment == "" {
 		return repoPath
 	}
-	bucket := storagecheck.S3BucketPathSegment(rcloneConfig["bucket"])
-	if bucket == "" {
-		return repoPath
-	}
-	return bucket + "/" + strings.TrimLeft(repoPath, "/")
+	return pathSegment + "/" + strings.TrimLeft(repoPath, "/")
 }
 
 func storageRcloneConfig(rcloneType string, rcloneConfig map[string]string) map[string]string {
-	if rcloneType != "s3" {
+	pathKey, ok := storagecheck.RemotePathConfigKey(rcloneType)
+	if !ok {
 		return rcloneConfig
 	}
 	values := make(map[string]string, len(rcloneConfig))
 	for key, value := range rcloneConfig {
-		if key == "bucket" {
+		if key == pathKey {
 			continue
 		}
 		values[key] = value

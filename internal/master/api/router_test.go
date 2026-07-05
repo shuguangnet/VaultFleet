@@ -364,6 +364,59 @@ func TestCurrentPolicyLookupNormalizesS3BucketLikeStorageCheck(t *testing.T) {
 	assert.NotContains(t, payload.Storage.RcloneConfig, "bucket")
 }
 
+func TestCurrentPolicyLookupMovesSwiftContainerIntoRepoPath(t *testing.T) {
+	database := newRouterAssemblyDatabase(t)
+	agent := createStorageTestAgent(t, database, "Tokyo-1")
+	storage := db.StorageConfig{
+		Name:       "OpenStack Swift",
+		RcloneType: "swift",
+		RcloneConfig: mustEncryptMap(t, database, map[string]any{
+			"auth":      "https://openstack.example.test:5000/v3",
+			"user":      "vaultfleet",
+			"key":       "swift-secret",
+			"tenant":    "service",
+			"domain":    "default",
+			"container": " /backups/ ",
+		}),
+	}
+	require.NoError(t, database.DB.Create(&storage).Error)
+	createStorageTestPolicy(t, database, agent.ID, storage.ID, false)
+
+	msg, ok := CurrentPolicyLookup(database)(agent.ID)
+
+	require.True(t, ok)
+	payload, err := protocol.ParsePayload[protocol.PolicyPushPayload](msg)
+	require.NoError(t, err)
+	assert.Equal(t, "backups/vaultfleet/"+agent.ID, payload.Storage.RepoPath)
+	assert.NotContains(t, payload.Storage.RcloneConfig, "container")
+	assert.Equal(t, "https://openstack.example.test:5000/v3", payload.Storage.RcloneConfig["auth"])
+	assert.Equal(t, "vaultfleet", payload.Storage.RcloneConfig["user"])
+}
+
+func TestCurrentPolicyLookupKeepsSwiftRepoPathWhenContainerIsEmpty(t *testing.T) {
+	database := newRouterAssemblyDatabase(t)
+	agent := createStorageTestAgent(t, database, "Tokyo-1")
+	storage := db.StorageConfig{
+		Name:       "OpenStack Swift",
+		RcloneType: "swift",
+		RcloneConfig: mustEncryptMap(t, database, map[string]any{
+			"auth":      "https://openstack.example.test:5000/v3",
+			"user":      "vaultfleet",
+			"container": "  ",
+		}),
+	}
+	require.NoError(t, database.DB.Create(&storage).Error)
+	createStorageTestPolicy(t, database, agent.ID, storage.ID, false)
+
+	msg, ok := CurrentPolicyLookup(database)(agent.ID)
+
+	require.True(t, ok)
+	payload, err := protocol.ParsePayload[protocol.PolicyPushPayload](msg)
+	require.NoError(t, err)
+	assert.Equal(t, "vaultfleet/"+agent.ID, payload.Storage.RepoPath)
+	assert.NotContains(t, payload.Storage.RcloneConfig, "container")
+}
+
 func TestCurrentPolicyLookupRejectsNonStringRcloneConfigValues(t *testing.T) {
 	database := newRouterAssemblyDatabase(t)
 	agent := createStorageTestAgent(t, database, "Tokyo-1")
