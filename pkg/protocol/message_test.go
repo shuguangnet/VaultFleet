@@ -55,6 +55,15 @@ func TestNewMessage_GeneratesUniqueHexIDs(t *testing.T) {
 	}
 }
 
+func TestDefaultAgentCapabilitiesIncludesCurrentFeatureSet(t *testing.T) {
+	capabilities := DefaultAgentCapabilities()
+
+	assert.Contains(t, capabilities, CapabilitySnapshotBrowse)
+	assert.Contains(t, capabilities, CapabilityRestoreIncludePaths)
+	assert.Contains(t, capabilities, CapabilityPolicyPlaintextRclonePass)
+	assert.Contains(t, capabilities, CapabilityArchiveBackup)
+}
+
 func TestPolicyPushPayload(t *testing.T) {
 	policy := PolicyPushPayload{
 		AgentID: "agent-001",

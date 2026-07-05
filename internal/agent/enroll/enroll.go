@@ -120,15 +120,11 @@ func enrollURL(serverURL string) (string, error) {
 func collectSystemInfo(version string) string {
 	hostname, _ := os.Hostname()
 	data, err := json.Marshal(systemInfo{
-		Hostname: hostname,
-		OS:       runtime.GOOS,
-		Arch:     runtime.GOARCH,
-		Version:  version,
-		Capabilities: []string{
-			protocol.CapabilitySnapshotBrowse,
-			protocol.CapabilityRestoreIncludePaths,
-			protocol.CapabilityPolicyPlaintextRclonePass,
-		},
+		Hostname:     hostname,
+		OS:           runtime.GOOS,
+		Arch:         runtime.GOARCH,
+		Version:      version,
+		Capabilities: protocol.DefaultAgentCapabilities(),
 	})
 	if err != nil {
 		return fmt.Sprintf("hostname=%s os=%s arch=%s", hostname, runtime.GOOS, runtime.GOARCH)

@@ -123,11 +123,7 @@ func runClient(ctx context.Context, cfg *AgentConfig) error {
 	collector := func() connect.SystemInfo {
 		info := connect.DefaultSystemInfoCollector()
 		info.AgentVersion = version
-		info.Capabilities = []string{
-			protocol.CapabilitySnapshotBrowse,
-			protocol.CapabilityRestoreIncludePaths,
-			protocol.CapabilityPolicyPlaintextRclonePass,
-		}
+		info.Capabilities = protocol.DefaultAgentCapabilities()
 		return info
 	}
 	client = connect.NewClient(cfg.Server, cfg.AgentToken, handler.Handle)

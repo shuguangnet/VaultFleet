@@ -41,6 +41,16 @@ const (
 	CapabilityArchiveBackup             = "archive_backup"
 )
 
+// DefaultAgentCapabilities returns the feature set reported by current agents.
+func DefaultAgentCapabilities() []string {
+	return []string{
+		CapabilitySnapshotBrowse,
+		CapabilityRestoreIncludePaths,
+		CapabilityPolicyPlaintextRclonePass,
+		CapabilityArchiveBackup,
+	}
+}
+
 const (
 	BackupModeSnapshot = "snapshot"
 	BackupModeArchive  = "archive"

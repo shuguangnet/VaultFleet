@@ -228,7 +228,7 @@ func TestHandlerHeartbeatCapabilitiesWithoutVersionUpdatesAgentSystemInfo(t *tes
 	handler := NewHandler(hub, events.NewBus(), validTestAuth, noPolicy, nil)
 	handler.HeartbeatStateUpdater = masterapi.NewHeartbeatStateUpdater(database)
 	msg, err := protocol.NewMessage(protocol.TypeHeartbeat, protocol.HeartbeatPayload{
-		Capabilities: []string{protocol.CapabilitySnapshotBrowse, protocol.CapabilityRestoreIncludePaths},
+		Capabilities: protocol.DefaultAgentCapabilities(),
 	})
 	require.NoError(t, err)
 
@@ -244,7 +244,7 @@ func TestHandlerHeartbeatCapabilitiesWithoutVersionUpdatesAgentSystemInfo(t *tes
 	}
 	require.NoError(t, json.Unmarshal([]byte(stored.SystemInfo), &info))
 	assert.Equal(t, "linux", info.OS)
-	assert.Equal(t, []string{protocol.CapabilitySnapshotBrowse, protocol.CapabilityRestoreIncludePaths}, info.Capabilities)
+	assert.Equal(t, protocol.DefaultAgentCapabilities(), info.Capabilities)
 }
 
 func TestHandlerHeartbeatWithCapabilitiesDispatchesPendingCommandsAfterStateUpdate(t *testing.T) {

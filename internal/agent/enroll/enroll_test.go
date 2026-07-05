@@ -62,6 +62,8 @@ func TestEnroll_SuccessPostsCurrentContractAndSavesConfig(t *testing.T) {
 	assert.Equal(t, runtime.GOARCH, systemInfo.Arch)
 	assert.Contains(t, systemInfo.Capabilities, "snapshot_browse")
 	assert.Contains(t, systemInfo.Capabilities, "restore_include_paths")
+	assert.Contains(t, systemInfo.Capabilities, "policy_plaintext_rclone_pass")
+	assert.Contains(t, systemInfo.Capabilities, "archive_backup")
 
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
