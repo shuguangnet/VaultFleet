@@ -1,9 +1,9 @@
 # docker-compose.yml
 services:
   vaultfleet:
-    image: malabary/vaultfleet:latest
+    image: malabary/vaultfleet:v0.5.10
     ports:
-      - "8080:8080"
+      - "18080:8080"
     volumes:
       - ./data:/data
     restart: unless-stopped
