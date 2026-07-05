@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -133,7 +134,11 @@ func (u *Updater) Update(targetVersion, githubRepo string) error {
 
 func (u *Updater) buildDownloadURL(repo, version string) string {
 	assetName := fmt.Sprintf("vaultfleet-agent-linux-%s", u.config.Arch)
-	rawURL := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", repo, version, assetName)
+	releasePath := fmt.Sprintf("releases/download/%s", version)
+	if strings.TrimSpace(version) == "latest" {
+		releasePath = "releases/latest/download"
+	}
+	rawURL := fmt.Sprintf("https://github.com/%s/%s/%s", repo, releasePath, assetName)
 	if u.config.GitHubProxy != "" {
 		return fmt.Sprintf("%s/%s", u.config.GitHubProxy, rawURL)
 	}

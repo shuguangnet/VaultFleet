@@ -23,7 +23,7 @@ import (
 
 const defaultConfigPath = "/etc/vaultfleet/agent.yaml"
 
-var version string
+var version = "dev"
 
 type AgentConfig struct {
 	Server      string `yaml:"server"`

@@ -16,12 +16,12 @@ import (
 func TestDownloadRoutesServeInstallerAndAgentBinary(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	dataDir := t.TempDir()
-	downloadsDir := filepath.Join(dataDir, "downloads")
+	downloadsDir := filepath.Join(dataDir, "downloads", "v1.2.3")
 	require.NoError(t, os.MkdirAll(downloadsDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(downloadsDir, "agent-linux-amd64"), []byte("agent-binary"), 0o644))
 
 	router := gin.New()
-	RegisterDownloadRoutes(router, dataDir)
+	RegisterDownloadRoutes(router, dataDir, "v1.2.3", "shuguangnet/VaultFleet")
 
 	w := getJSON(t, router, "/install.sh")
 	require.Equal(t, http.StatusOK, w.Code)
@@ -64,21 +64,51 @@ func TestDownloadRoutesFetchesAgentFromReleaseWhenLocalMissing(t *testing.T) {
 	defer func() { agentReleaseBaseURL = original }()
 
 	router := gin.New()
-	RegisterDownloadRoutes(router, dataDir)
+	RegisterDownloadRoutes(router, dataDir, "v1.2.3", "shuguangnet/VaultFleet")
 
 	w := getJSON(t, router, "/download/agent-linux-amd64")
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "downloaded-agent", w.Body.String())
 
-	cached, err := os.ReadFile(filepath.Join(dataDir, "downloads", "agent-linux-amd64"))
+	cached, err := os.ReadFile(filepath.Join(dataDir, "downloads", "v1.2.3", "agent-linux-amd64"))
 	require.NoError(t, err)
 	assert.Equal(t, "downloaded-agent", string(cached))
+}
+
+func TestDownloadRoutesRefreshesLatestCacheWhenVersionIsNotReleaseTag(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dataDir := t.TempDir()
+	original := agentReleaseBaseURL
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/vaultfleet-agent-linux-amd64" {
+			http.NotFound(w, r)
+			return
+		}
+		requests++
+		_, _ = w.Write([]byte("downloaded-agent-v2"))
+	}))
+	defer server.Close()
+	agentReleaseBaseURL = server.URL
+	defer func() { agentReleaseBaseURL = original }()
+
+	latestPath := filepath.Join(dataDir, "downloads", "latest", "agent-linux-amd64")
+	require.NoError(t, os.MkdirAll(filepath.Dir(latestPath), 0o755))
+	require.NoError(t, os.WriteFile(latestPath, []byte("downloaded-agent-v1"), 0o755))
+
+	router := gin.New()
+	RegisterDownloadRoutes(router, dataDir, "dev", "shuguangnet/VaultFleet")
+
+	w := getJSON(t, router, "/download/agent-linux-amd64")
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "downloaded-agent-v2", w.Body.String())
+	assert.Equal(t, 1, requests)
 }
 
 func TestDownloadRoutesRejectMissingOrUnsafeAgentPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	RegisterDownloadRoutes(router, t.TempDir())
+	RegisterDownloadRoutes(router, t.TempDir(), "v1.2.3", "shuguangnet/VaultFleet")
 
 	for _, path := range []string{"/download/agent-linux-sparc", "/download/../master.key", "/download/not-agent"} {
 		t.Run(path, func(t *testing.T) {

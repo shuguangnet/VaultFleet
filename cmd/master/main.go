@@ -21,7 +21,7 @@ import (
 	"vaultfleet/internal/master/ws"
 )
 
-var version string
+var version = "dev"
 
 type masterRuntime struct {
 	hub            *ws.Hub

@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -197,7 +198,7 @@ func (h *Handler) dispatch(agentID string, msg protocol.Message) {
 					}
 				}
 			}
-			if heartbeat.AgentVersion != "" && h.MasterVersion != "" && heartbeat.AgentVersion != h.MasterVersion {
+			if heartbeat.AgentVersion != "" && isAgentReleaseVersion(h.MasterVersion) && heartbeat.AgentVersion != h.MasterVersion {
 				h.notifyVersionIfCooldown(agentID)
 			}
 		}
@@ -278,6 +279,10 @@ func (h *Handler) resetVersionNotify(agentID string) {
 	h.versionNotifyMu.Lock()
 	delete(h.versionNotifyTimes, agentID)
 	h.versionNotifyMu.Unlock()
+}
+
+func isAgentReleaseVersion(version string) bool {
+	return strings.HasPrefix(strings.TrimSpace(version), "v")
 }
 
 func (h *Handler) updateAgentState(agentID string, status string, lastSeenAt *time.Time) {

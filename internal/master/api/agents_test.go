@@ -487,6 +487,24 @@ func TestUpdateAgentSendsUpdateRequestToOnlineAgent(t *testing.T) {
 	assert.Equal(t, "shuguangnet/VaultFleet", payload.GitHubRepo)
 }
 
+func TestUpdateAgentDefaultsToLatestWhenMasterVersionIsNotReleaseTag(t *testing.T) {
+	setup := setupTestAgents(t)
+	agent := db.Agent{Name: "Update Agent", Status: "online"}
+	require.NoError(t, setup.database.DB.Create(&agent).Error)
+	hub := &fakeAgentUpdateHub{online: map[string]bool{agent.ID: true}, accepted: true}
+	setup.handler.Hub = hub
+	setup.handler.Version = "b3cf56c36b0b"
+	setup.handler.GitHubRepo = "shuguangnet/VaultFleet"
+	setup.router.POST("/api/agents/:id/update-agent", setup.handler.UpdateAgent)
+
+	w := postJSON(t, setup.router, "/api/agents/"+agent.ID+"/update-agent", map[string]string{})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	payload, err := protocol.ParsePayload[protocol.UpdateAgentPayload](&hub.messages[0])
+	require.NoError(t, err)
+	assert.Equal(t, "latest", payload.Version)
+}
+
 func TestUpdateAgentRejectsOfflineAgent(t *testing.T) {
 	setup := setupTestAgents(t)
 	agent := db.Agent{Name: "Offline Agent", Status: "offline"}

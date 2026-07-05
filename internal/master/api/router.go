@@ -188,7 +188,7 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	RegisterSystemRoutes(protected.Group("/system"), systemHandler)
 	RegisterDiagnosticRoutes(protected.Group("/system"), diagnosticHandler)
 
-	RegisterDownloadRoutes(r, cfg.Database.DataDir)
+	RegisterDownloadRoutes(r, cfg.Database.DataDir, cfg.Version, cfg.GitHubRepo)
 	RegisterHealthRoutes(r, healthHandler)
 	RegisterFrontendRoutes(r)
 

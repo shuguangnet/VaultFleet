@@ -129,6 +129,12 @@ func TestBuildDownloadURLWithProxy(t *testing.T) {
 	assert.Equal(t, "https://proxy.example.com/https://github.com/shuguangnet/VaultFleet/releases/download/v1.0.0/vaultfleet-agent-linux-amd64", url)
 }
 
+func TestBuildDownloadURLLatest(t *testing.T) {
+	u := NewUpdater(Config{Arch: "amd64"})
+	url := u.buildDownloadURL("shuguangnet/VaultFleet", "latest")
+	assert.Equal(t, "https://github.com/shuguangnet/VaultFleet/releases/latest/download/vaultfleet-agent-linux-amd64", url)
+}
+
 func TestConcurrentUpdateCallsAreSafe(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("#!/bin/sh\nexit 0\n"))

@@ -216,11 +216,7 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 	}
 	targetVersion := strings.TrimSpace(request.Version)
 	if targetVersion == "" {
-		targetVersion = strings.TrimSpace(h.Version)
-	}
-	if targetVersion == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "target version is required"})
-		return
+		targetVersion = defaultAgentUpdateVersion(h.Version)
 	}
 	githubRepo := strings.TrimSpace(request.GitHubRepo)
 	if githubRepo == "" {
@@ -283,6 +279,14 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 	case <-c.Request.Context().Done():
 		c.JSON(http.StatusGatewayTimeout, gin.H{"ok": false, "error": "request cancelled"})
 	}
+}
+
+func defaultAgentUpdateVersion(masterVersion string) string {
+	masterVersion = strings.TrimSpace(masterVersion)
+	if isAgentReleaseVersion(masterVersion) {
+		return masterVersion
+	}
+	return "latest"
 }
 
 func (h *AgentHandler) findAgentByID(c *gin.Context, id string) (db.Agent, bool) {
