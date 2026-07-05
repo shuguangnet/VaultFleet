@@ -1,0 +1,12 @@
+{
+  "id": "start-project",
+  "title": "启动项目",
+  "status": "completed",
+  "complexity": "S",
+  "risk": "low",
+  "domain": "devops",
+  "currentPhase": "completed",
+  "nextAction": "已启动 Master 和 Web 开发服务",
+  "createdAt": "2026-07-05T04:09:59Z",
+  "branch": "main"
+}
