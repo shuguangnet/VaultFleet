@@ -1,0 +1,12 @@
+{
+  "id": "push-docker-capability-fix",
+  "title": "提交并推送 Docker capability 修复",
+  "status": "completed",
+  "complexity": "S",
+  "risk": "low",
+  "domain": "devops",
+  "currentPhase": "completed",
+  "nextAction": "已提交 Docker capability 修复，待推送",
+  "createdAt": "2026-07-05T04:25:00Z",
+  "branch": "main"
+}
