@@ -50,7 +50,7 @@ const EVENT_OPTIONS = [
 
 type NotificationType = NotificationInput["type"];
 
-const DEFAULT_SUBJECT_TEMPLATE = "[VaultFleet] {{.Title}} - {{.AgentName}}";
+const DEFAULT_SUBJECT_TEMPLATE = "[云备份] {{.Title}} - {{.AgentName}}";
 const DEFAULT_BODY_TEMPLATE =
   "{{.Title}}\nLevel: {{.Level}}\nAgent: {{.AgentName}}\nTime: {{.Timestamp}}\n\n{{.Body}}";
 
@@ -68,7 +68,7 @@ function defaultConfigForType(type: NotificationType): Record<string, unknown> {
         smtp_username: "",
         smtp_password: "",
         from: "",
-        from_name: "VaultFleet",
+        from_name: "云备份",
         to: [],
         cc: [],
         bcc: [],
@@ -546,7 +546,7 @@ export function NotificationsPage() {
                         onChange={(e) =>
                           updateConfig("from_name", e.target.value)
                         }
-                        placeholder="VaultFleet"
+                        placeholder="云备份"
                       />
                     </Col>
                   </Row>

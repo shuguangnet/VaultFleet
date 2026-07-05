@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -123,12 +124,14 @@ func (h *TaskHandler) BackupNow(c *gin.Context) {
 		TimeoutHours: timeoutHours,
 	})
 	if err != nil {
+		log.Printf("create backup_now command failed for agent %s: %v", agentID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "database error"})
 		return
 	}
 
 	if h.Hub != nil && h.Hub.IsOnline(agentID) {
 		if err := commandService.DispatchNewPendingForAgent(contextFromGin(c), agentID, 100); err != nil {
+			log.Printf("dispatch backup_now command failed for agent %s: %v", agentID, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "database error"})
 			return
 		}

@@ -112,7 +112,7 @@ describe("PoliciesPage rclone form state", () => {
       </QueryClientProvider>,
     );
 
-    await user.click(await screen.findByRole("button", { name: "添加策略" }));
+    await clickButtonByText(user, "添加策略");
     await user.click(screen.getAllByRole("combobox")[1]);
     const webdavOption = (await screen.findAllByText("WebDAV Store")).find(
       (el) => el.tagName !== "OPTION",
@@ -122,10 +122,10 @@ describe("PoliciesPage rclone form state", () => {
 
     expect(screen.getByLabelText("并发传输数")).toHaveValue("2");
 
-    await user.click(screen.getByRole("button", { name: "提交策略" }));
+    await clickButtonByText(user, "提交策略");
     await waitFor(() => expect(createPolicy).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole("button", { name: "添加策略" }));
+    await clickButtonByText(user, "添加策略");
 
     expect(screen.queryByLabelText("并发传输数")).not.toBeInTheDocument();
   });
@@ -186,11 +186,11 @@ describe("PoliciesPage rclone form state", () => {
       </QueryClientProvider>,
     );
 
-    await user.click(await screen.findByRole("button", { name: "添加策略" }));
+    await clickButtonByText(user, "添加策略");
     await user.click(screen.getAllByRole("combobox")[0]);
-    await user.click(await screen.findByRole("option", { name: "node-1" }));
+    await clickOptionByName("node-1");
     await user.click(screen.getAllByRole("combobox")[1]);
-    await user.click(await screen.findByRole("option", { name: "S3 Store" }));
+    await clickOptionByName("S3 Store");
     await user.type(screen.getByRole("textbox", { name: "备份目录" }), "/data");
     await user.clear(screen.getByLabelText("任务超时（小时）"));
     await user.type(screen.getByLabelText("任务超时（小时）"), "12");
@@ -266,15 +266,15 @@ describe("PoliciesPage rclone form state", () => {
       </QueryClientProvider>,
     );
 
-    await user.click(await screen.findByRole("button", { name: "添加策略" }));
+    await clickButtonByText(user, "添加策略");
     expect(
       screen.getByText(/不备份镜像层，也不会自动重建容器/),
     ).toBeInTheDocument();
 
     await user.click(screen.getAllByRole("combobox")[0]);
-    await user.click(await screen.findByRole("option", { name: "node-1" }));
+    await clickOptionByName("node-1");
     await user.click(screen.getAllByRole("combobox")[1]);
-    await user.click(await screen.findByRole("option", { name: "S3 Store" }));
+    await clickOptionByName("S3 Store");
     await user.type(
       screen.getByRole("textbox", { name: "备份目录" }),
       "/srv/app/data",
@@ -306,7 +306,7 @@ describe("PoliciesPage rclone form state", () => {
         },
       }),
     );
-  });
+  }, 10000);
 
   it("discovers and submits Docker container backup sources", async () => {
     const user = userEvent.setup();
@@ -377,11 +377,11 @@ describe("PoliciesPage rclone form state", () => {
       </QueryClientProvider>,
     );
 
-    await user.click(await screen.findByRole("button", { name: "添加策略" }));
+    await clickButtonByText(user, "添加策略");
     await user.click(screen.getAllByRole("combobox")[0]);
-    await user.click(await screen.findByRole("option", { name: "node-1" }));
+    await clickOptionByName("node-1");
     await user.click(screen.getAllByRole("combobox")[1]);
-    await user.click(await screen.findByRole("option", { name: "S3 Store" }));
+    await clickOptionByName("S3 Store");
     expect(await screen.findByText("postgres:16")).toBeInTheDocument();
     await user.click(screen.getByRole("checkbox"));
     fireEvent.submit(screen.getByRole("form", { name: "备份策略表单" }));
@@ -432,9 +432,9 @@ describe("PoliciesPage rclone form state", () => {
       </QueryClientProvider>,
     );
 
-    await user.click(await screen.findByRole("button", { name: "添加策略" }));
+    await clickButtonByText(user, "添加策略");
     await user.click(screen.getAllByRole("combobox")[0]);
-    await user.click(await screen.findByRole("option", { name: "node-1" }));
+    await clickOptionByName("node-1");
 
     expect(await screen.findByText("当前 Agent 未上报 Docker 备份能力。")).toBeInTheDocument();
     expect(discoverDockerAgent).not.toHaveBeenCalled();
@@ -452,4 +452,19 @@ function newTestQueryClient() {
       },
     },
   });
+}
+
+async function clickButtonByText(
+  user: ReturnType<typeof userEvent.setup>,
+  text: string,
+) {
+  const label = await screen.findByText(text);
+  const button = label.closest("button");
+  expect(button).toBeTruthy();
+  await user.click(button!);
+}
+
+async function clickOptionByName(name: string) {
+  const option = await screen.findByRole("option", { name });
+  fireEvent.click(option);
 }

@@ -46,6 +46,9 @@ func New(dataDir string) (*Database, error) {
 	); err != nil {
 		return nil, fmt.Errorf("auto migrate: %w", err)
 	}
+	if err := ensureDockerBackupColumns(gormDB); err != nil {
+		return nil, fmt.Errorf("ensure docker backup columns: %w", err)
+	}
 	if err := migrateTaskHistoryArtifacts(gormDB); err != nil {
 		return nil, fmt.Errorf("migrate task history artifacts: %w", err)
 	}
@@ -63,6 +66,20 @@ func New(dataDir string) (*Database, error) {
 		DataDir:   dataDir,
 		MasterKey: masterKey,
 	}, nil
+}
+
+func ensureDockerBackupColumns(gormDB *gorm.DB) error {
+	if gormDB.Migrator().HasTable(&BackupPolicy{}) && !gormDB.Migrator().HasColumn(&BackupPolicy{}, "BackupSources") {
+		if err := gormDB.Migrator().AddColumn(&BackupPolicy{}, "BackupSources"); err != nil {
+			return err
+		}
+	}
+	if gormDB.Migrator().HasTable(&TaskHistory{}) && !gormDB.Migrator().HasColumn(&TaskHistory{}, "Docker") {
+		if err := gormDB.Migrator().AddColumn(&TaskHistory{}, "Docker"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func dedupeLegacySnapshots(gormDB *gorm.DB) error {

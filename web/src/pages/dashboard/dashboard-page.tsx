@@ -405,7 +405,7 @@ export function DashboardPage() {
       <section className="vf-dashboard-hero">
         <div>
           <Typography.Text className="vf-dashboard-eyebrow">
-            VaultFleet Operations
+            云备份运维
           </Typography.Text>
           <Typography.Title level={3} className="vf-dashboard-title">
             控制台总览

@@ -190,7 +190,8 @@ func TestIntegration_FullFlow(t *testing.T) {
 	defer resp2.Body.Close()
 	bodyBytes, _ := io.ReadAll(resp2.Body)
 	assert.Equal(t, http.StatusOK, resp2.StatusCode)
-	assert.Contains(t, string(bodyBytes), "VaultFleet")
+	assert.Contains(t, resp2.Header.Get("Content-Type"), "text/html")
+	assert.Contains(t, string(bodyBytes), "id=\"root\"")
 }
 
 func TestIntegration_LoginFails(t *testing.T) {

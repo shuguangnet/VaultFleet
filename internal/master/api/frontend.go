@@ -44,7 +44,7 @@ func RegisterFrontendRoutes(r *gin.Engine) {
 			c.Data(http.StatusOK, "text/html; charset=utf-8", indexHTML)
 		} else {
 			// Fallback if not built yet (mostly for tests if not built)
-			c.Data(http.StatusOK, "text/html; charset=utf-8", []byte("<!doctype html><html><body><div id=\"root\">VaultFleet (Not Built)</div></body></html>"))
+			c.Data(http.StatusOK, "text/html; charset=utf-8", []byte("<!doctype html><html><body><div id=\"root\">云备份（未构建）</div></body></html>"))
 		}
 	})
 }

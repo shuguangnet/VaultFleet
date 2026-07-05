@@ -210,6 +210,41 @@ func TestBackupNowIncludesLatestPolicyPayload(t *testing.T) {
 	assert.Equal(t, backupDirs, payload.Policy.BackupDirs)
 }
 
+func TestBackupNowIncludesDockerPolicySources(t *testing.T) {
+	setup := setupTasksAPI(t)
+	agent := createTasksTestAgent(t, setup.database, "online")
+	markTasksAgentCapabilities(t, setup.database, agent.ID, []string{protocol.CapabilityDockerWorkloadBackups})
+	setup.hub.online[agent.ID] = true
+
+	storage := db.StorageConfig{Name: "Docker Storage", RcloneType: "s3"}
+	require.NoError(t, setup.database.DB.Create(&storage).Error)
+	policy := db.BackupPolicy{
+		AgentID:         agent.ID,
+		StorageID:       storage.ID,
+		BackupMode:      protocol.BackupModeSnapshot,
+		RepoPath:        "vaultfleet/" + agent.ID,
+		BackupDirs:      `["/etc"]`,
+		BackupSources:   `[{"type":"path","path":"/etc"},{"type":"docker_container","docker_container":{"container_id":"container-1","name":"db","include_bind_mounts":true,"include_volumes":true,"include_compose_files":true}}]`,
+		ExcludePatterns: `[]`,
+		Schedule:        "0 3 * * *",
+		Retention:       `{"keep_last":5}`,
+		TimeoutHours:    4,
+	}
+	require.NoError(t, setup.database.DB.Create(&policy).Error)
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/backup-now", map[string]any{})
+
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	require.Len(t, setup.hub.sent, 1)
+	payload, err := protocol.ParsePayload[protocol.BackupNowPayload](&setup.hub.sent[0].message)
+	require.NoError(t, err)
+	require.NotNil(t, payload.Policy)
+	require.Len(t, payload.Policy.BackupSources, 2)
+	assert.Equal(t, protocol.BackupSourceTypeDockerContainer, payload.Policy.BackupSources[1].Type)
+	require.NotNil(t, payload.Policy.BackupSources[1].DockerContainer)
+	assert.Equal(t, "container-1", payload.Policy.BackupSources[1].DockerContainer.ContainerID)
+}
+
 func TestCancelPendingTaskMarksCancelled(t *testing.T) {
 	setup := setupTasksAPI(t)
 	agent := createTasksTestAgent(t, setup.database, "online")
@@ -742,6 +777,13 @@ func createTasksTestAgent(t *testing.T, database *db.Database, status string) db
 	agent := db.Agent{Name: "Task Agent", Status: status}
 	require.NoError(t, database.DB.Create(&agent).Error)
 	return agent
+}
+
+func markTasksAgentCapabilities(t *testing.T, database *db.Database, agentID string, capabilities []string) {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{"capabilities": capabilities})
+	require.NoError(t, err)
+	require.NoError(t, database.DB.Model(&db.Agent{}).Where("id = ?", agentID).Update("system_info", string(data)).Error)
 }
 
 func seedTaskHistory(t *testing.T, database *db.Database, agentID string, taskType string, status string, snapshotID string, createdAt time.Time) db.TaskHistory {

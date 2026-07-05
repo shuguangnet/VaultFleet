@@ -17,7 +17,7 @@ func TestFrontendRootServesSPA(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
-	assert.Contains(t, w.Body.String(), "VaultFleet")
+	assert.Contains(t, w.Body.String(), "<title>云备份</title>")
 	assert.Contains(t, w.Body.String(), "id=\"root\"")
 }
 
@@ -29,7 +29,7 @@ func TestFrontendAcceptancePaths(t *testing.T) {
 			w := getFrontendPlaceholder(t, router, path)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			assert.Contains(t, w.Body.String(), "VaultFleet")
+			assert.Contains(t, w.Body.String(), "id=\"root\"")
 		})
 	}
 }

@@ -160,7 +160,7 @@ export function AppLayout({ user }: AppLayoutProps) {
           color: antdTheme.token?.colorPrimary,
         }}
       />
-      {(!collapsed || isMobile) && <span>VaultFleet</span>}
+      {(!collapsed || isMobile) && <span>云备份</span>}
     </div>
   );
 

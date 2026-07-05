@@ -114,6 +114,92 @@ func TestDatabaseInit_MigratesLegacyTaskArtifactPathsAndIndexes(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
+func TestDatabaseInit_AddsDockerBackupColumnsToLegacySchema(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	sqlDB, err := sql.Open("sqlite", filepath.Join(dir, "vaultfleet.db"))
+	require.NoError(t, err)
+	_, err = sqlDB.Exec(`
+		CREATE TABLE backup_policies (
+			id text primary key,
+			agent_id text not null,
+			storage_id text not null,
+			backup_mode text,
+			archive_format text,
+			repo_path text,
+			restic_password text,
+			backup_dirs text,
+			exclude_patterns text,
+			schedule text,
+			retention text,
+			rclone_args text,
+			timeout_hours integer,
+			synced numeric,
+			created_at datetime,
+			updated_at datetime
+		);
+		CREATE TABLE task_histories (
+			id text primary key,
+			agent_id text not null,
+			type text not null,
+			status text not null,
+			snapshot_id text,
+			artifact_path text,
+			artifact_name text,
+			artifact_size integer,
+			artifact_content_type text,
+			backup_mode text,
+			archive_format text,
+			message_id text,
+			command_id text,
+			policy_id text,
+			storage_id text,
+			started_at datetime,
+			finished_at datetime,
+			duration_ms integer,
+			repo_size integer,
+			error_log text,
+			created_at datetime,
+			updated_at datetime
+		);
+	`)
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	database, err := New(dir)
+	require.NoError(t, err)
+
+	assert.True(t, database.DB.Migrator().HasColumn(&BackupPolicy{}, "BackupSources"))
+	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "Docker"))
+
+	policy := BackupPolicy{
+		AgentID:         "agent-001",
+		StorageID:       "storage-001",
+		BackupDirs:      `["/etc"]`,
+		BackupSources:   `[{"type":"docker_container","docker_container":{"container_id":"container-1","include_volumes":true}}]`,
+		ExcludePatterns: `[]`,
+		Schedule:        "0 3 * * *",
+		Retention:       `{"keep_last":3}`,
+	}
+	require.NoError(t, database.DB.Create(&policy).Error)
+
+	history := TaskHistory{
+		AgentID: "agent-001",
+		Type:    "backup",
+		Status:  "success",
+		Docker:  `{"warnings":["compose file missing"]}`,
+	}
+	require.NoError(t, database.DB.Create(&history).Error)
+
+	var storedPolicy BackupPolicy
+	require.NoError(t, database.DB.First(&storedPolicy, "id = ?", policy.ID).Error)
+	assert.JSONEq(t, policy.BackupSources, storedPolicy.BackupSources)
+
+	var storedHistory TaskHistory
+	require.NoError(t, database.DB.First(&storedHistory, "id = ?", history.ID).Error)
+	assert.JSONEq(t, history.Docker, storedHistory.Docker)
+}
+
 func TestUserCRUD(t *testing.T) {
 	database := setupTestDB(t)
 

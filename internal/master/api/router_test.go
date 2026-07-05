@@ -135,7 +135,7 @@ func TestRouterAssemblyFrontendFallback(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
-	assert.Contains(t, w.Body.String(), "VaultFleet")
+	assert.Contains(t, w.Body.String(), "id=\"root\"")
 }
 
 func TestRouterAssemblyMissingAPIRouteDoesNotFallThroughToFrontend(t *testing.T) {
