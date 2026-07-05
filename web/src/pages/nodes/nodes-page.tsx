@@ -16,6 +16,7 @@ import {
   CopyOutlined,
   CheckOutlined,
   EllipsisOutlined,
+  DesktopOutlined,
   LinkOutlined,
   PlusOutlined,
   ReloadOutlined,
@@ -35,6 +36,7 @@ import {
 } from "@/services/agents";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { InstallCommand } from "@/components/install-command";
+import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { App } from "antd";
 
@@ -238,25 +240,21 @@ export function NodesPage() {
 
   return (
     <div className="vf-page">
-      <div
-        className="vf-page-header"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          节点管理
-        </Typography.Title>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => setDrawerOpen(true)}
-        >
-          添加节点
-        </Button>
-      </div>
+      <PageHeader
+        eyebrow="Agents"
+        title="节点管理"
+        description="接入、查看和维护运行备份任务的 Agent 节点，快速定位离线节点与安装令牌。"
+        icon={<DesktopOutlined />}
+        actions={
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setDrawerOpen(true)}
+          >
+            添加节点
+          </Button>
+        }
+      />
 
       <Input
         className="vf-mobile-full"

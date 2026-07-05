@@ -23,6 +23,7 @@ import {
 import {
   CheckCircleTwoTone,
   CloseCircleTwoTone,
+  DatabaseOutlined,
   DeleteOutlined,
   EditOutlined,
   EllipsisOutlined,
@@ -45,6 +46,7 @@ import type { StorageConfig, StorageInput } from "@/types/storage";
 import { ErrorPanel } from "@/components/error-panel";
 import { KeyValueEditor } from "@/components/key-value-editor";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { PageHeader } from "@/components/page-header";
 import dayjs from "dayjs";
 import { safeFormatDate } from "@/lib/date";
 import type { StorageTestResult } from "@/types/health";
@@ -313,21 +315,17 @@ export function StoragePage() {
 
   return (
     <div className="vf-page">
-      <div
-        className="vf-page-header"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          存储配置
-        </Typography.Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openAddDrawer}>
-          添加存储
-        </Button>
-      </div>
+      <PageHeader
+        eyebrow="Storage"
+        title="存储配置"
+        description="管理备份仓库使用的对象存储、SFTP、WebDAV 和本地路径，并在保存前验证连接可用性。"
+        icon={<DatabaseOutlined />}
+        actions={
+          <Button type="primary" icon={<PlusOutlined />} onClick={openAddDrawer}>
+            添加存储
+          </Button>
+        }
+      />
 
       <Card className="vf-table-card" styles={{ body: { padding: 0 } }}>
         <Table<StorageConfig>

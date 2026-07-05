@@ -25,6 +25,7 @@ import {
   KeyOutlined,
   ReloadOutlined,
   SafetyCertificateOutlined,
+  SettingOutlined,
   ThunderboltOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
@@ -42,6 +43,7 @@ import { downloadDiagnosticBundle } from "@/services/diagnostic";
 import { StatusBadge } from "@/components/status-badge";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ErrorPanel } from "@/components/error-panel";
+import { PageHeader } from "@/components/page-header";
 import type { Agent } from "@/types/agent";
 
 export function SystemPage() {
@@ -222,28 +224,24 @@ export function SystemPage() {
 
   return (
     <div className="vf-page" style={{ maxWidth: 1000 }}>
-      <div
-        className="vf-page-header"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          系统管理
-        </Typography.Title>
-        <Button
-          icon={<ReloadOutlined spin={isRefreshing} />}
-          onClick={() => {
-            refetchHealth();
-            refetchReady();
-          }}
-          disabled={isRefreshing}
-        >
-          刷新状态
-        </Button>
-      </div>
+      <PageHeader
+        eyebrow="System"
+        title="系统管理"
+        description="查看服务就绪状态、版本信息、数据导入导出、诊断包和管理员密码。"
+        icon={<SettingOutlined />}
+        actions={
+          <Button
+            icon={<ReloadOutlined spin={isRefreshing} />}
+            onClick={() => {
+              refetchHealth();
+              refetchReady();
+            }}
+            disabled={isRefreshing}
+          >
+            刷新状态
+          </Button>
+        }
+      />
 
       <Card
         title={

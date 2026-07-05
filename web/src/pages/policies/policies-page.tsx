@@ -30,6 +30,7 @@ import {
   PlayCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
+  SafetyCertificateOutlined,
   SettingOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
@@ -64,6 +65,7 @@ import type { DockerContainer } from "@/types/api";
 import { ErrorPanel } from "@/components/error-panel";
 import { DirectoryBrowser } from "@/components/directory-browser";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 
 const RETENTION_PRESETS: Record<
@@ -482,21 +484,17 @@ export function PoliciesPage() {
 
   return (
     <div className="vf-page">
-      <div
-        className="vf-page-header"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          备份策略
-        </Typography.Title>
-        <Button type="primary" onClick={openAdd}>
-          添加策略
-        </Button>
-      </div>
+      <PageHeader
+        eyebrow="Policies"
+        title="备份策略"
+        description="集中维护节点、存储、备份来源、调度和保留规则，支持立即下发备份任务。"
+        icon={<SafetyCertificateOutlined />}
+        actions={
+          <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
+            添加策略
+          </Button>
+        }
+      />
 
       <Card className="vf-table-card" styles={{ body: { padding: 0 } }}>
         <Table<BackupPolicy>

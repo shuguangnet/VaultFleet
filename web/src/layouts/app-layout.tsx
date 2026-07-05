@@ -32,8 +32,8 @@ import {
 import type { MenuProps } from "antd";
 import { listAgents } from "@/services/agents";
 import { logout } from "@/services/auth";
+import { antdTheme } from "@/styles/antd-theme";
 import type { AuthUser } from "@/types/api";
-import { antdTheme } from "../../src/styles/antd-theme";
 
 const { Header, Sider, Content } = Layout;
 const { useBreakpoint } = Grid;
@@ -160,7 +160,7 @@ export function AppLayout({ user }: AppLayoutProps) {
           color: antdTheme.token?.colorPrimary,
         }}
       />
-      {(!collapsed || isMobile) && <span>云备份</span>}
+      {(!collapsed || isMobile) && <span>VaultFleet</span>}
     </div>
   );
 
@@ -232,7 +232,7 @@ export function AppLayout({ user }: AppLayoutProps) {
             justifyContent: "space-between",
             padding: "0 20px",
             background: "#fff",
-            borderBottom: "1px solid #f0f0f0",
+            borderBottom: "1px solid #edf1f7",
             position: "sticky",
             top: 0,
             zIndex: 10,
@@ -298,7 +298,7 @@ export function AppLayout({ user }: AppLayoutProps) {
         <Content
           className="vf-app-content"
           style={{
-            background: "#f5f7fa",
+            background: "#f3f6fb",
             overflow: "auto",
           }}
         >

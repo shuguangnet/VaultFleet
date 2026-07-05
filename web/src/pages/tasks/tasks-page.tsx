@@ -17,6 +17,7 @@ import {
 import {
   CloseOutlined,
   DownloadOutlined,
+  HistoryOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
 } from "@ant-design/icons";
@@ -27,6 +28,7 @@ import { cancelTask, listTasks, taskArtifactDownloadUrl } from "@/services/tasks
 import type { TaskHistory } from "@/types/task";
 import { safeFormatDate } from "@/lib/date";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 
 export function formatBytes(bytes: number): string {
@@ -315,18 +317,13 @@ export function TasksPage() {
 
   return (
     <div className="vf-page">
-      <div
-        className="vf-page-header"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          任务历史
-        </Typography.Title>
-        <Space className="vf-page-actions">
+      <PageHeader
+        eyebrow="Jobs"
+        title="任务历史"
+        description="审计备份与恢复任务的执行状态、耗时、产物和错误输出，支持按节点、类型与状态快速筛选。"
+        icon={<HistoryOutlined />}
+        actions={
+          <>
           <Dropdown
             menu={{
               items:
@@ -348,8 +345,9 @@ export function TasksPage() {
           >
             刷新
           </Button>
-        </Space>
-      </div>
+          </>
+        }
+      />
 
       <Card>
         <Row gutter={[12, 12]} style={{ marginBottom: 0 }}>

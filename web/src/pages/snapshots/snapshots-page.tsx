@@ -37,6 +37,7 @@ import { listStorage } from "@/services/storage";
 import type { Snapshot } from "@/types/snapshot";
 import { safeFormatDate } from "@/lib/date";
 import { ErrorPanel } from "@/components/error-panel";
+import { PageHeader } from "@/components/page-header";
 import { SnapshotTreeBrowser } from "@/components/snapshot-tree-browser";
 
 const EVENT_OPTIONS = [
@@ -221,18 +222,13 @@ export function SnapshotsPage() {
 
   return (
     <div className="vf-page">
-      <div
-        className="vf-page-header"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          快照浏览
-        </Typography.Title>
-        <Space className="vf-page-actions">
+      <PageHeader
+        eyebrow="Snapshots"
+        title="快照浏览"
+        description="按节点查看可恢复快照，浏览快照内目录树并发起定向恢复。"
+        icon={<CameraOutlined />}
+        actions={
+          <>
           <Select
             className="vf-mobile-full"
             style={{ width: 200 }}
@@ -250,8 +246,9 @@ export function SnapshotsPage() {
             onClick={() => refreshMutation.mutate()}
             title="请求 Agent 刷新快照列表"
           />
-        </Space>
-      </div>
+          </>
+        }
+      />
 
       {!agentId ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>

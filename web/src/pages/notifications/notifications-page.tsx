@@ -41,6 +41,7 @@ import {
 import type { NotificationConfig, NotificationInput } from "@/types/notification";
 import { ErrorPanel } from "@/components/error-panel";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { PageHeader } from "@/components/page-header";
 
 const EVENT_OPTIONS = [
   { id: "backup_failed", label: "备份失败" },
@@ -294,28 +295,24 @@ export function NotificationsPage() {
 
   return (
     <div className="vf-page">
-      <div
-        className="vf-page-header"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          通知设置
-        </Typography.Title>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => {
-            resetForm();
-            setDrawerOpen(true);
-          }}
-        >
-          添加通知
-        </Button>
-      </div>
+      <PageHeader
+        eyebrow="Notifications"
+        title="通知设置"
+        description="配置 Telegram、Webhook 或 Email 渠道，让备份失败和节点离线事件及时触达运维人员。"
+        icon={<MessageOutlined />}
+        actions={
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              resetForm();
+              setDrawerOpen(true);
+            }}
+          >
+            添加通知
+          </Button>
+        }
+      />
 
       <Card className="vf-table-card" styles={{ body: { padding: 0 } }}>
         <Table<NotificationConfig>

@@ -28,6 +28,7 @@
     "clsx": "latest",
     "date-fns": "^4.2.1",
     "dayjs": "^1.11.21",
+    "echarts": "^6.1.0",
     "lucide-react": "latest",
     "react": "19",
     "react-dom": "19",
