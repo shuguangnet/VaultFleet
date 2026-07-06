@@ -124,10 +124,7 @@ func runClient(ctx context.Context, cfg *AgentConfig) error {
 	collector := func() connect.SystemInfo {
 		info := connect.DefaultSystemInfoCollector()
 		info.AgentVersion = version
-		info.Capabilities = protocol.DefaultAgentCapabilities()
-		if agentdocker.Available(context.Background()) {
-			info.Capabilities = append(info.Capabilities, protocol.CapabilityDockerWorkloadBackups)
-		}
+		info.Capabilities = collectAgentCapabilities(agentdocker.Available(context.Background()))
 		return info
 	}
 	client = connect.NewClient(cfg.Server, cfg.AgentToken, handler.Handle)
@@ -149,6 +146,18 @@ func runClient(ctx context.Context, cfg *AgentConfig) error {
 	go connect.RunHeartbeat(ctx, client, collector, 0)
 	client.Run(ctx)
 	return nil
+}
+
+func collectAgentCapabilities(dockerAvailable bool) []string {
+	capabilities := protocol.DefaultAgentCapabilities()
+	if dockerAvailable {
+		capabilities = append(
+			capabilities,
+			protocol.CapabilityDockerWorkloadBackups,
+			protocol.CapabilityDockerContainerRestore,
+		)
+	}
+	return capabilities
 }
 
 func loadConfig(path string) (*AgentConfig, error) {

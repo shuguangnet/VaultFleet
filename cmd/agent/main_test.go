@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"vaultfleet/pkg/protocol"
 )
 
 func TestEnrollReturnsCmdAgentConfig(t *testing.T) {
@@ -103,4 +105,18 @@ func TestAgentConfigAutoUpdateDisabled(t *testing.T) {
 	assert.False(t, *cfg.AutoUpdate)
 	assert.Equal(t, "https://proxy.example.com", cfg.GitHubProxy)
 	assert.Equal(t, "shuguangnet/VaultFleet", cfg.GitHubRepo)
+}
+
+func TestCollectAgentCapabilitiesIncludesDockerRestoreWhenDockerAvailable(t *testing.T) {
+	capabilities := collectAgentCapabilities(true)
+
+	assert.Contains(t, capabilities, protocol.CapabilityDockerWorkloadBackups)
+	assert.Contains(t, capabilities, protocol.CapabilityDockerContainerRestore)
+}
+
+func TestCollectAgentCapabilitiesSkipsDockerCapabilitiesWhenDockerUnavailable(t *testing.T) {
+	capabilities := collectAgentCapabilities(false)
+
+	assert.NotContains(t, capabilities, protocol.CapabilityDockerWorkloadBackups)
+	assert.NotContains(t, capabilities, protocol.CapabilityDockerContainerRestore)
 }

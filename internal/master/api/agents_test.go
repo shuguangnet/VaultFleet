@@ -297,6 +297,25 @@ func TestListAgentsExposesCapabilities(t *testing.T) {
 	assert.Equal(t, []any{"docker_workload_backups", "typed_backup_sources"}, item["capabilities"])
 }
 
+func TestListAgentsAddsCompatibleDockerRestoreCapability(t *testing.T) {
+	setup := setupTestAgents(t)
+	agent := db.Agent{
+		Name:       "Docker Agent",
+		Status:     "online",
+		SystemInfo: `{"version":"v0.5.22","capabilities":["docker_workload_backups","typed_backup_sources"]}`,
+	}
+	require.NoError(t, setup.database.DB.Create(&agent).Error)
+
+	w := getJSON(t, setup.router, "/api/agents")
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	data := requireList(t, body["data"])
+	require.Len(t, data, 1)
+	item := requireMap(t, data[0])
+	assert.Equal(t, []any{"docker_workload_backups", "typed_backup_sources", "docker_container_restore"}, item["capabilities"])
+}
+
 func TestListAgents_Empty(t *testing.T) {
 	setup := setupTestAgents(t)
 

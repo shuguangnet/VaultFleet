@@ -317,7 +317,7 @@ func newAgentResponse(agent db.Agent) agentResponse {
 		OS:           systemInfo.OS,
 		Arch:         systemInfo.Arch,
 		Version:      systemInfo.Version,
-		Capabilities: systemInfo.Capabilities,
+		Capabilities: addCompatibleAgentCapabilities(systemInfo.Capabilities, systemInfo.Version),
 		CreatedAt:    agent.CreatedAt,
 		UpdatedAt:    agent.UpdatedAt,
 	}
