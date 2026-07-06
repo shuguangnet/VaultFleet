@@ -225,9 +225,8 @@ export function SystemPage() {
   return (
     <div className="vf-page" style={{ maxWidth: 1000 }}>
       <PageHeader
-        eyebrow="System"
         title="系统管理"
-        description="查看服务就绪状态、版本信息、数据导入导出、诊断包和管理员密码。"
+        description="状态 / 版本 / 导入导出 / 诊断"
         icon={<SettingOutlined />}
         actions={
           <Button

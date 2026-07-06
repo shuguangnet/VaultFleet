@@ -485,9 +485,8 @@ export function PoliciesPage() {
   return (
     <div className="vf-page">
       <PageHeader
-        eyebrow="Policies"
         title="备份策略"
-        description="集中维护节点、存储、备份来源、调度和保留规则，支持立即下发备份任务。"
+        description="节点 / 存储 / 调度 / 保留"
         icon={<SafetyCertificateOutlined />}
         actions={
           <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>

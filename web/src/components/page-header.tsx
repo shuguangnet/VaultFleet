@@ -4,7 +4,6 @@ import { Space, Typography } from "antd";
 interface PageHeaderProps {
   title: string;
   description?: string;
-  eyebrow?: string;
   icon?: ReactNode;
   actions?: ReactNode;
   meta?: ReactNode;
@@ -13,7 +12,6 @@ interface PageHeaderProps {
 export function PageHeader({
   title,
   description,
-  eyebrow,
   icon,
   actions,
   meta,
@@ -21,16 +19,13 @@ export function PageHeader({
   return (
     <section className="vf-page-heading">
       <div className="vf-page-heading-main">
-        {icon && <span className="vf-page-heading-icon">{icon}</span>}
         <div className="vf-page-heading-copy">
-          {eyebrow && (
-            <Typography.Text className="vf-page-heading-eyebrow">
-              {eyebrow}
-            </Typography.Text>
-          )}
-          <Typography.Title level={4} className="vf-page-heading-title">
-            {title}
-          </Typography.Title>
+          <div className="vf-page-heading-title-row">
+            {icon && <span className="vf-page-heading-icon">{icon}</span>}
+            <Typography.Title level={4} className="vf-page-heading-title">
+              {title}
+            </Typography.Title>
+          </div>
           {description && (
             <Typography.Text className="vf-page-heading-description">
               {description}

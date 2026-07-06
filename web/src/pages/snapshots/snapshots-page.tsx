@@ -223,9 +223,8 @@ export function SnapshotsPage() {
   return (
     <div className="vf-page">
       <PageHeader
-        eyebrow="Snapshots"
         title="快照浏览"
-        description="按节点查看可恢复快照，浏览快照内目录树并发起定向恢复。"
+        description="节点快照 / 浏览 / 恢复"
         icon={<CameraOutlined />}
         actions={
           <>

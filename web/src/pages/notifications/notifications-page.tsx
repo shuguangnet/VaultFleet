@@ -296,9 +296,8 @@ export function NotificationsPage() {
   return (
     <div className="vf-page">
       <PageHeader
-        eyebrow="Notifications"
         title="通知设置"
-        description="配置 Telegram、Webhook 或 Email 渠道，让备份失败和节点离线事件及时触达运维人员。"
+        description="Telegram / Webhook / Email"
         icon={<MessageOutlined />}
         actions={
           <Button

@@ -316,9 +316,8 @@ export function StoragePage() {
   return (
     <div className="vf-page">
       <PageHeader
-        eyebrow="Storage"
         title="存储配置"
-        description="管理备份仓库使用的对象存储、SFTP、WebDAV 和本地路径，并在保存前验证连接可用性。"
+        description="S3 / SFTP / WebDAV / 本地路径"
         icon={<DatabaseOutlined />}
         actions={
           <Button type="primary" icon={<PlusOutlined />} onClick={openAddDrawer}>

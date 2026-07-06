@@ -318,9 +318,8 @@ export function TasksPage() {
   return (
     <div className="vf-page">
       <PageHeader
-        eyebrow="Jobs"
         title="任务历史"
-        description="审计备份与恢复任务的执行状态、耗时、产物和错误输出，支持按节点、类型与状态快速筛选。"
+        description="备份 / 恢复 / 取消 / 下载"
         icon={<HistoryOutlined />}
         actions={
           <>

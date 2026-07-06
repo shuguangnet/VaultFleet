@@ -241,9 +241,8 @@ export function NodesPage() {
   return (
     <div className="vf-page">
       <PageHeader
-        eyebrow="Agents"
         title="节点管理"
-        description="接入、查看和维护运行备份任务的 Agent 节点，快速定位离线节点与安装令牌。"
+        description="Agent / 状态 / 安装令牌"
         icon={<DesktopOutlined />}
         actions={
           <Button
