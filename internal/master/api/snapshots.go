@@ -51,14 +51,15 @@ type SnapshotListCommandCompleter interface {
 }
 
 type snapshotResponse struct {
-	ID         string    `json:"id"`
-	SnapshotID string    `json:"snapshot_id"`
-	Timestamp  time.Time `json:"timestamp"`
-	Time       time.Time `json:"time"`
-	Paths      []string  `json:"paths"`
-	Hostname   string    `json:"hostname"`
-	Username   string    `json:"username"`
-	Size       int64     `json:"size"`
+	ID         string                         `json:"id"`
+	SnapshotID string                         `json:"snapshot_id"`
+	Timestamp  time.Time                      `json:"timestamp"`
+	Time       time.Time                      `json:"time"`
+	Paths      []string                       `json:"paths"`
+	Hostname   string                         `json:"hostname"`
+	Username   string                         `json:"username"`
+	Size       int64                          `json:"size"`
+	Docker     *protocol.DockerBackupMetadata `json:"docker,omitempty"`
 }
 
 type snapshotRefreshResponse struct {
@@ -239,9 +240,34 @@ func (h *SnapshotHandler) loadSnapshotResponses(c *gin.Context, agentID string) 
 			writeErrorResponse(c, http.StatusInternalServerError, "decode snapshot")
 			return nil, false
 		}
+		dockerMetadata, err := h.loadSnapshotDockerMetadata(c, agentID, snapshot.SnapshotID)
+		if err != nil {
+			writeErrorResponse(c, http.StatusInternalServerError, "decode docker metadata")
+			return nil, false
+		}
+		response.Docker = dockerMetadata
 		responses = append(responses, response)
 	}
 	return responses, true
+}
+
+func (h *SnapshotHandler) loadSnapshotDockerMetadata(c *gin.Context, agentID string, snapshotID string) (*protocol.DockerBackupMetadata, error) {
+	var history db.TaskHistory
+	err := h.DB.DB.
+		Where("agent_id = ? AND type = ? AND status = ? AND snapshot_id = ? AND docker <> ?", agentID, "backup", commands.TaskStatusSuccess, snapshotID, "").
+		Order("finished_at DESC, created_at DESC").
+		First(&history).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var metadata protocol.DockerBackupMetadata
+	if err := json.Unmarshal([]byte(history.Docker), &metadata); err != nil {
+		return nil, nil
+	}
+	return &metadata, nil
 }
 
 func newSnapshotResponse(snapshot db.Snapshot) (snapshotResponse, error) {

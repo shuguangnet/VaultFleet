@@ -38,6 +38,7 @@ type AgentUpdater interface {
 type BackupRunnerFunc func(context.Context, executor.ExecutorConfig) executor.TaskResult
 type BackupRunnerWithProgressFunc func(context.Context, executor.ExecutorConfig, executor.ProgressCallback) executor.TaskResult
 type RestoreRunnerFunc func(context.Context, executor.ExecutorConfig, string, string, []string) error
+type DockerRestoreRunnerFunc func(context.Context, protocol.DockerRestoreRequest) error
 type SnapshotListRunnerFunc func(context.Context, executor.ExecutorConfig) ([]executor.SnapshotInfo, error)
 type SnapshotBrowseRunnerFunc func(context.Context, executor.ExecutorConfig, string, string) ([]executor.SnapshotFileEntry, error)
 
@@ -58,6 +59,7 @@ type HandlerConfig struct {
 	BackupRunner             BackupRunnerFunc
 	BackupRunnerWithProgress BackupRunnerWithProgressFunc
 	RestoreRunner            RestoreRunnerFunc
+	DockerRestoreRunner      DockerRestoreRunnerFunc
 	SnapshotListRunner       SnapshotListRunnerFunc
 	SnapshotBrowseRunner     SnapshotBrowseRunnerFunc
 	DirSizeFunc              DirSizeFunc
@@ -77,6 +79,7 @@ type Handler struct {
 	backupRunner             BackupRunnerFunc
 	backupRunnerWithProgress BackupRunnerWithProgressFunc
 	restoreRunner            RestoreRunnerFunc
+	dockerRestoreRunner      DockerRestoreRunnerFunc
 	snapshotListRunner       SnapshotListRunnerFunc
 	snapshotBrowseRunner     SnapshotBrowseRunnerFunc
 	snapshotCache            *snapshotCache
@@ -115,6 +118,10 @@ func NewHandler(config HandlerConfig) *Handler {
 	if restoreRunner == nil {
 		restoreRunner = runRestore
 	}
+	dockerRestoreRunner := config.DockerRestoreRunner
+	if dockerRestoreRunner == nil {
+		dockerRestoreRunner = runDockerRestore
+	}
 	snapshotListRunner := config.SnapshotListRunner
 	if snapshotListRunner == nil {
 		snapshotListRunner = runSnapshotList
@@ -146,6 +153,7 @@ func NewHandler(config HandlerConfig) *Handler {
 		backupRunner:             runner,
 		backupRunnerWithProgress: progressRunner,
 		restoreRunner:            restoreRunner,
+		dockerRestoreRunner:      dockerRestoreRunner,
 		snapshotListRunner:       snapshotListRunner,
 		snapshotBrowseRunner:     snapshotBrowseRunner,
 		snapshotCache:            newSnapshotCache(configDir),
@@ -1024,6 +1032,10 @@ func runRestore(ctx context.Context, cfg executor.ExecutorConfig, snapshotID str
 	return runner.RestoreSnapshot(ctx, snapshotID, target, includePaths)
 }
 
+func runDockerRestore(ctx context.Context, request protocol.DockerRestoreRequest) error {
+	return agentdocker.Restore(ctx, request, nil)
+}
+
 func runSnapshotList(ctx context.Context, cfg executor.ExecutorConfig) ([]executor.SnapshotInfo, error) {
 	passwordFile := filepath.Join(cfg.ConfigDir, ".restic-password")
 	if !executor.HasPasswordFile(passwordFile) {
@@ -1099,7 +1111,24 @@ func (h *Handler) handleRestoreReq(msg protocol.Message) {
 			return
 		}
 		h.sendRestoreProgress(msg.ID, agentID, req.SnapshotID)
-		err := h.restoreRunner(ctx, executorConfigForPolicy(h.configDir, policyPayload), req.SnapshotID, req.Target, req.IncludePaths)
+		target := req.Target
+		includePaths := append([]string(nil), req.IncludePaths...)
+		var restoreErr error
+		if req.Docker != nil {
+			target = "/"
+			dockerPaths := dockerRestorePaths(*req.Docker)
+			if len(dockerPaths) == 0 {
+				restoreErr = errors.New("docker restore has no restore paths")
+			} else {
+				includePaths = appendUniqueStrings(includePaths, dockerPaths...)
+			}
+		}
+		if restoreErr == nil {
+			restoreErr = h.restoreRunner(ctx, executorConfigForPolicy(h.configDir, policyPayload), req.SnapshotID, target, includePaths)
+		}
+		if restoreErr == nil && req.Docker != nil {
+			restoreErr = h.dockerRestoreRunner(ctx, *req.Docker)
+		}
 		finishedAt := time.Now()
 		result := protocol.TaskResultPayload{
 			AgentID:    agentID,
@@ -1110,9 +1139,9 @@ func (h *Handler) handleRestoreReq(msg protocol.Message) {
 			StartedAt:  startedAt,
 			FinishedAt: finishedAt,
 		}
-		if err != nil {
+		if restoreErr != nil {
 			result.Status = "failed"
-			result.ErrorLog = err.Error()
+			result.ErrorLog = restoreErr.Error()
 		}
 		if ctx.Err() == context.Canceled {
 			result.Status = "cancelled"
@@ -1125,6 +1154,14 @@ func (h *Handler) handleRestoreReq(msg protocol.Message) {
 	if startErr != nil {
 		h.sendTaskResultWithID(msg.ID, h.failedTypedTaskResult(agentID, "restore", req.SnapshotID, startErr.Error(), time.Now()))
 	}
+}
+
+func dockerRestorePaths(request protocol.DockerRestoreRequest) []string {
+	var paths []string
+	for _, source := range request.Sources {
+		paths = append(paths, source.ResolvedPaths...)
+	}
+	return appendUniqueStrings(nil, paths...)
 }
 
 func (h *Handler) sendRestoreProgress(messageID string, agentID string, snapshotID string) {

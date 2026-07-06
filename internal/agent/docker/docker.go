@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -42,9 +43,24 @@ type ContainerInspect struct {
 	Name   string `json:"Name"`
 	Image  string `json:"Image"`
 	Config struct {
-		Image  string            `json:"Image"`
-		Labels map[string]string `json:"Labels"`
+		Image      string            `json:"Image"`
+		Labels     map[string]string `json:"Labels"`
+		Env        []string          `json:"Env"`
+		Cmd        []string          `json:"Cmd"`
+		Entrypoint []string          `json:"Entrypoint"`
+		WorkingDir string            `json:"WorkingDir"`
+		User       string            `json:"User"`
 	} `json:"Config"`
+	HostConfig struct {
+		PortBindings map[string][]struct {
+			HostIP   string `json:"HostIp"`
+			HostPort string `json:"HostPort"`
+		} `json:"PortBindings"`
+		RestartPolicy struct {
+			Name string `json:"Name"`
+		} `json:"RestartPolicy"`
+		NetworkMode string `json:"NetworkMode"`
+	} `json:"HostConfig"`
 	State struct {
 		Status string `json:"Status"`
 	} `json:"State"`
@@ -64,6 +80,8 @@ type API interface {
 	ListContainers(ctx context.Context) ([]ContainerSummary, error)
 	InspectContainer(ctx context.Context, id string) (ContainerInspect, error)
 }
+
+type CommandRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
 
 func NewClient(socketPath string) *Client {
 	if socketPath == "" {
@@ -338,10 +356,249 @@ func resolveInspect(inspect ContainerInspect, source protocol.DockerContainerBac
 		ContainerID:   inspect.ID,
 		Name:          strings.Trim(inspect.Name, "/"),
 		Image:         image,
+		Labels:        copyStringMap(labels),
+		Compose:       compose,
+		Mounts:        selectedMounts(inspect.Mounts, source),
+		Env:           append([]string(nil), inspect.Config.Env...),
+		Cmd:           append([]string(nil), inspect.Config.Cmd...),
+		Entrypoint:    append([]string(nil), inspect.Config.Entrypoint...),
+		WorkingDir:    inspect.Config.WorkingDir,
+		User:          inspect.Config.User,
+		Ports:         portBindings(inspect.HostConfig.PortBindings),
+		RestartPolicy: inspect.HostConfig.RestartPolicy.Name,
+		NetworkMode:   inspect.HostConfig.NetworkMode,
 		State:         inspect.State.Status,
 		ResolvedPaths: paths,
 		Warnings:      warnings,
 	}, nil
+}
+
+func Restore(ctx context.Context, request protocol.DockerRestoreRequest, runner CommandRunner) error {
+	if len(request.Sources) == 0 {
+		return errors.New("docker restore has no sources")
+	}
+	if runner == nil {
+		runner = runCommand
+	}
+	for _, source := range request.Sources {
+		if err := restoreSource(ctx, source, runner); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func restoreSource(ctx context.Context, source protocol.DockerResolvedSource, runner CommandRunner) error {
+	if args, ok := composeRestoreArgs(source); ok {
+		if output, err := runner(ctx, "docker", args...); err != nil {
+			return commandError("restore docker compose service", output, err)
+		}
+		return nil
+	}
+
+	name := strings.TrimSpace(source.Name)
+	if name == "" {
+		name = strings.TrimSpace(source.ContainerID)
+	}
+	if name != "" {
+		if _, err := runner(ctx, "docker", "start", name); err == nil {
+			return nil
+		}
+	}
+
+	image := strings.TrimSpace(source.Image)
+	if image == "" {
+		return fmt.Errorf("docker container %s has no image metadata for restore", sourceDescriptionFromResolved(source))
+	}
+	args := []string{"run", "-d"}
+	if name != "" {
+		args = append(args, "--name", name)
+	}
+	for _, mount := range source.Mounts {
+		if strings.TrimSpace(mount.Source) == "" || strings.TrimSpace(mount.Destination) == "" {
+			continue
+		}
+		value := mount.Source + ":" + mount.Destination
+		if !mount.RW {
+			value += ":ro"
+		}
+		args = append(args, "-v", value)
+	}
+	for _, env := range source.Env {
+		env = strings.TrimSpace(env)
+		if env != "" {
+			args = append(args, "-e", env)
+		}
+	}
+	labelKeys := make([]string, 0, len(source.Labels))
+	for key := range source.Labels {
+		labelKeys = append(labelKeys, key)
+	}
+	sort.Strings(labelKeys)
+	for _, key := range labelKeys {
+		value := source.Labels[key]
+		key = strings.TrimSpace(key)
+		if key != "" {
+			args = append(args, "--label", key+"="+value)
+		}
+	}
+	for _, port := range source.Ports {
+		value := dockerRunPortArg(port)
+		if value != "" {
+			args = append(args, "-p", value)
+		}
+	}
+	if restart := strings.TrimSpace(source.RestartPolicy); restart != "" && restart != "no" {
+		args = append(args, "--restart", restart)
+	}
+	if network := strings.TrimSpace(source.NetworkMode); network != "" && network != "default" {
+		args = append(args, "--network", network)
+	}
+	if workdir := strings.TrimSpace(source.WorkingDir); workdir != "" {
+		args = append(args, "-w", workdir)
+	}
+	if user := strings.TrimSpace(source.User); user != "" {
+		args = append(args, "-u", user)
+	}
+	if len(source.Entrypoint) > 0 && strings.TrimSpace(source.Entrypoint[0]) != "" {
+		args = append(args, "--entrypoint", source.Entrypoint[0])
+	}
+	args = append(args, image)
+	args = append(args, source.Cmd...)
+	if output, err := runner(ctx, "docker", args...); err != nil {
+		return commandError("restore docker container", output, err)
+	}
+	return nil
+}
+
+func composeRestoreArgs(source protocol.DockerResolvedSource) ([]string, bool) {
+	compose := source.Compose
+	if compose.WorkingDir == "" {
+		compose.WorkingDir = source.Selection.ComposeWorkingDir
+	}
+	if len(compose.ConfigFiles) == 0 {
+		compose.ConfigFiles = source.Selection.ComposeConfigFiles
+	}
+	service := strings.TrimSpace(compose.Service)
+	if service == "" {
+		service = strings.TrimSpace(source.Selection.ComposeService)
+	}
+	if len(compose.ConfigFiles) == 0 || service == "" {
+		return nil, false
+	}
+
+	args := []string{"compose"}
+	for _, configFile := range compose.ConfigFiles {
+		configFile = strings.TrimSpace(configFile)
+		if configFile == "" {
+			continue
+		}
+		if !filepath.IsAbs(configFile) && compose.WorkingDir != "" {
+			configFile = filepath.Join(compose.WorkingDir, configFile)
+		}
+		args = append(args, "-f", configFile)
+	}
+	if len(args) == 1 {
+		return nil, false
+	}
+	args = append(args, "up", "-d", service)
+	return args, true
+}
+
+func selectedMounts(mounts []Mount, source protocol.DockerContainerBackupSource) []protocol.DockerMount {
+	var selected []protocol.DockerMount
+	for _, mount := range mounts {
+		include := (mount.Type == "bind" && source.IncludeBindMounts) ||
+			((mount.Type == "volume" || mount.Type == "") && source.IncludeVolumes)
+		if !include {
+			continue
+		}
+		selected = append(selected, protocol.DockerMount{
+			Type:        mount.Type,
+			Name:        mount.Name,
+			Source:      mount.Source,
+			Destination: mount.Destination,
+			RW:          mount.RW,
+		})
+	}
+	return selected
+}
+
+func portBindings(bindings map[string][]struct {
+	HostIP   string `json:"HostIp"`
+	HostPort string `json:"HostPort"`
+}) []protocol.DockerPortBinding {
+	var result []protocol.DockerPortBinding
+	for containerPort, hosts := range bindings {
+		port, proto := splitPortProtocol(containerPort)
+		if len(hosts) == 0 {
+			result = append(result, protocol.DockerPortBinding{ContainerPort: port, Protocol: proto})
+			continue
+		}
+		for _, host := range hosts {
+			result = append(result, protocol.DockerPortBinding{
+				ContainerPort: port,
+				Protocol:      proto,
+				HostIP:        host.HostIP,
+				HostPort:      host.HostPort,
+			})
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].ContainerPort+result[i].HostPort < result[j].ContainerPort+result[j].HostPort
+	})
+	return result
+}
+
+func splitPortProtocol(value string) (string, string) {
+	parts := strings.SplitN(value, "/", 2)
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	return value, ""
+}
+
+func dockerRunPortArg(port protocol.DockerPortBinding) string {
+	container := strings.TrimSpace(port.ContainerPort)
+	if container == "" {
+		return ""
+	}
+	if protocol := strings.TrimSpace(port.Protocol); protocol != "" && protocol != "tcp" {
+		container += "/" + protocol
+	}
+	host := strings.TrimSpace(port.HostPort)
+	if host == "" {
+		return container
+	}
+	if hostIP := strings.TrimSpace(port.HostIP); hostIP != "" {
+		return hostIP + ":" + host + ":" + container
+	}
+	return host + ":" + container
+}
+
+func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+}
+
+func commandError(action string, output []byte, err error) error {
+	trimmed := strings.TrimSpace(string(output))
+	if trimmed != "" {
+		return fmt.Errorf("%s: %w: %s", action, err, trimmed)
+	}
+	return fmt.Errorf("%s: %w", action, err)
+}
+
+func sourceDescriptionFromResolved(source protocol.DockerResolvedSource) string {
+	switch {
+	case source.Name != "":
+		return source.Name
+	case source.ContainerID != "":
+		return source.ContainerID
+	case source.Selection.ComposeProject != "" && source.Selection.ComposeService != "":
+		return source.Selection.ComposeProject + "/" + source.Selection.ComposeService
+	default:
+		return "unnamed"
+	}
 }
 
 func assertReadablePath(path string) error {

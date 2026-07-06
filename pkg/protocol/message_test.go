@@ -295,6 +295,11 @@ func TestTaskResultPayloadWithDockerMetadata(t *testing.T) {
 					ContainerID:   "container-1",
 					Name:          "postgres",
 					Image:         "postgres:16",
+					Compose:       DockerComposeInfo{Project: "app", Service: "db", WorkingDir: "/srv/app", ConfigFiles: []string{"compose.yml"}},
+					Mounts:        []DockerMount{{Type: "volume", Name: "db-data", Source: "/var/lib/docker/volumes/db/_data", Destination: "/var/lib/postgresql/data", RW: true}},
+					Env:           []string{"POSTGRES_DB=app"},
+					Cmd:           []string{"postgres"},
+					Ports:         []DockerPortBinding{{ContainerPort: "5432", HostPort: "15432"}},
 					State:         "running",
 					ResolvedPaths: []string{"/var/lib/docker/volumes/db/_data"},
 				},
@@ -308,6 +313,11 @@ func TestTaskResultPayloadWithDockerMetadata(t *testing.T) {
 	require.Len(t, parsed.Docker.Sources, 1)
 	assert.Equal(t, "container-1", parsed.Docker.Sources[0].ContainerID)
 	assert.Equal(t, []string{"/var/lib/docker/volumes/db/_data"}, parsed.Docker.Sources[0].ResolvedPaths)
+	require.Len(t, parsed.Docker.Sources[0].Mounts, 1)
+	assert.Equal(t, "/var/lib/postgresql/data", parsed.Docker.Sources[0].Mounts[0].Destination)
+	assert.Equal(t, "app", parsed.Docker.Sources[0].Compose.Project)
+	assert.Equal(t, []string{"POSTGRES_DB=app"}, parsed.Docker.Sources[0].Env)
+	assert.Equal(t, "15432", parsed.Docker.Sources[0].Ports[0].HostPort)
 	assert.Equal(t, []string{"compose file not found"}, parsed.Docker.Warnings)
 }
 
@@ -427,12 +437,19 @@ func TestRestorePayloads(t *testing.T) {
 		SnapshotID:   "abc123",
 		Target:       "/restore/20260518",
 		IncludePaths: []string{"/etc/hosts", "/var/log/app.log"},
+		RestoreMode:  RestoreModeDockerContainer,
+		Docker: &DockerRestoreRequest{
+			Sources: []DockerResolvedSource{{ContainerID: "container-1", ResolvedPaths: []string{"/srv/app"}}},
+		},
 	}
 
 	_, parsedReq := roundTripPayload[RestoreReqPayload](t, TypeRestoreReq, reqPayload)
 	assert.Equal(t, "abc123", parsedReq.SnapshotID)
 	assert.Equal(t, "/restore/20260518", parsedReq.Target)
 	assert.Equal(t, []string{"/etc/hosts", "/var/log/app.log"}, parsedReq.IncludePaths)
+	assert.Equal(t, RestoreModeDockerContainer, parsedReq.RestoreMode)
+	require.NotNil(t, parsedReq.Docker)
+	assert.Equal(t, "container-1", parsedReq.Docker.Sources[0].ContainerID)
 
 	_, parsedSelectiveReq := roundTripPayload[RestoreReqPayload](t, TypeSelectiveRestoreReq, reqPayload)
 	assert.Equal(t, reqPayload, *parsedSelectiveReq)

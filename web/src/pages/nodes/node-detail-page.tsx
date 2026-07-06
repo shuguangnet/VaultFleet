@@ -15,6 +15,8 @@ import {
   Input,
   Modal,
   Row,
+  Segmented,
+  Select,
   Space,
   Spin,
   Table,
@@ -52,7 +54,8 @@ import { DirectoryBrowser } from "@/components/directory-browser";
 import { safeFormatDate } from "@/lib/date";
 import { copyToClipboard } from "@/lib/utils";
 import { formatBytes } from "@/pages/tasks/tasks-page";
-import type { Snapshot } from "@/types/snapshot";
+import type { RestoreRequest, Snapshot } from "@/types/snapshot";
+import type { DockerResolvedSource } from "@/types/task";
 
 const COMMAND_TYPE_LABELS: Record<string, string> = {
   backup_now: "手动备份",
@@ -69,6 +72,8 @@ export function NodeDetailPage() {
   const queryClient = useQueryClient();
   const [selectedSnapshot, setSelectedSnapshot] = useState<Snapshot | null>(null);
   const [targetPath, setTargetPath] = useState("");
+  const [restoreMode, setRestoreMode] = useState<"files" | "docker_container">("files");
+  const [selectedDockerSourceId, setSelectedDockerSourceId] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
@@ -138,13 +143,14 @@ export function NodeDetailPage() {
   });
 
   const restoreMutation = useMutation({
-    mutationFn: (body: { snapshot_id: string; target_path: string }) =>
-      restoreSnapshot(agentId!, body),
+    mutationFn: (body: RestoreRequest) => restoreSnapshot(agentId!, body),
     onSuccess: (data) => {
       const msg =
         data.message === "restore queued" ? "恢复命令已排队" : "恢复任务已开始";
       message.success(`${msg} (Message ID: ${data.message_id})`);
       setSelectedSnapshot(null);
+      setRestoreMode("files");
+      setSelectedDockerSourceId("");
       setConfirmed(false);
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
     },
@@ -197,6 +203,43 @@ export function NodeDetailPage() {
     },
   ];
 
+  const dockerSourceKey = (source: DockerResolvedSource) => {
+    if (source.container_id) return source.container_id;
+    if (source.name) return source.name;
+    const compose = source.compose;
+    if (compose?.project && compose?.service) {
+      return `${compose.project}/${compose.service}`;
+    }
+    return "";
+  };
+
+  const dockerSourceLabel = (source: DockerResolvedSource) => {
+    const name = source.name || source.container_id?.substring(0, 12) || "容器";
+    const image = source.image ? ` (${source.image})` : "";
+    const compose = source.compose?.project && source.compose?.service
+      ? ` - ${source.compose.project}/${source.compose.service}`
+      : "";
+    return `${name}${image}${compose}`;
+  };
+
+  const openRestoreModal = (snapshot: Snapshot, mode: "files" | "docker_container") => {
+    const sources = snapshot.docker?.sources ?? [];
+    setSelectedSnapshot(snapshot);
+    setRestoreMode(mode);
+    setTargetPath(mode === "files" ? snapshot.paths[0] || "" : "");
+    setSelectedDockerSourceId(mode === "docker_container" && sources[0] ? dockerSourceKey(sources[0]) : "");
+    setConfirmed(false);
+  };
+
+  const selectedDockerSources = selectedSnapshot?.docker?.sources ?? [];
+  const agentSupportsDockerRestore = !!agent.capabilities?.includes("docker_container_restore");
+  const canRestoreSelectedDocker = agentSupportsDockerRestore && selectedDockerSources.length > 0;
+  const restoreConfirmed = confirmed && (
+    restoreMode === "docker_container"
+      ? canRestoreSelectedDocker && !!selectedDockerSourceId
+      : !!targetPath
+  );
+
   const snapshotColumns: ColumnsType<Snapshot> = [
     {
       title: "ID",
@@ -230,20 +273,31 @@ export function NodeDetailPage() {
       title: "操作",
       key: "action",
       align: "right",
-      render: (_, record) => (
-        <Button
-          type="link"
-          size="small"
-          icon={<RedoOutlined />}
-          onClick={() => {
-            setSelectedSnapshot(record);
-            setTargetPath(record.paths[0] || "");
-            setConfirmed(false);
-          }}
-        >
-          恢复
-        </Button>
-      ),
+      render: (_, record) => {
+        const hasDocker = agentSupportsDockerRestore && (record.docker?.sources?.length ?? 0) > 0;
+        return (
+          <Space size={4}>
+            <Button
+              type="link"
+              size="small"
+              icon={<RedoOutlined />}
+              onClick={() => openRestoreModal(record, "files")}
+            >
+              恢复
+            </Button>
+            {hasDocker && (
+              <Button
+                type="link"
+                size="small"
+                icon={<PlayCircleOutlined />}
+                onClick={() => openRestoreModal(record, "docker_container")}
+              >
+                恢复容器
+              </Button>
+            )}
+          </Space>
+        );
+      },
     },
   ];
 
@@ -638,25 +692,67 @@ export function NodeDetailPage() {
         open={!!selectedSnapshot}
         title="恢复快照"
         onCancel={() => setSelectedSnapshot(null)}
-        onOk={() =>
-          restoreMutation.mutate({
-            snapshot_id: selectedSnapshot!.id,
-            target_path: targetPath,
-          })
-        }
+        onOk={() => {
+          const body: RestoreRequest = { snapshot_id: selectedSnapshot!.id };
+          if (restoreMode === "docker_container") {
+            body.restore_mode = "docker_container";
+            body.docker_source_id = selectedDockerSourceId;
+          } else {
+            body.restore_mode = "files";
+            body.target_path = targetPath;
+          }
+          restoreMutation.mutate(body);
+        }}
         okText="确认恢复"
         cancelText="取消"
-        okButtonProps={{ disabled: !confirmed || !targetPath, loading: restoreMutation.isPending }}
+        okButtonProps={{ disabled: !restoreConfirmed, loading: restoreMutation.isPending }}
         destroyOnClose
       >
         <Form layout="vertical" style={{ marginTop: 12 }}>
-          <Form.Item label="恢复目标路径">
-            <Input
-              value={targetPath}
-              onChange={(e) => setTargetPath(e.target.value)}
-              placeholder="/path/to/restore"
+          <Form.Item label="恢复模式">
+            <Segmented
+              value={restoreMode}
+              onChange={(value) => {
+                const mode = value as "files" | "docker_container";
+                setRestoreMode(mode);
+                if (mode === "docker_container" && selectedDockerSources[0]) {
+                  setTargetPath("");
+                  setSelectedDockerSourceId(dockerSourceKey(selectedDockerSources[0]));
+                } else {
+                  setTargetPath(selectedSnapshot?.paths[0] || "");
+                  setSelectedDockerSourceId("");
+                }
+              }}
+              options={[
+                { label: "文件", value: "files" },
+                {
+                  label: "容器",
+                  value: "docker_container",
+                  disabled: !canRestoreSelectedDocker,
+                },
+              ]}
             />
           </Form.Item>
+          {restoreMode === "docker_container" ? (
+            <Form.Item label="Docker 容器">
+              <Select
+                value={selectedDockerSourceId}
+                onChange={setSelectedDockerSourceId}
+                options={selectedDockerSources.map((source) => ({
+                  value: dockerSourceKey(source),
+                  label: dockerSourceLabel(source),
+                }))}
+              />
+            </Form.Item>
+          ) : (
+            <Form.Item label="恢复目标路径">
+              <Input
+                value={targetPath}
+                onChange={(e) => setTargetPath(e.target.value)}
+                placeholder="/path/to/restore"
+              />
+            </Form.Item>
+          )}
           <div
             style={{
               background: "#fffbe6",

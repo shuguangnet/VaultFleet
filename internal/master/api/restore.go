@@ -1,8 +1,10 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -24,10 +26,13 @@ type RestoreHub interface {
 }
 
 type restoreRequest struct {
-	SnapshotID   string   `json:"snapshot_id" binding:"required"`
-	TargetPath   string   `json:"target_path"`
-	Target       string   `json:"target"`
-	IncludePaths []string `json:"include_paths"`
+	SnapshotID     string                         `json:"snapshot_id" binding:"required"`
+	TargetPath     string                         `json:"target_path"`
+	Target         string                         `json:"target"`
+	IncludePaths   []string                       `json:"include_paths"`
+	RestoreMode    string                         `json:"restore_mode"`
+	Docker         *protocol.DockerRestoreRequest `json:"docker"`
+	DockerSourceID string                         `json:"docker_source_id"`
 }
 
 func NewRestoreHandler(database *db.Database, hub RestoreHub) *RestoreHandler {
@@ -53,7 +58,12 @@ func (h *RestoreHandler) Restore(c *gin.Context) {
 	if targetPath == "" {
 		targetPath = request.Target
 	}
-	if targetPath == "" {
+	restoreMode := strings.TrimSpace(request.RestoreMode)
+	if restoreMode == "" {
+		restoreMode = protocol.RestoreModeFiles
+	}
+	dockerRestore := restoreMode == protocol.RestoreModeDockerContainer || request.Docker != nil
+	if targetPath == "" && !dockerRestore {
 		writeErrorResponse(c, http.StatusBadRequest, "invalid request")
 		return
 	}
@@ -61,8 +71,36 @@ func (h *RestoreHandler) Restore(c *gin.Context) {
 	if !ok {
 		return
 	}
+
+	var dockerRequest *protocol.DockerRestoreRequest
+	includePaths := append([]string(nil), request.IncludePaths...)
+	if dockerRestore {
+		supportsDockerRestore, err := agentHasCapability(h.DB, agentID, protocol.CapabilityDockerContainerRestore)
+		if err != nil {
+			writeErrorResponse(c, http.StatusInternalServerError, "database error")
+			return
+		}
+		if !supportsDockerRestore {
+			writeErrorResponse(c, http.StatusBadRequest, "agent does not support Docker container restore")
+			return
+		}
+		resolvedDocker, err := h.resolveDockerRestoreRequest(c, agentID, snapshotID, request)
+		if err != nil {
+			writeErrorResponse(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		dockerRequest = &resolvedDocker
+		dockerPaths := dockerRestoreIncludePaths(resolvedDocker)
+		if len(dockerPaths) == 0 {
+			writeErrorResponse(c, http.StatusBadRequest, "docker metadata has no restore paths")
+			return
+		}
+		includePaths = appendUniqueRestoreStrings(includePaths, dockerPaths...)
+		targetPath = "/"
+	}
+
 	msgType := protocol.TypeRestoreReq
-	if len(request.IncludePaths) > 0 {
+	if len(includePaths) > 0 {
 		supportsSelectiveRestore, err := agentHasCapability(h.DB, agentID, protocol.CapabilityRestoreIncludePaths)
 		if err != nil {
 			writeErrorResponse(c, http.StatusInternalServerError, "database error")
@@ -78,7 +116,9 @@ func (h *RestoreHandler) Restore(c *gin.Context) {
 	msg, err := protocol.NewMessage(msgType, protocol.RestoreReqPayload{
 		SnapshotID:   snapshotID,
 		Target:       targetPath,
-		IncludePaths: request.IncludePaths,
+		IncludePaths: includePaths,
+		RestoreMode:  restoreMode,
+		Docker:       dockerRequest,
 	})
 	if err != nil {
 		writeErrorResponse(c, http.StatusInternalServerError, "encode restore request")
@@ -132,6 +172,73 @@ func (h *RestoreHandler) Restore(c *gin.Context) {
 		"command_id": command.ID,
 		"message_id": msg.ID,
 	})
+}
+
+func (h *RestoreHandler) resolveDockerRestoreRequest(c *gin.Context, agentID string, snapshotID string, request restoreRequest) (protocol.DockerRestoreRequest, error) {
+	var history db.TaskHistory
+	err := h.DB.DB.WithContext(contextFromGin(c)).
+		Where("agent_id = ? AND type = ? AND status = ? AND snapshot_id = ? AND docker <> ?", agentID, "backup", commands.TaskStatusSuccess, snapshotID, "").
+		Order("finished_at DESC, created_at DESC").
+		First(&history).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return protocol.DockerRestoreRequest{}, errors.New("docker metadata not found for snapshot")
+	}
+	if err != nil {
+		return protocol.DockerRestoreRequest{}, errors.New("database error")
+	}
+	var metadata protocol.DockerBackupMetadata
+	if err := json.Unmarshal([]byte(history.Docker), &metadata); err != nil {
+		return protocol.DockerRestoreRequest{}, errors.New("decode docker metadata")
+	}
+	return filterDockerRestoreRequest(protocol.DockerRestoreRequest{Sources: metadata.Sources}, request.DockerSourceID)
+}
+
+func filterDockerRestoreRequest(request protocol.DockerRestoreRequest, sourceID string) (protocol.DockerRestoreRequest, error) {
+	if strings.TrimSpace(sourceID) == "" {
+		if len(request.Sources) == 0 {
+			return protocol.DockerRestoreRequest{}, errors.New("docker metadata has no sources")
+		}
+		return request, nil
+	}
+	var filtered []protocol.DockerResolvedSource
+	for _, source := range request.Sources {
+		if source.ContainerID == sourceID || source.Name == sourceID || source.Selection.ContainerID == sourceID || source.Selection.Name == sourceID {
+			filtered = append(filtered, source)
+			continue
+		}
+		if source.Selection.ComposeProject != "" && source.Selection.ComposeService != "" && source.Selection.ComposeProject+"/"+source.Selection.ComposeService == sourceID {
+			filtered = append(filtered, source)
+		}
+	}
+	if len(filtered) == 0 {
+		return protocol.DockerRestoreRequest{}, errors.New("docker source not found for snapshot")
+	}
+	return protocol.DockerRestoreRequest{Sources: filtered}, nil
+}
+
+func dockerRestoreIncludePaths(request protocol.DockerRestoreRequest) []string {
+	var paths []string
+	for _, source := range request.Sources {
+		paths = append(paths, source.ResolvedPaths...)
+	}
+	return appendUniqueRestoreStrings(nil, paths...)
+}
+
+func appendUniqueRestoreStrings(values []string, more ...string) []string {
+	seen := make(map[string]struct{}, len(values)+len(more))
+	result := make([]string, 0, len(values)+len(more))
+	for _, value := range append(values, more...) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func (h *RestoreHandler) resolveSnapshotID(c *gin.Context, agentID string, requestedID string) (string, bool) {

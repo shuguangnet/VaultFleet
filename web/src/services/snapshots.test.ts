@@ -26,6 +26,28 @@ describe("snapshot service", () => {
     }));
   });
 
+  it("sends docker container restore mode", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, data: { message_id: "msg-2" } }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(restoreSnapshot("agent-1", {
+      snapshot_id: "snap-1",
+      restore_mode: "docker_container",
+      docker_source_id: "container-1",
+    })).resolves.toEqual({ message_id: "msg-2" });
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/agents/agent-1/restore", expect.objectContaining({
+      body: JSON.stringify({
+        snapshot_id: "snap-1",
+        restore_mode: "docker_container",
+        docker_source_id: "container-1",
+      }),
+      method: "POST",
+    }));
+  });
+
   it("browses a snapshot file listing", async () => {
     const response = {
       snapshot_id: "snap-1",

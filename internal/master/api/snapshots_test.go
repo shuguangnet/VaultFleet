@@ -542,6 +542,46 @@ func TestListSnapshotsExposesSpecFields(t *testing.T) {
 	assert.Contains(t, item, "timestamp")
 }
 
+func TestListSnapshotsIncludesDockerMetadataFromBackupHistory(t *testing.T) {
+	setup := setupSnapshotAPI(t)
+	agent := createSnapshotTestAgent(t, setup.database, "online")
+	snapshotTime := time.Date(2026, 5, 18, 12, 34, 56, 0, time.UTC)
+	createSnapshotRecord(t, setup.database, agent.ID, "restic-snap-1", snapshotTime, []string{"/srv/app"}, 512)
+	metadata := protocol.DockerBackupMetadata{
+		Sources: []protocol.DockerResolvedSource{
+			{
+				ContainerID:   "container-1",
+				Name:          "db",
+				Image:         "postgres:16",
+				ResolvedPaths: []string{"/srv/app/compose.yml", "/var/lib/docker/volumes/db/_data"},
+			},
+		},
+	}
+	rawDocker, err := json.Marshal(metadata)
+	require.NoError(t, err)
+	require.NoError(t, setup.database.DB.Create(&db.TaskHistory{
+		AgentID:    agent.ID,
+		Type:       "backup",
+		Status:     commands.TaskStatusSuccess,
+		SnapshotID: "restic-snap-1",
+		Docker:     string(rawDocker),
+	}).Error)
+
+	w := getJSON(t, setup.router, "/api/agents/"+agent.ID+"/snapshots")
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	envelope := parseJSON(t, w)
+	data, err := json.Marshal(envelope["data"])
+	require.NoError(t, err)
+	var body []snapshotAPITestResponse
+	require.NoError(t, json.Unmarshal(data, &body))
+	require.Len(t, body, 1)
+	require.NotNil(t, body[0].Docker)
+	require.Len(t, body[0].Docker.Sources, 1)
+	assert.Equal(t, "container-1", body[0].Docker.Sources[0].ContainerID)
+	assert.Equal(t, []string{"/srv/app/compose.yml", "/var/lib/docker/volumes/db/_data"}, body[0].Docker.Sources[0].ResolvedPaths)
+}
+
 func TestListSnapshotsMissingAgent(t *testing.T) {
 	setup := setupSnapshotAPI(t)
 
@@ -1182,14 +1222,15 @@ func (h *fakeSnapshotHub) Send(agentID string, msg interface{}) error {
 }
 
 type snapshotAPITestResponse struct {
-	ID         string    `json:"id"`
-	SnapshotID string    `json:"snapshot_id"`
-	Timestamp  time.Time `json:"timestamp"`
-	Time       time.Time `json:"time"`
-	Paths      []string  `json:"paths"`
-	Hostname   string    `json:"hostname"`
-	Username   string    `json:"username"`
-	Size       int64     `json:"size"`
+	ID         string                         `json:"id"`
+	SnapshotID string                         `json:"snapshot_id"`
+	Timestamp  time.Time                      `json:"timestamp"`
+	Time       time.Time                      `json:"time"`
+	Paths      []string                       `json:"paths"`
+	Hostname   string                         `json:"hostname"`
+	Username   string                         `json:"username"`
+	Size       int64                          `json:"size"`
+	Docker     *protocol.DockerBackupMetadata `json:"docker,omitempty"`
 }
 
 type snapshotRefreshAPITestResponse struct {

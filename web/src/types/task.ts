@@ -43,9 +43,37 @@ export interface DockerBackupMetadata {
 }
 
 export interface DockerResolvedSource {
+  selection?: unknown;
   container_id?: string;
   name?: string;
   image?: string;
+  labels?: Record<string, string>;
+  compose?: {
+    project?: string;
+    service?: string;
+    working_dir?: string;
+    config_files?: string[];
+  };
+  mounts?: Array<{
+    type: string;
+    name?: string;
+    source?: string;
+    destination: string;
+    rw: boolean;
+  }>;
+  env?: string[];
+  cmd?: string[];
+  entrypoint?: string[];
+  working_dir?: string;
+  user?: string;
+  ports?: Array<{
+    container_port: string;
+    protocol?: string;
+    host_ip?: string;
+    host_port?: string;
+  }>;
+  restart_policy?: string;
+  network_mode?: string;
   state?: string;
   resolved_paths?: string[];
   warnings?: string[];

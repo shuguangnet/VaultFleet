@@ -1,3 +1,5 @@
+import type { DockerBackupMetadata } from "./task";
+
 export interface Snapshot {
   id: string;
   time: string;
@@ -5,6 +7,7 @@ export interface Snapshot {
   hostname: string;
   username: string;
   tags?: string[];
+  docker?: DockerBackupMetadata;
 }
 
 export interface SnapshotRefreshResponse {
@@ -15,8 +18,10 @@ export interface SnapshotRefreshResponse {
 
 export interface RestoreRequest {
   snapshot_id: string;
-  target_path: string;
+  target_path?: string;
   include_paths?: string[];
+  restore_mode?: "files" | "docker_container";
+  docker_source_id?: string;
 }
 
 export interface RestoreAccepted {

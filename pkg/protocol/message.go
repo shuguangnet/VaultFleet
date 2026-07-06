@@ -43,6 +43,7 @@ const (
 	CapabilityPolicyPlaintextRclonePass = "policy_plaintext_rclone_pass"
 	CapabilityArchiveBackup             = "archive_backup"
 	CapabilityDockerWorkloadBackups     = "docker_workload_backups"
+	CapabilityDockerContainerRestore    = "docker_container_restore"
 	CapabilityTypedBackupSources        = "typed_backup_sources"
 )
 
@@ -67,6 +68,11 @@ const (
 const (
 	BackupSourceTypePath            = "path"
 	BackupSourceTypeDockerContainer = "docker_container"
+)
+
+const (
+	RestoreModeFiles           = "files"
+	RestoreModeDockerContainer = "docker_container"
 )
 
 // Message is the shared WebSocket envelope used by master and agents.
@@ -278,9 +284,27 @@ type DockerResolvedSource struct {
 	ContainerID   string                      `json:"container_id,omitempty"`
 	Name          string                      `json:"name,omitempty"`
 	Image         string                      `json:"image,omitempty"`
+	Labels        map[string]string           `json:"labels,omitempty"`
+	Compose       DockerComposeInfo           `json:"compose,omitempty"`
+	Mounts        []DockerMount               `json:"mounts,omitempty"`
+	Env           []string                    `json:"env,omitempty"`
+	Cmd           []string                    `json:"cmd,omitempty"`
+	Entrypoint    []string                    `json:"entrypoint,omitempty"`
+	WorkingDir    string                      `json:"working_dir,omitempty"`
+	User          string                      `json:"user,omitempty"`
+	Ports         []DockerPortBinding         `json:"ports,omitempty"`
+	RestartPolicy string                      `json:"restart_policy,omitempty"`
+	NetworkMode   string                      `json:"network_mode,omitempty"`
 	State         string                      `json:"state,omitempty"`
 	ResolvedPaths []string                    `json:"resolved_paths,omitempty"`
 	Warnings      []string                    `json:"warnings,omitempty"`
+}
+
+type DockerPortBinding struct {
+	ContainerPort string `json:"container_port"`
+	Protocol      string `json:"protocol,omitempty"`
+	HostIP        string `json:"host_ip,omitempty"`
+	HostPort      string `json:"host_port,omitempty"`
 }
 
 type DirSizeReqPayload struct {
@@ -335,9 +359,15 @@ type BackupNowPayload struct {
 
 // RestoreReqPayload requests a snapshot restore to a target path.
 type RestoreReqPayload struct {
-	SnapshotID   string   `json:"snapshot_id"`
-	Target       string   `json:"target"`
-	IncludePaths []string `json:"include_paths,omitempty"`
+	SnapshotID   string                `json:"snapshot_id"`
+	Target       string                `json:"target"`
+	IncludePaths []string              `json:"include_paths,omitempty"`
+	RestoreMode  string                `json:"restore_mode,omitempty"`
+	Docker       *DockerRestoreRequest `json:"docker,omitempty"`
+}
+
+type DockerRestoreRequest struct {
+	Sources []DockerResolvedSource `json:"sources,omitempty"`
 }
 
 // SnapshotListReqPayload requests repository snapshots from an agent.

@@ -1636,6 +1636,61 @@ func TestHandleRestoreInvokesRunnerAndSendsSuccessTaskResult(t *testing.T) {
 	assert.False(t, result.FinishedAt.Before(result.StartedAt))
 }
 
+func TestHandleRestoreDockerContainerRestoresOriginalPathsAndStartsContainer(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	configDir := t.TempDir()
+	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{
+		AgentID: "agent-1",
+		Storage: protocol.StorageConfig{
+			RepoPath: "repo/agent-1",
+		},
+	}))
+	sent := &sentMessages{}
+	var runnerTarget string
+	var runnerIncludePaths []string
+	var dockerRequest protocol.DockerRestoreRequest
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   configDir,
+		SendFunc:    sent.send,
+		RestoreRunner: func(_ context.Context, _ executor.ExecutorConfig, _ string, target string, includePaths []string) error {
+			runnerTarget = target
+			runnerIncludePaths = append([]string(nil), includePaths...)
+			return nil
+		},
+		DockerRestoreRunner: func(_ context.Context, request protocol.DockerRestoreRequest) error {
+			dockerRequest = request
+			return nil
+		},
+	})
+	msg, err := protocol.NewMessage(protocol.TypeSelectiveRestoreReq, protocol.RestoreReqPayload{
+		SnapshotID:  "snap-1",
+		Target:      "/ignored",
+		RestoreMode: protocol.RestoreModeDockerContainer,
+		Docker: &protocol.DockerRestoreRequest{
+			Sources: []protocol.DockerResolvedSource{
+				{
+					ContainerID:   "container-1",
+					Name:          "db",
+					ResolvedPaths: []string{"/srv/app/compose.yml", "/var/lib/docker/volumes/db/_data"},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	resultMsg := waitForMessageType(t, sent, protocol.TypeTaskResult, time.Second)
+	assert.Equal(t, "/", runnerTarget)
+	assert.Equal(t, []string{"/srv/app/compose.yml", "/var/lib/docker/volumes/db/_data"}, runnerIncludePaths)
+	require.Len(t, dockerRequest.Sources, 1)
+	assert.Equal(t, "container-1", dockerRequest.Sources[0].ContainerID)
+	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&resultMsg)
+	require.NoError(t, err)
+	assert.Equal(t, "success", result.Status)
+}
+
 func TestHandleRestoreRefreshesRcloneConfWithObscuredSFTPPassword(t *testing.T) {
 	store := policy.NewStore(t.TempDir())
 	configDir := t.TempDir()

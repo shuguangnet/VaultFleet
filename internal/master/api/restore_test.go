@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"testing"
@@ -231,6 +232,83 @@ func TestRestoreWithIncludePathsPassesThemInPayload(t *testing.T) {
 	payload, err := protocol.ParsePayload[protocol.RestoreReqPayload](&setup.hub.sent[0].message)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/etc/hosts", "/var/log/app.log"}, payload.IncludePaths)
+}
+
+func TestRestoreDockerContainerUsesBackupDockerMetadata(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	agent := createRestoreTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+	markAgentCapabilities(t, setup.database, agent.ID, []string{
+		protocol.CapabilityRestoreIncludePaths,
+		protocol.CapabilityDockerContainerRestore,
+	})
+	metadata := protocol.DockerBackupMetadata{
+		Sources: []protocol.DockerResolvedSource{
+			{
+				ContainerID:   "container-1",
+				Name:          "db",
+				Image:         "postgres:16",
+				ResolvedPaths: []string{"/srv/app/compose.yml", "/var/lib/docker/volumes/db/_data"},
+				Compose:       protocol.DockerComposeInfo{Project: "app", Service: "db", WorkingDir: "/srv/app", ConfigFiles: []string{"compose.yml"}},
+				Mounts:        []protocol.DockerMount{{Type: "volume", Name: "db-data", Source: "/var/lib/docker/volumes/db/_data", Destination: "/var/lib/postgresql/data", RW: true}},
+			},
+		},
+	}
+	rawDocker, err := json.Marshal(metadata)
+	require.NoError(t, err)
+	finishedAt := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, setup.database.DB.Create(&db.TaskHistory{
+		AgentID:    agent.ID,
+		Type:       "backup",
+		Status:     commands.TaskStatusSuccess,
+		SnapshotID: "snap-1",
+		Docker:     string(rawDocker),
+		FinishedAt: &finishedAt,
+	}).Error)
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore", map[string]any{
+		"snapshot_id":      "snap-1",
+		"restore_mode":     protocol.RestoreModeDockerContainer,
+		"docker_source_id": "container-1",
+	})
+
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	require.Len(t, setup.hub.sent, 1)
+	assert.Equal(t, protocol.TypeSelectiveRestoreReq, setup.hub.sent[0].message.Type)
+	payload, err := protocol.ParsePayload[protocol.RestoreReqPayload](&setup.hub.sent[0].message)
+	require.NoError(t, err)
+	assert.Equal(t, protocol.RestoreModeDockerContainer, payload.RestoreMode)
+	assert.Equal(t, "/", payload.Target)
+	assert.Equal(t, []string{"/srv/app/compose.yml", "/var/lib/docker/volumes/db/_data"}, payload.IncludePaths)
+	require.NotNil(t, payload.Docker)
+	require.Len(t, payload.Docker.Sources, 1)
+	assert.Equal(t, "container-1", payload.Docker.Sources[0].ContainerID)
+	assert.Equal(t, "postgres:16", payload.Docker.Sources[0].Image)
+}
+
+func TestRestoreDockerContainerRejectsMissingMetadata(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	agent := createRestoreTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+	markAgentCapabilities(t, setup.database, agent.ID, []string{
+		protocol.CapabilityRestoreIncludePaths,
+		protocol.CapabilityDockerContainerRestore,
+	})
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore", map[string]any{
+		"snapshot_id":  "snap-1",
+		"restore_mode": protocol.RestoreModeDockerContainer,
+		"docker": map[string]any{
+			"sources": []map[string]any{
+				{"container_id": "client-supplied", "resolved_paths": []string{"/etc"}},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assert.Equal(t, "docker metadata not found for snapshot", body["error"])
+	assert.Empty(t, setup.hub.sent)
 }
 
 func TestRestoreWithIncludePathsRejectsAgentWithoutCapability(t *testing.T) {
