@@ -58,6 +58,53 @@ func TestBackupNowSendsAgentCommand(t *testing.T) {
 	assert.Equal(t, data["message_id"], history.MessageID)
 }
 
+func TestBackupNowDispatchesWhenOlderPendingCommandHasInvalidPayload(t *testing.T) {
+	setup := setupTasksAPI(t)
+	agent := createTasksTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+	poisonCreatedAt := time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC)
+	poison := db.AgentCommand{
+		AgentID:   agent.ID,
+		Type:      protocol.TypeBackupNow,
+		Status:    commands.CommandStatusPending,
+		MessageID: "poison-backup-now",
+		Payload:   "legacy-invalid-payload",
+		CreatedAt: poisonCreatedAt,
+		UpdatedAt: poisonCreatedAt,
+	}
+	require.NoError(t, setup.database.DB.Create(&poison).Error)
+	require.NoError(t, setup.database.DB.Create(&db.TaskHistory{
+		AgentID:   agent.ID,
+		Type:      "backup",
+		Status:    commands.TaskStatusPending,
+		MessageID: poison.MessageID,
+		CommandID: poison.ID,
+		CreatedAt: poisonCreatedAt,
+		UpdatedAt: poisonCreatedAt,
+	}).Error)
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/backup-now", map[string]any{})
+
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assert.Equal(t, true, body["ok"])
+	data := requireMap(t, body["data"])
+	require.Len(t, setup.hub.sent, 1)
+	assert.Equal(t, agent.ID, setup.hub.sent[0].agentID)
+	assert.Equal(t, protocol.TypeBackupNow, setup.hub.sent[0].message.Type)
+	assert.Equal(t, data["message_id"], setup.hub.sent[0].message.ID)
+
+	var failed db.AgentCommand
+	require.NoError(t, setup.database.DB.First(&failed, "id = ?", poison.ID).Error)
+	assert.Equal(t, commands.CommandStatusFailed, failed.Status)
+	assert.Contains(t, failed.ErrorMessage, "invalid command payload")
+
+	var command db.AgentCommand
+	require.NoError(t, setup.database.DB.First(&command, "id = ?", data["command_id"]).Error)
+	assert.Equal(t, commands.CommandStatusRunning, command.Status)
+	assert.Equal(t, 1, command.Attempts)
+}
+
 func TestBackupNowQueuesOfflineAgentCommand(t *testing.T) {
 	setup := setupTasksAPI(t)
 	agent := createTasksTestAgent(t, setup.database, "offline")

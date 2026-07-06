@@ -45,6 +45,7 @@ type Service struct {
 var dispatchMu sync.Mutex
 
 var errCommandNotActive = errors.New("command is not active")
+var errInvalidCommandPayload = errors.New("invalid command payload")
 
 type CreateCommandInput struct {
 	AgentID         string
@@ -633,11 +634,11 @@ func (s *Service) messageFromCommand(command db.AgentCommand) (protocol.Message,
 	}
 	plaintext, err := db.Decrypt(command.Payload, s.DB.MasterKey)
 	if err != nil {
-		return protocol.Message{}, fmt.Errorf("decrypt command payload: %w", err)
+		return protocol.Message{}, fmt.Errorf("%w: decrypt command payload: %v", errInvalidCommandPayload, err)
 	}
 	var message protocol.Message
 	if err := json.Unmarshal([]byte(plaintext), &message); err != nil {
-		return protocol.Message{}, fmt.Errorf("unmarshal command payload: %w", err)
+		return protocol.Message{}, fmt.Errorf("%w: unmarshal command payload: %v", errInvalidCommandPayload, err)
 	}
 	return message, nil
 }
@@ -653,7 +654,7 @@ func (s *Service) prepareMessageForDispatch(ctx context.Context, command db.Agen
 
 	payload, err := protocol.ParsePayload[protocol.RestoreReqPayload](&message)
 	if err != nil {
-		return protocol.Message{}, fmt.Errorf("parse restore command payload: %w", err)
+		return protocol.Message{}, fmt.Errorf("%w: parse restore command payload: %v", errInvalidCommandPayload, err)
 	}
 	if len(payload.IncludePaths) == 0 {
 		return message, nil
@@ -733,6 +734,9 @@ func (s *Service) dispatch(ctx context.Context, command db.AgentCommand) error {
 			return nil
 		}
 		if errors.Is(err, errSelectiveRestoreUnsupported) {
+			return s.failCommandAndTask(ctx, command, err.Error())
+		}
+		if errors.Is(err, errInvalidCommandPayload) {
 			return s.failCommandAndTask(ctx, command, err.Error())
 		}
 		return err

@@ -320,6 +320,63 @@ func TestDispatchPendingRecordsSendFailure(t *testing.T) {
 	assert.Contains(t, found.ErrorMessage, "write failed")
 }
 
+func TestDispatchPendingFailsInvalidCommandPayloadAndContinues(t *testing.T) {
+	database := setupCommandTestDB(t)
+	hub := &recordingHub{online: map[string]bool{"agent-1": true}}
+	service := NewService(database, hub)
+	now := time.Date(2026, 5, 20, 10, 0, 0, 0, time.UTC)
+	service.Now = func() time.Time { return now }
+
+	poisonCreatedAt := now.Add(-time.Hour)
+	poison := db.AgentCommand{
+		AgentID:   "agent-1",
+		Type:      protocol.TypeBackupNow,
+		Status:    CommandStatusPending,
+		MessageID: "poison-message",
+		Payload:   "not encrypted command payload",
+		CreatedAt: poisonCreatedAt,
+		UpdatedAt: poisonCreatedAt,
+	}
+	require.NoError(t, database.DB.Create(&poison).Error)
+	require.NoError(t, database.DB.Create(&db.TaskHistory{
+		AgentID:   "agent-1",
+		Type:      "backup",
+		Status:    TaskStatusPending,
+		MessageID: poison.MessageID,
+		CommandID: poison.ID,
+		CreatedAt: poisonCreatedAt,
+		UpdatedAt: poisonCreatedAt,
+	}).Error)
+
+	valid := createCommandForTest(t, service, "agent-1", protocol.TypeBackupNow)
+	require.NoError(t, database.DB.Model(&db.AgentCommand{}).
+		Where("id = ?", valid.ID).
+		Updates(map[string]any{"created_at": now, "updated_at": now}).Error)
+
+	require.NoError(t, service.DispatchPendingForAgent(context.Background(), "agent-1", 10))
+
+	require.Len(t, hub.sent, 1)
+	assert.Equal(t, valid.MessageID, hub.sent[0].ID)
+
+	var failed db.AgentCommand
+	require.NoError(t, database.DB.First(&failed, "id = ?", poison.ID).Error)
+	assert.Equal(t, CommandStatusFailed, failed.Status)
+	assert.Equal(t, 0, failed.Attempts)
+	assert.Contains(t, failed.ErrorMessage, "invalid command payload")
+	assert.NotNil(t, failed.CompletedAt)
+
+	var failedHistory db.TaskHistory
+	require.NoError(t, database.DB.First(&failedHistory, "command_id = ?", poison.ID).Error)
+	assert.Equal(t, TaskStatusFailed, failedHistory.Status)
+	assert.Contains(t, failedHistory.ErrorLog, "invalid command payload")
+	assert.NotNil(t, failedHistory.FinishedAt)
+
+	var dispatched db.AgentCommand
+	require.NoError(t, database.DB.First(&dispatched, "id = ?", valid.ID).Error)
+	assert.Equal(t, CommandStatusRunning, dispatched.Status)
+	assert.Equal(t, 1, dispatched.Attempts)
+}
+
 func TestDispatchPendingRecordsActiveStateBeforeSend(t *testing.T) {
 	tests := []struct {
 		name           string
