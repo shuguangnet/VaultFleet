@@ -106,6 +106,63 @@ func TestTaskResultProcessorRecordsHistoryAndSnapshots(t *testing.T) {
 	assert.JSONEq(t, `["/srv"]`, snapshot.Paths)
 }
 
+func TestTaskResultProcessorPersistsDockerMetadataForDirectBackupResult(t *testing.T) {
+	database, err := db.New(t.TempDir())
+	require.NoError(t, err)
+	agent := createSnapshotTestAgent(t, database, "online")
+	finishedAt := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	metadata := &protocol.DockerBackupMetadata{
+		Sources: []protocol.DockerResolvedSource{
+			{
+				ContainerID:   "container-1",
+				Name:          "db",
+				Image:         "postgres:16",
+				ResolvedPaths: []string{"/srv/app", "/var/lib/docker/volumes/db/_data"},
+			},
+		},
+	}
+	msg, err := protocol.NewMessage(protocol.TypeTaskResult, protocol.TaskResultPayload{
+		AgentID:    agent.ID,
+		TaskType:   "backup",
+		Status:     "success",
+		SnapshotID: "snap-docker",
+		DurationMs: 1500,
+		StartedAt:  finishedAt.Add(-1500 * time.Millisecond),
+		FinishedAt: finishedAt,
+		Snapshots: []protocol.SnapshotInfo{
+			{ID: "snap-docker", Time: finishedAt, Paths: []string{"/srv/app", "/var/lib/docker/volumes/db/_data"}, Size: 1024},
+		},
+		Docker: metadata,
+	})
+	require.NoError(t, err)
+
+	processor := NewTaskResultProcessor(database)
+	require.NoError(t, processor(agent.ID, *msg))
+
+	var history db.TaskHistory
+	require.NoError(t, database.DB.First(&history, "agent_id = ? AND snapshot_id = ?", agent.ID, "snap-docker").Error)
+	require.NotEmpty(t, history.Docker)
+	var stored protocol.DockerBackupMetadata
+	require.NoError(t, json.Unmarshal([]byte(history.Docker), &stored))
+	require.Len(t, stored.Sources, 1)
+	assert.Equal(t, "container-1", stored.Sources[0].ContainerID)
+	assert.Equal(t, []string{"/srv/app", "/var/lib/docker/volumes/db/_data"}, stored.Sources[0].ResolvedPaths)
+
+	setup := setupSnapshotAPIWithDB(t, database)
+	w := getJSON(t, setup.router, "/api/agents/"+agent.ID+"/snapshots")
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	envelope := parseJSON(t, w)
+	data, err := json.Marshal(envelope["data"])
+	require.NoError(t, err)
+	var body []snapshotAPITestResponse
+	require.NoError(t, json.Unmarshal(data, &body))
+	require.Len(t, body, 1)
+	require.NotNil(t, body[0].Docker)
+	require.Len(t, body[0].Docker.Sources, 1)
+	assert.Equal(t, "container-1", body[0].Docker.Sources[0].ContainerID)
+}
+
 func TestTaskResultProcessorCopiesArchiveArtifactIntoMasterDataDir(t *testing.T) {
 	database, err := db.New(t.TempDir())
 	require.NoError(t, err)
@@ -1179,6 +1236,12 @@ func setupSnapshotAPI(t *testing.T) snapshotAPISetup {
 	gin.SetMode(gin.TestMode)
 	database, err := db.New(t.TempDir())
 	require.NoError(t, err)
+
+	return setupSnapshotAPIWithDB(t, database)
+}
+
+func setupSnapshotAPIWithDB(t *testing.T, database *db.Database) snapshotAPISetup {
+	t.Helper()
 
 	hub := &fakeSnapshotHub{online: map[string]bool{}}
 	handler := NewSnapshotHandler(database, hub)

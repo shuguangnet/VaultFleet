@@ -521,6 +521,10 @@ func copyFile(sourcePath string, destPath string) error {
 func createTaskHistory(gormDB *gorm.DB, agentID string, messageID string, result protocol.TaskResultPayload) error {
 	startedAt := result.StartedAt
 	finishedAt := result.FinishedAt
+	rawDocker, err := marshalDockerBackupMetadata(result.Docker)
+	if err != nil {
+		return err
+	}
 	history := db.TaskHistory{
 		AgentID:             agentID,
 		Type:                result.TaskType,
@@ -533,6 +537,7 @@ func createTaskHistory(gormDB *gorm.DB, agentID string, messageID string, result
 		BackupMode:          result.BackupMode,
 		ArchiveFormat:       result.ArchiveFormat,
 		MessageID:           messageID,
+		Docker:              rawDocker,
 		StartedAt:           &startedAt,
 		FinishedAt:          &finishedAt,
 		DurationMs:          result.DurationMs,
@@ -546,6 +551,17 @@ func createTaskHistory(gormDB *gorm.DB, agentID string, messageID string, result
 		history.FinishedAt = nil
 	}
 	return gormDB.Create(&history).Error
+}
+
+func marshalDockerBackupMetadata(metadata *protocol.DockerBackupMetadata) (string, error) {
+	if metadata == nil {
+		return "", nil
+	}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		return "", fmt.Errorf("marshal docker metadata: %w", err)
+	}
+	return string(raw), nil
 }
 
 func completeRestoreTaskResult(database *db.Database, agentID string, messageID string, result protocol.TaskResultPayload) error {
