@@ -18,6 +18,7 @@ import (
 	"vaultfleet/internal/master/events"
 	"vaultfleet/internal/master/logbuf"
 	"vaultfleet/internal/master/notify"
+	"vaultfleet/internal/master/tasklogs"
 	"vaultfleet/internal/master/ws"
 )
 
@@ -114,6 +115,7 @@ func buildRuntimeWithOptions(ctx context.Context, database *db.Database, options
 	hub := ws.NewHub()
 	bus := events.NewBus()
 	progressCache := ws.NewBackupProgressCache()
+	taskLogBuffer := tasklogs.NewBuffer()
 	commandService := commands.NewService(database, hub)
 	api.SubscribeAgentStateEvents(database, bus)
 	notify.NewDispatcher(database, bus).Start()
@@ -127,6 +129,7 @@ func buildRuntimeWithOptions(ctx context.Context, database *db.Database, options
 		api.NewTaskResultProcessor(database, commandService),
 	)
 	wsHandler.ProgressCache = progressCache
+	wsHandler.TaskLogBuffer = taskLogBuffer
 	wsHandler.PolicyAckProcessor = api.NewPolicyAckProcessor(database, commandService)
 	wsHandler.SnapshotListResponseProcessor = api.NewSnapshotListResponseProcessor(database, commandService)
 	policyPusher := api.NewPolicyChangedPusher(database, hub, policyLookup)
@@ -152,6 +155,7 @@ func buildRuntimeWithOptions(ctx context.Context, database *db.Database, options
 		Version:            version,
 		GitHubRepo:         githubRepo,
 		LogBuf:             logRing,
+		TaskLogs:           taskLogBuffer,
 	})
 
 	return masterRuntime{

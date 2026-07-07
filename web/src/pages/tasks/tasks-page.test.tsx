@@ -2,7 +2,14 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import type { TaskHistory } from "@/types/task";
-import { formatBytes, formatDuration, formatSpeed, renderTaskMetricContent } from "./tasks-page";
+import {
+  formatBytes,
+  formatDuration,
+  formatSpeed,
+  formatTaskLogLine,
+  renderTaskMetricContent,
+  taskLogStatusText,
+} from "./tasks-page";
 
 afterEach(() => {
   cleanup();
@@ -168,6 +175,23 @@ describe("task progress helpers", () => {
     );
 
     expect(screen.getByText("12s")).toBeInTheDocument();
+  });
+
+  it("formats task log lines and empty states", () => {
+    expect(taskLogStatusText("unsupported_agent")).toBe("该节点版本暂不支持实时任务日志");
+    expect(taskLogStatusText("missing_message_id")).toBe("此任务没有可关联的命令消息 ID");
+    expect(
+      formatTaskLogLine({
+        agent_id: "agent-1",
+        message_id: "msg-1",
+        sequence: 1,
+        timestamp: "2026-07-08T10:20:30Z",
+        level: "info",
+        phase: "backup",
+        stream: "stdout",
+        line: "uploaded file",
+      }),
+    ).toContain("info backup stdout uploaded file");
   });
 });
 

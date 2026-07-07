@@ -78,6 +78,7 @@ type ExecutorConfig struct {
 	ArchiveFormat  string
 	PreBackupHook  *protocol.PolicyHook
 	PostBackupHook *protocol.PolicyHook
+	TaskLog        TaskLogCallback
 }
 
 type BackupProgress struct {
@@ -90,6 +91,7 @@ type BackupProgress struct {
 }
 
 type ProgressCallback func(phase string, progress *BackupProgress)
+type TaskLogCallback func(level string, phase string, stream string, line string)
 
 type resticExecutor interface {
 	InitRepo(ctx context.Context) error
@@ -109,6 +111,7 @@ type Executor struct {
 	backupDirs []string
 	excludes   []string
 	retention  RetentionPolicy
+	taskLog    TaskLogCallback
 }
 
 func NewExecutor(cfg ExecutorConfig) *Executor {
@@ -140,6 +143,7 @@ func NewExecutor(cfg ExecutorConfig) *Executor {
 		backupDirs: append([]string(nil), cfg.BackupDirs...),
 		excludes:   append([]string(nil), cfg.Excludes...),
 		retention:  cfg.Retention,
+		taskLog:    cfg.TaskLog,
 	}
 }
 
@@ -213,12 +217,15 @@ func (e *Executor) RunBackupJobWithProgress(ctx context.Context, progressFn Prog
 	defer func() { result.DurationMs = time.Since(start).Milliseconds() }()
 
 	emitProgress(progressFn, "init", nil)
+	emitTaskLog(e.taskLog, "info", "init", "system", "checking repository")
 	if err := e.restic.InitRepo(ctx); err != nil {
+		emitTaskLog(e.taskLog, "error", "init", "stderr", err.Error())
 		result.ErrorLog = "init: " + err.Error()
 		return result
 	}
 
 	emitProgress(progressFn, "backup", nil)
+	emitTaskLog(e.taskLog, "info", "backup", "system", "running backup")
 	if progressRunner, ok := e.restic.(resticExecutorWithProgress); ok {
 		var resticProgressFn func(BackupProgress)
 		if progressFn != nil {
@@ -228,28 +235,36 @@ func (e *Executor) RunBackupJobWithProgress(ctx context.Context, progressFn Prog
 			}
 		}
 		if _, err := progressRunner.RunBackupWithProgress(ctx, e.backupDirs, e.excludes, resticProgressFn); err != nil {
+			emitTaskLog(e.taskLog, "error", "backup", "stderr", err.Error())
 			result.ErrorLog = "backup: " + err.Error()
 			return result
 		}
 	} else if _, err := e.restic.RunBackup(ctx, e.backupDirs, e.excludes); err != nil {
+		emitTaskLog(e.taskLog, "error", "backup", "stderr", err.Error())
 		result.ErrorLog = "backup: " + err.Error()
 		return result
 	}
 
 	emitProgress(progressFn, "forget", nil)
+	emitTaskLog(e.taskLog, "info", "forget", "system", "applying retention policy")
 	if err := e.restic.RunForget(ctx, e.retention); err != nil {
+		emitTaskLog(e.taskLog, "error", "forget", "stderr", err.Error())
 		result.ErrorLog = "forget: " + err.Error()
 		return result
 	}
 
 	emitProgress(progressFn, "stats", nil)
+	emitTaskLog(e.taskLog, "info", "stats", "system", "listing snapshots")
 	snapshots, err := e.restic.ListSnapshots(ctx)
 	if err != nil {
+		emitTaskLog(e.taskLog, "error", "stats", "stderr", err.Error())
 		result.ErrorLog = "snapshots: " + err.Error()
 		return result
 	}
+	emitTaskLog(e.taskLog, "info", "stats", "system", "reading repository statistics")
 	repoSize, err := e.restic.RepositorySize(ctx)
 	if err != nil {
+		emitTaskLog(e.taskLog, "error", "stats", "stderr", err.Error())
 		result.ErrorLog = "stats: " + err.Error()
 		return result
 	}
@@ -281,14 +296,18 @@ func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) 
 	defer func() { result.DurationMs = time.Since(start).Milliseconds() }()
 
 	artifactDir := filepath.Join(cfg.ConfigDir, "artifacts")
+	emitTaskLog(cfg.TaskLog, "info", "archive", "system", "preparing archive directory")
 	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
+		emitTaskLog(cfg.TaskLog, "error", "archive", "stderr", err.Error())
 		result.ErrorLog = "archive: " + err.Error()
 		return result
 	}
 
 	artifactName := "backup-" + time.Now().UTC().Format("20060102-150405") + archiveFileSuffix(result.ArchiveFormat)
 	artifactPath := filepath.Join(artifactDir, artifactName)
+	emitTaskLog(cfg.TaskLog, "info", "archive", "system", "writing local archive "+artifactName)
 	if err := writeArchive(artifactPath, result.ArchiveFormat, cfg.BackupDirs, cfg.Excludes); err != nil {
+		emitTaskLog(cfg.TaskLog, "error", "archive", "stderr", err.Error())
 		result.ErrorLog = "archive: " + err.Error()
 		return result
 	}
@@ -298,12 +317,15 @@ func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) 
 		RepoPath:        cfg.RepoPath,
 		RcloneExtraArgs: copyStringMap(cfg.RcloneArgs),
 	}
+	emitTaskLog(cfg.TaskLog, "info", "archive-upload", "system", "uploading archive")
 	if err := runner.CopyFileToRemote(ctx, artifactPath, remoteArtifactPath); err != nil {
+		emitTaskLog(cfg.TaskLog, "error", "archive-upload", "stderr", err.Error())
 		result.ErrorLog = "archive-upload: " + err.Error()
 		return result
 	}
 	info, err := os.Stat(artifactPath)
 	if err != nil {
+		emitTaskLog(cfg.TaskLog, "error", "archive-stat", "stderr", err.Error())
 		result.ErrorLog = "archive-stat: " + err.Error()
 		return result
 	}
@@ -314,6 +336,7 @@ func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) 
 	result.ArtifactSize = info.Size()
 	result.ArtifactContentType = archiveContentType(result.ArchiveFormat)
 	result.RepoSize = info.Size()
+	emitTaskLog(cfg.TaskLog, "info", "complete", "system", "archive backup completed")
 	return result
 }
 
@@ -446,5 +469,11 @@ func writeZipArchive(output string, dirs []string, excludes []string) error {
 func emitProgress(progressFn ProgressCallback, phase string, progress *BackupProgress) {
 	if progressFn != nil {
 		progressFn(phase, progress)
+	}
+}
+
+func emitTaskLog(logFn TaskLogCallback, level string, phase string, stream string, line string) {
+	if logFn != nil {
+		logFn(level, phase, stream, line)
 	}
 }

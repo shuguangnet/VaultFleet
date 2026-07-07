@@ -10,13 +10,15 @@ import (
 	"gorm.io/gorm"
 
 	"vaultfleet/internal/master/db"
+	"vaultfleet/internal/master/tasklogs"
 )
 
 const defaultCommandListLimit = 50
 const maxCommandListLimit = 200
 
 type CommandHandler struct {
-	DB *db.Database
+	DB       *db.Database
+	TaskLogs tasklogs.Getter
 }
 
 type commandResponse struct {
@@ -45,6 +47,7 @@ func NewCommandHandler(database *db.Database) *CommandHandler {
 
 func RegisterCommandRoutes(rg *gin.RouterGroup, h *CommandHandler) {
 	rg.GET("/commands/:id", h.Get)
+	rg.GET("/commands/:id/logs", h.GetLogs)
 	rg.GET("/agents/:id/commands", h.ListAgentCommands)
 }
 

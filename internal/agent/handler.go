@@ -687,13 +687,17 @@ func (h *Handler) runBackupVerificationForPolicy(ctx context.Context, messageID 
 	if agentID == "" {
 		agentID = policyPayload.AgentID
 	}
+	taskLogs := newTaskLogEmitter(agentID, messageID, taskTypeVerify, h.send)
 
 	startedAt := time.Now()
 	if strings.TrimSpace(policyPayload.BackupMode) == protocol.BackupModeArchive {
+		taskLogs.Error("init", "archive backup verification is unsupported")
 		h.sendTaskResultWithID(messageID, h.failedTypedTaskResult(agentID, "verify", "", "archive backup verification is unsupported", startedAt))
 		return
 	}
+	taskLogs.Info("init", "preparing backup verification")
 	if err := h.ensureRcloneConf(policyPayload); err != nil {
+		taskLogs.Error("init", "prepare rclone config failed: "+err.Error())
 		h.sendTaskResultWithID(messageID, h.failedTypedTaskResult(agentID, "verify", "", "prepare rclone config: "+err.Error(), startedAt))
 		return
 	}
@@ -705,7 +709,10 @@ func (h *Handler) runBackupVerificationForPolicy(ctx context.Context, messageID 
 	}
 	defer cancel()
 
-	result := h.backupVerificationRunner(runCtx, executorConfigForPolicy(h.configDir, policyPayload), settings)
+	taskLogs.Info("verify", "running backup recoverability verification")
+	cfg := executorConfigForPolicy(h.configDir, policyPayload)
+	cfg.TaskLog = taskLogs.Emit
+	result := h.backupVerificationRunner(runCtx, cfg, settings)
 	if runCtx.Err() == context.DeadlineExceeded {
 		result.Status = "failed"
 		result.ErrorLog = "backup verification timed out"
@@ -720,6 +727,11 @@ func (h *Handler) runBackupVerificationForPolicy(ctx context.Context, messageID 
 			result.ErrorLog = runCtx.Err().Error()
 		}
 	}
+	if result.Status == "success" {
+		taskLogs.Info("complete", "backup verification completed successfully")
+	} else {
+		taskLogs.Error("complete", "backup verification finished with status "+result.Status+": "+result.ErrorLog)
+	}
 	h.sendTaskResultWithID(messageID, result.ToProtocol(agentID, startedAt))
 }
 
@@ -730,26 +742,37 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 	if agentID == "" {
 		agentID = policyPayload.AgentID
 	}
+	taskLogs := newTaskLogEmitter(agentID, messageID, taskTypeBackup, h.send)
 
 	startedAt := time.Now()
+	taskLogs.Info("init", "preparing backup configuration")
 	if err := h.ensureRcloneConf(policyPayload); err != nil {
 		log.Printf("prepare rclone config failed: %v", err)
+		taskLogs.Error("init", "prepare rclone config failed: "+err.Error())
 		h.sendTaskResultWithID(messageID, h.failedTaskResult(agentID, "prepare rclone config: "+err.Error(), startedAt))
 		return
 	}
+	taskLogs.Info("sources", "resolving backup sources")
 	resolvedPolicy, dockerMetadata, err := h.resolvePolicyBackupSources(ctx, policyPayload)
 	if err != nil {
 		log.Printf("resolve backup sources failed: %v", err)
+		taskLogs.Error("sources", "resolve backup sources failed: "+err.Error())
 		h.sendTaskResultWithID(messageID, h.failedTaskResult(agentID, "resolve backup sources: "+err.Error(), startedAt))
 		return
 	}
+	if dockerMetadata != nil {
+		taskLogs.Info("sources", "resolved Docker backup metadata")
+	}
 	cfg := executorConfigForPolicy(h.configDir, resolvedPolicy)
-	if err := runPolicyHook(ctx, h.configDir, cfg.PreBackupHook); err != nil {
+	cfg.TaskLog = taskLogs.Emit
+	if err := runPolicyHookWithLogs(ctx, h.configDir, cfg.PreBackupHook, "pre_backup_hook", taskLogs); err != nil {
 		log.Printf("pre-backup hook failed: %v", err)
+		taskLogs.Error("pre_backup_hook", "pre-backup hook failed: "+err.Error())
 		h.sendTaskResultWithID(messageID, h.failedTaskResult(agentID, "pre_backup_hook: "+err.Error(), startedAt))
 		return
 	}
-	result := h.backupRunnerWithProgress(ctx, cfg, h.backupProgressCallback(messageID, agentID))
+	taskLogs.Info("backup", "starting backup")
+	result := h.backupRunnerWithProgress(ctx, cfg, h.backupProgressCallback(messageID, agentID, taskLogs))
 	if dockerMetadata != nil {
 		result.Docker = dockerMetadata
 	}
@@ -759,11 +782,17 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 			result.ErrorLog = ctx.Err().Error()
 		}
 	} else if result.Status == "success" && cfg.PostBackupHook != nil {
-		if err := runPolicyHook(ctx, h.configDir, cfg.PostBackupHook); err != nil {
+		if err := runPolicyHookWithLogs(ctx, h.configDir, cfg.PostBackupHook, "post_backup_hook", taskLogs); err != nil {
 			log.Printf("post-backup hook failed: %v", err)
+			taskLogs.Error("post_backup_hook", "post-backup hook failed: "+err.Error())
 			result.Status = "failed"
 			result.ErrorLog = appendHookError(result.ErrorLog, "post_backup_hook: "+err.Error())
 		}
+	}
+	if result.Status == "success" {
+		taskLogs.Info("complete", "backup completed successfully")
+	} else {
+		taskLogs.Error("complete", "backup finished with status "+result.Status+": "+result.ErrorLog)
 	}
 	h.sendTaskResultWithID(messageID, result.ToProtocol(agentID, startedAt))
 
@@ -825,7 +854,7 @@ func (h *Handler) warmSnapshotCache(ctx context.Context, cfg executor.ExecutorCo
 	}
 }
 
-func (h *Handler) backupProgressCallback(messageID string, agentID string) executor.ProgressCallback {
+func (h *Handler) backupProgressCallback(messageID string, agentID string, logs *taskLogEmitter) executor.ProgressCallback {
 	var mu sync.Mutex
 	var lastPhase string
 	var lastSentAt time.Time
@@ -836,6 +865,9 @@ func (h *Handler) backupProgressCallback(messageID string, agentID string) execu
 	return func(phase string, progress *executor.BackupProgress) {
 		now := time.Now()
 		mu.Lock()
+		if phase != "" && phase != lastPhase {
+			logs.Info(phase, "entered "+phase+" phase")
+		}
 		hasMeasuredProgress := progress != nil
 		if phase == lastPhase && !lastSentAt.IsZero() && now.Sub(lastSentAt) < backupProgressThrottleInterval && (!hasMeasuredProgress || sentMeasuredProgress) {
 			mu.Unlock()
@@ -1051,6 +1083,10 @@ func appendHookError(existing string, hookError string) string {
 }
 
 func runPolicyHook(ctx context.Context, configDir string, hook *protocol.PolicyHook) error {
+	return runPolicyHookWithLogs(ctx, configDir, hook, "hook", nil)
+}
+
+func runPolicyHookWithLogs(ctx context.Context, configDir string, hook *protocol.PolicyHook, phase string, logs *taskLogEmitter) error {
 	if hook == nil {
 		return nil
 	}
@@ -1058,6 +1094,10 @@ func runPolicyHook(ctx context.Context, configDir string, hook *protocol.PolicyH
 	if command == "" {
 		return errors.New("hook command is empty")
 	}
+	if phase == "" {
+		phase = "hook"
+	}
+	logs.Info(phase, "running hook")
 
 	runCtx := ctx
 	var cancel context.CancelFunc
@@ -1071,16 +1111,26 @@ func runPolicyHook(ctx context.Context, configDir string, hook *protocol.PolicyH
 		cmd.Dir = configDir
 	}
 	output, err := cmd.CombinedOutput()
+	if len(output) > 0 {
+		if err == nil {
+			logs.Stdout(phase, string(output))
+		} else {
+			logs.Stderr(phase, string(output))
+		}
+	}
 	if err == nil {
+		logs.Info(phase, "hook completed")
 		return nil
 	}
 	trimmed := strings.TrimSpace(string(output))
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		logs.Error(phase, "hook timed out")
 		if trimmed != "" {
 			return errors.New("timeout: " + trimmed)
 		}
 		return errors.New("timeout")
 	}
+	logs.Error(phase, "hook failed")
 	if trimmed != "" {
 		return errors.New(trimmed)
 	}

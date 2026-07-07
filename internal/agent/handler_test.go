@@ -108,7 +108,7 @@ func TestHandlePolicyPushSavesPolicyWritesConfigSchedulesBackupAndAcks(t *testin
 		Retention:      executor.RetentionPolicy{KeepLast: 3, KeepDaily: 7},
 		PreBackupHook:  &protocol.PolicyHook{Command: "echo pre", TimeoutSeconds: 10},
 		PostBackupHook: &protocol.PolicyHook{Command: "echo post", TimeoutSeconds: 15},
-	}, runnerConfig)
+	}, withoutTaskLog(runnerConfig))
 }
 
 func TestRunBackupForPolicyFailsWhenPreHookFails(t *testing.T) {
@@ -135,9 +135,9 @@ func TestRunBackupForPolicyFailsWhenPreHookFails(t *testing.T) {
 	})
 
 	assert.Equal(t, int32(0), runnerCalls.Load())
-	messages := sent.snapshot()
-	require.Len(t, messages, 1)
-	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&messages[0])
+	resultMessages := sent.messagesOfType(protocol.TypeTaskResult)
+	require.Len(t, resultMessages, 1)
+	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&resultMessages[0])
 	require.NoError(t, err)
 	assert.Equal(t, "failed", result.Status)
 	assert.Contains(t, result.ErrorLog, "pre_backup_hook")
@@ -164,9 +164,9 @@ func TestRunBackupForPolicyFailsWhenPostHookFails(t *testing.T) {
 		PostBackupHook: &protocol.PolicyHook{Command: "echo boom >&2; exit 3", TimeoutSeconds: 5},
 	})
 
-	messages := sent.snapshot()
-	require.Len(t, messages, 1)
-	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&messages[0])
+	resultMessages := sent.messagesOfType(protocol.TypeTaskResult)
+	require.Len(t, resultMessages, 1)
+	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&resultMessages[0])
 	require.NoError(t, err)
 	assert.Equal(t, "failed", result.Status)
 	assert.Equal(t, "snap-1", result.SnapshotID)
@@ -768,7 +768,7 @@ func TestHandleBackupNowLoadsPolicyRunsBackupAndSendsTaskResult(t *testing.T) {
 		BackupDirs: []string{"/srv", "/home"},
 		Excludes:   []string{"*.tmp"},
 		Retention:  executor.RetentionPolicy{KeepLast: 4, KeepWeekly: 2},
-	}, runnerConfig)
+	}, withoutTaskLog(runnerConfig))
 	assert.Equal(t, msg.ID, resultMsg.ID)
 	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&resultMsg)
 	require.NoError(t, err)
@@ -951,7 +951,7 @@ func TestHandleBackupNowUsesLegacyBackupRunnerWhenProgressRunnerUnset(t *testing
 				ConfigDir:  configDir,
 				RepoPath:   "repo/agent-1",
 				BackupDirs: []string{"/srv"},
-			}, cfg)
+			}, withoutTaskLog(cfg))
 			return executor.TaskResult{Type: "backup", Status: "success", DurationMs: 10}
 		},
 	})
@@ -983,7 +983,7 @@ func TestBackupNowSendsProgressMessages(t *testing.T) {
 				ConfigDir:  configDir,
 				RepoPath:   "repo/agent-1",
 				BackupDirs: []string{"/srv"},
-			}, cfg)
+			}, withoutTaskLog(cfg))
 			progressFn("init", nil)
 			progressFn("backup", &executor.BackupProgress{
 				PercentDone: 50,
@@ -1024,18 +1024,16 @@ func TestBackupNowSendsProgressMessages(t *testing.T) {
 	handler.Handle(*msg)
 
 	waitForMessageType(t, sent, protocol.TypeTaskResult, time.Second)
-	messages := sent.snapshot()
-	require.Len(t, messages, 4)
-	assert.Equal(t, protocol.TypeBackupProgress, messages[0].Type)
-	assert.Equal(t, msg.ID, messages[0].ID)
-	initProgress, err := protocol.ParsePayload[protocol.BackupProgressPayload](&messages[0])
+	progressMessages := sent.messagesOfType(protocol.TypeBackupProgress)
+	require.Len(t, progressMessages, 3)
+	assert.Equal(t, msg.ID, progressMessages[0].ID)
+	initProgress, err := protocol.ParsePayload[protocol.BackupProgressPayload](&progressMessages[0])
 	require.NoError(t, err)
 	assert.Equal(t, "agent-1", initProgress.AgentID)
 	assert.Equal(t, "init", initProgress.Phase)
 
-	assert.Equal(t, protocol.TypeBackupProgress, messages[1].Type)
-	assert.Equal(t, msg.ID, messages[1].ID)
-	backupProgress, err := protocol.ParsePayload[protocol.BackupProgressPayload](&messages[1])
+	assert.Equal(t, msg.ID, progressMessages[1].ID)
+	backupProgress, err := protocol.ParsePayload[protocol.BackupProgressPayload](&progressMessages[1])
 	require.NoError(t, err)
 	assert.Equal(t, "agent-1", backupProgress.AgentID)
 	assert.Equal(t, "backup", backupProgress.Phase)
@@ -1046,9 +1044,8 @@ func TestBackupNowSendsProgressMessages(t *testing.T) {
 	assert.Equal(t, int64(500), backupProgress.BytesDone)
 	assert.Equal(t, "/srv/db.sqlite", backupProgress.CurrentFile)
 
-	assert.Equal(t, protocol.TypeBackupProgress, messages[2].Type)
-	assert.Equal(t, msg.ID, messages[2].ID)
-	statsProgress, err := protocol.ParsePayload[protocol.BackupProgressPayload](&messages[2])
+	assert.Equal(t, msg.ID, progressMessages[2].ID)
+	statsProgress, err := protocol.ParsePayload[protocol.BackupProgressPayload](&progressMessages[2])
 	require.NoError(t, err)
 	assert.Equal(t, "agent-1", statsProgress.AgentID)
 	assert.Equal(t, "stats", statsProgress.Phase)
@@ -1060,9 +1057,10 @@ func TestBackupNowSendsProgressMessages(t *testing.T) {
 	assert.Positive(t, statsProgress.BytesPerSec)
 	assert.Equal(t, "/srv/final.db", statsProgress.CurrentFile)
 
-	assert.Equal(t, protocol.TypeTaskResult, messages[3].Type)
-	assert.Equal(t, msg.ID, messages[3].ID)
-	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&messages[3])
+	resultMessages := sent.messagesOfType(protocol.TypeTaskResult)
+	require.Len(t, resultMessages, 1)
+	assert.Equal(t, msg.ID, resultMessages[0].ID)
+	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&resultMessages[0])
 	require.NoError(t, err)
 	assert.Equal(t, "agent-1", result.AgentID)
 	assert.Equal(t, "backup", result.TaskType)
@@ -1073,7 +1071,7 @@ func TestBackupNowSendsProgressMessages(t *testing.T) {
 func TestBackupProgressCallbackSendsFirstMeasuredProgressAfterPhaseMarker(t *testing.T) {
 	sent := &sentMessages{}
 	handler := NewHandler(HandlerConfig{SendFunc: sent.send})
-	callback := handler.backupProgressCallback("backup-msg-1", "agent-1")
+	callback := handler.backupProgressCallback("backup-msg-1", "agent-1", nil)
 
 	callback("backup", nil)
 	callback("backup", &executor.BackupProgress{
@@ -1093,9 +1091,9 @@ func TestBackupProgressCallbackSendsFirstMeasuredProgressAfterPhaseMarker(t *tes
 		CurrentFile: "/srv/second.db",
 	})
 
-	messages := sent.snapshot()
-	require.Len(t, messages, 2)
-	firstMeasured, err := protocol.ParsePayload[protocol.BackupProgressPayload](&messages[1])
+	progressMessages := sent.messagesOfType(protocol.TypeBackupProgress)
+	require.Len(t, progressMessages, 2)
+	firstMeasured, err := protocol.ParsePayload[protocol.BackupProgressPayload](&progressMessages[1])
 	require.NoError(t, err)
 	assert.Equal(t, "backup", firstMeasured.Phase)
 	assert.Equal(t, float64(25), firstMeasured.PercentDone)
@@ -1175,10 +1173,10 @@ func TestHandleBackupNowPreventsOverlappingRuns(t *testing.T) {
 
 	handler.Handle(*msg)
 
-	messages := sent.snapshot()
-	require.Len(t, messages, 1)
-	assert.Equal(t, msg.ID, messages[0].ID)
-	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&messages[0])
+	resultMessages := sent.messagesOfType(protocol.TypeTaskResult)
+	require.Len(t, resultMessages, 1)
+	assert.Equal(t, msg.ID, resultMessages[0].ID)
+	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&resultMessages[0])
 	require.NoError(t, err)
 	assert.Equal(t, "failed", result.Status)
 	assert.Equal(t, "backup already running", result.ErrorLog)
@@ -1188,10 +1186,10 @@ func TestHandleBackupNowPreventsOverlappingRuns(t *testing.T) {
 	<-done
 
 	waitForMessageTypeCount(t, sent, protocol.TypeTaskResult, 2, time.Second)
-	messages = sent.snapshot()
-	require.Len(t, messages, 2)
-	assert.Equal(t, msg.ID, messages[1].ID)
-	result, err = protocol.ParsePayload[protocol.TaskResultPayload](&messages[1])
+	resultMessages = sent.messagesOfType(protocol.TypeTaskResult)
+	require.Len(t, resultMessages, 2)
+	assert.Equal(t, msg.ID, resultMessages[1].ID)
+	result, err = protocol.ParsePayload[protocol.TaskResultPayload](&resultMessages[1])
 	require.NoError(t, err)
 	assert.Equal(t, "success", result.Status)
 	assert.Equal(t, int32(1), calls.Load())
@@ -1231,7 +1229,7 @@ func TestHandleBackupNowStartsAsyncAndDoesNotBlockHandle(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("backup runner did not start")
 	}
-	assert.Empty(t, sent.snapshot())
+	assert.Empty(t, sent.messagesOfType(protocol.TypeTaskResult))
 
 	releaseRunner()
 	waitForMessageType(t, sent, protocol.TypeTaskResult, time.Second)
@@ -2755,6 +2753,23 @@ func (s *sentMessages) snapshot() []protocol.Message {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]protocol.Message(nil), s.messages...)
+}
+
+func (s *sentMessages) messagesOfType(msgType string) []protocol.Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filtered := make([]protocol.Message, 0, len(s.messages))
+	for _, msg := range s.messages {
+		if msg.Type == msgType {
+			filtered = append(filtered, msg)
+		}
+	}
+	return filtered
+}
+
+func withoutTaskLog(cfg executor.ExecutorConfig) executor.ExecutorConfig {
+	cfg.TaskLog = nil
+	return cfg
 }
 
 func waitForMessageType(t *testing.T, sent *sentMessages, msgType string, timeout time.Duration) protocol.Message {

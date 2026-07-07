@@ -37,6 +37,7 @@ const (
 	TypeUpdateAgent          = "update_agent"
 	TypeUpdateAgentResp      = "update_agent_resp"
 	TypeBackupProgress       = "backup_progress"
+	TypeTaskLog              = "task_log"
 	TypeCancelTask           = "cancel_task"
 )
 
@@ -50,6 +51,7 @@ const (
 	CapabilityDockerContainerRestore    = "docker_container_restore"
 	CapabilityTypedBackupSources        = "typed_backup_sources"
 	CapabilityBackupVerification        = "backup_verification"
+	CapabilityLiveTaskLogs              = "live_task_logs"
 )
 
 // DefaultAgentCapabilities returns the feature set reported by current agents.
@@ -62,6 +64,7 @@ func DefaultAgentCapabilities() []string {
 		CapabilityArchiveBackup,
 		CapabilityTypedBackupSources,
 		CapabilityBackupVerification,
+		CapabilityLiveTaskLogs,
 	}
 }
 
@@ -236,6 +239,20 @@ type BackupProgressPayload struct {
 	BytesDone   int64   `json:"bytes_done"`
 	BytesPerSec int64   `json:"bytes_per_sec"`
 	CurrentFile string  `json:"current_file"`
+}
+
+// TaskLogPayload carries one redacted log line for a task identified by message ID.
+type TaskLogPayload struct {
+	AgentID   string    `json:"agent_id"`
+	MessageID string    `json:"message_id"`
+	TaskType  string    `json:"task_type"`
+	Sequence  int64     `json:"sequence"`
+	Timestamp time.Time `json:"timestamp"`
+	Level     string    `json:"level"`
+	Phase     string    `json:"phase"`
+	Stream    string    `json:"stream"`
+	Line      string    `json:"line"`
+	Truncated bool      `json:"truncated,omitempty"`
 }
 
 // CancelTaskPayload requests cancellation of a running agent task by message ID.

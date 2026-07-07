@@ -102,3 +102,40 @@ export interface TaskFilters {
   status?: string;
   limit?: number;
 }
+
+export interface TaskLogLine {
+  agent_id: string;
+  message_id: string;
+  task_type?: string;
+  sequence: number;
+  timestamp: string;
+  level: "info" | "error" | string;
+  phase: string;
+  stream: "system" | "stdout" | "stderr" | string;
+  line: string;
+  truncated?: boolean;
+}
+
+export type TaskLogStatus =
+  | "available"
+  | "empty"
+  | "missing_message_id"
+  | "expired"
+  | "unsupported_agent";
+
+export interface TaskLogResponse {
+  agent_id: string;
+  message_id: string;
+  task_id?: string;
+  command_id?: string;
+  status: TaskLogStatus;
+  lines: TaskLogLine[];
+  latest_sequence: number;
+  truncated: boolean;
+  dropped_lines: number;
+}
+
+export interface TaskLogQuery {
+  after?: number;
+  limit?: number;
+}

@@ -11,6 +11,7 @@ import (
 
 	"vaultfleet/internal/master/commands"
 	"vaultfleet/internal/master/db"
+	"vaultfleet/internal/master/tasklogs"
 	"vaultfleet/pkg/protocol"
 )
 
@@ -59,6 +60,23 @@ func TestGetCommandReturnsNotFoundForMissingCommand(t *testing.T) {
 	body := parseJSON(t, w)
 	assert.Equal(t, false, body["ok"])
 	assert.Equal(t, "command not found", body["error"])
+}
+
+func TestGetCommandLogsReturnsLines(t *testing.T) {
+	setup := setupCommandsAPI(t)
+	agent := createCommandsTestAgent(t, setup.database, "online")
+	command := createAPICommand(t, setup.service, agent.ID, protocol.TypeBackupNow, commands.CommandStatusRunning)
+	setup.logBuffer.Add(agent.ID, command.MessageID, protocol.TaskLogPayload{Sequence: 1, Phase: "backup", Line: "running"})
+
+	w := getJSON(t, setup.router, "/api/commands/"+command.ID+"/logs")
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	data := requireMap(t, parseJSON(t, w)["data"])
+	assert.Equal(t, "available", data["status"])
+	assert.Equal(t, command.ID, data["command_id"])
+	lines := requireList(t, data["lines"])
+	require.Len(t, lines, 1)
+	assert.Equal(t, "running", requireMap(t, lines[0])["line"])
 }
 
 func TestListAgentCommandsFiltersStatusAndLimit(t *testing.T) {
@@ -111,9 +129,10 @@ func TestListAgentCommandsFiltersType(t *testing.T) {
 }
 
 type commandsAPISetup struct {
-	database *db.Database
-	service  *commands.Service
-	router   *gin.Engine
+	database  *db.Database
+	service   *commands.Service
+	router    *gin.Engine
+	logBuffer *tasklogs.Buffer
 }
 
 func setupCommandsAPI(t *testing.T) commandsAPISetup {
@@ -124,11 +143,13 @@ func setupCommandsAPI(t *testing.T) commandsAPISetup {
 	require.NoError(t, err)
 
 	service := commands.NewService(database, &fakeCommandHub{online: map[string]bool{}})
+	logBuffer := tasklogs.NewBuffer()
 	handler := NewCommandHandler(database)
+	handler.TaskLogs = logBuffer
 	router := gin.New()
 	RegisterCommandRoutes(router.Group("/api"), handler)
 
-	return commandsAPISetup{database: database, service: service, router: router}
+	return commandsAPISetup{database: database, service: service, router: router, logBuffer: logBuffer}
 }
 
 func createCommandsTestAgent(t *testing.T, database *db.Database, status string) db.Agent {

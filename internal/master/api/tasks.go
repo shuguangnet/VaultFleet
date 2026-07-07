@@ -20,6 +20,7 @@ import (
 	"vaultfleet/internal/agent/executor"
 	"vaultfleet/internal/master/commands"
 	"vaultfleet/internal/master/db"
+	"vaultfleet/internal/master/tasklogs"
 	"vaultfleet/pkg/protocol"
 	"vaultfleet/pkg/rcloneobscure"
 )
@@ -32,6 +33,7 @@ type TaskHandler struct {
 	Hub            CommandHub
 	Commands       *commands.Service
 	ProgressGetter func(agentID string, messageID string) *protocol.BackupProgressPayload
+	TaskLogs       tasklogs.Getter
 }
 
 type CommandHub interface {
@@ -75,6 +77,7 @@ func NewTaskHandler(database *db.Database, hub CommandHub) *TaskHandler {
 
 func RegisterTaskRoutes(rg *gin.RouterGroup, h *TaskHandler) {
 	rg.GET("/tasks", h.List)
+	rg.GET("/tasks/:id/logs", h.GetLogs)
 	rg.GET("/tasks/:id/download", h.DownloadArtifact)
 	rg.POST("/tasks/:id/cancel", h.CancelTask)
 	rg.POST("/agents/:id/backup-now", h.BackupNow)

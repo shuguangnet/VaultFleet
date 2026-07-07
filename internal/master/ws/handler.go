@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"vaultfleet/internal/master/events"
+	"vaultfleet/internal/master/tasklogs"
 	"vaultfleet/pkg/protocol"
 )
 
@@ -45,6 +46,7 @@ type Handler struct {
 	MasterVersion                 string
 	GitHubRepo                    string
 	ProgressCache                 *BackupProgressCache
+	TaskLogBuffer                 *tasklogs.Buffer
 	versionNotifyMu               sync.Mutex
 	versionNotifyTimes            map[string]time.Time
 }
@@ -219,6 +221,9 @@ func (h *Handler) dispatch(agentID string, msg protocol.Message) {
 		if h.ProgressCache != nil {
 			h.ProgressCache.Delete(agentID, msg.ID)
 		}
+		if h.TaskLogBuffer != nil {
+			h.TaskLogBuffer.MarkComplete(agentID, msg.ID)
+		}
 		if h.taskResultProcess != nil {
 			if err := h.taskResultProcess(agentID, msg); err != nil {
 				log.Printf("process task result failed for agent %s: %v", agentID, err)
@@ -237,6 +242,16 @@ func (h *Handler) dispatch(agentID string, msg protocol.Message) {
 			if progress, err := protocol.ParsePayload[protocol.BackupProgressPayload](&msg); err == nil {
 				progress.AgentID = agentID
 				h.ProgressCache.Set(agentID, msg.ID, progress)
+			}
+		}
+	case protocol.TypeTaskLog:
+		if h.TaskLogBuffer != nil {
+			if payload, err := protocol.ParsePayload[protocol.TaskLogPayload](&msg); err == nil {
+				messageID := payload.MessageID
+				if messageID == "" {
+					messageID = msg.ID
+				}
+				h.TaskLogBuffer.Add(agentID, messageID, *payload)
 			}
 		}
 	case protocol.TypeDirBrowseResp, protocol.TypeDirSizeResp, protocol.TypeDockerDiscoveryResp, protocol.TypeSnapshotListResp, protocol.TypeSnapshotBrowseResp, protocol.TypeCollectLogsResp, protocol.TypeUpdateAgentResp:

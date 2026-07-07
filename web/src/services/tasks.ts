@@ -1,4 +1,4 @@
-import { TaskFilters, TaskHistory } from "@/types/task";
+import { TaskFilters, TaskHistory, TaskLogQuery, TaskLogResponse } from "@/types/task";
 import { apiGet, apiPost } from "./http";
 
 export const listTasks = (filters: TaskFilters = {}) => apiGet<TaskHistory[]>(`/api/tasks${toQuery(filters)}`);
@@ -6,6 +6,9 @@ export const listTasks = (filters: TaskFilters = {}) => apiGet<TaskHistory[]>(`/
 export const cancelTask = (taskId: string) => apiPost(`/api/tasks/${taskId}/cancel`, {});
 
 export const taskArtifactDownloadUrl = (taskId: string) => `/api/tasks/${taskId}/download`;
+
+export const getTaskLogs = (taskId: string, query: TaskLogQuery = {}) =>
+  apiGet<TaskLogResponse>(`/api/tasks/${taskId}/logs${taskLogQuery(query)}`);
 
 function toQuery(filters: TaskFilters): string {
   const params = new URLSearchParams();
@@ -16,4 +19,12 @@ function toQuery(filters: TaskFilters): string {
 
   const query = params.toString();
   return query ? `?${query}` : "";
+}
+
+function taskLogQuery(query: TaskLogQuery): string {
+  const params = new URLSearchParams();
+  if (query.after !== undefined) params.set("after", query.after.toString());
+  if (query.limit) params.set("limit", query.limit.toString());
+  const text = params.toString();
+  return text ? `?${text}` : "";
 }

@@ -16,6 +16,7 @@ import (
 
 	"vaultfleet/internal/master/commands"
 	"vaultfleet/internal/master/db"
+	"vaultfleet/internal/master/tasklogs"
 	"vaultfleet/pkg/protocol"
 )
 
@@ -843,11 +844,53 @@ func TestListTasksUsesMessageIDWhenAttachingBackupProgress(t *testing.T) {
 	assert.Equal(t, map[string]int{first.MessageID: 1, second.MessageID: 1}, calls)
 }
 
+func TestGetTaskLogsReturnsIncrementalLines(t *testing.T) {
+	setup := setupTasksAPI(t)
+	agent := createTasksTestAgent(t, setup.database, "online")
+	markTasksAgentCapabilities(t, setup.database, agent.ID, []string{protocol.CapabilityLiveTaskLogs})
+	history := seedTaskHistoryWithMessageID(t, setup.database, agent.ID, "backup", commands.TaskStatusRunning, "snap-logs", time.Now(), "msg-logs")
+	setup.logBuffer.Add(agent.ID, history.MessageID, protocol.TaskLogPayload{Sequence: 1, Phase: "init", Stream: "system", Line: "start"})
+	setup.logBuffer.Add(agent.ID, history.MessageID, protocol.TaskLogPayload{Sequence: 2, Phase: "backup", Stream: "stdout", Line: "upload"})
+
+	w := getJSON(t, setup.router, "/api/tasks/"+history.ID+"/logs?after=1&limit=1")
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	data := requireMap(t, body["data"])
+	assert.Equal(t, "available", data["status"])
+	assert.Equal(t, agent.ID, data["agent_id"])
+	assert.Equal(t, history.MessageID, data["message_id"])
+	assert.Equal(t, float64(2), data["latest_sequence"])
+	lines := requireList(t, data["lines"])
+	require.Len(t, lines, 1)
+	line := requireMap(t, lines[0])
+	assert.Equal(t, float64(2), line["sequence"])
+	assert.Equal(t, "upload", line["line"])
+}
+
+func TestGetTaskLogsReturnsUnavailableStates(t *testing.T) {
+	setup := setupTasksAPI(t)
+	agent := createTasksTestAgent(t, setup.database, "online")
+	missingMessageID := seedTaskHistoryWithMessageID(t, setup.database, agent.ID, "backup", commands.TaskStatusSuccess, "snap-no-message", time.Now(), "")
+
+	w := getJSON(t, setup.router, "/api/tasks/"+missingMessageID.ID+"/logs")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	data := requireMap(t, parseJSON(t, w)["data"])
+	assert.Equal(t, "missing_message_id", data["status"])
+
+	unsupported := seedTaskHistoryWithMessageID(t, setup.database, agent.ID, "backup", commands.TaskStatusSuccess, "snap-old-agent", time.Now(), "msg-old")
+	w = getJSON(t, setup.router, "/api/tasks/"+unsupported.ID+"/logs")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	data = requireMap(t, parseJSON(t, w)["data"])
+	assert.Equal(t, "unsupported_agent", data["status"])
+}
+
 type tasksAPISetup struct {
-	database *db.Database
-	hub      *fakeCommandHub
-	handler  *TaskHandler
-	router   *gin.Engine
+	database  *db.Database
+	hub       *fakeCommandHub
+	handler   *TaskHandler
+	router    *gin.Engine
+	logBuffer *tasklogs.Buffer
 }
 
 func setupTasksAPI(t *testing.T) tasksAPISetup {
@@ -859,12 +902,14 @@ func setupTasksAPI(t *testing.T) tasksAPISetup {
 
 	hub := &fakeCommandHub{online: map[string]bool{}}
 	commandService := commands.NewService(database, hub)
+	logBuffer := tasklogs.NewBuffer()
 	handler := NewTaskHandler(database, hub)
 	handler.Commands = commandService
+	handler.TaskLogs = logBuffer
 	router := gin.New()
 	RegisterTaskRoutes(router.Group("/api"), handler)
 
-	return tasksAPISetup{database: database, hub: hub, handler: handler, router: router}
+	return tasksAPISetup{database: database, hub: hub, handler: handler, router: router, logBuffer: logBuffer}
 }
 
 type sentCommandMessage struct {

@@ -16,6 +16,7 @@ import (
 	"vaultfleet/internal/master/events"
 	"vaultfleet/internal/master/logbuf"
 	"vaultfleet/internal/master/storagecheck"
+	"vaultfleet/internal/master/tasklogs"
 	"vaultfleet/pkg/protocol"
 	"vaultfleet/pkg/rcloneobscure"
 )
@@ -38,6 +39,7 @@ type RouterConfig struct {
 	Version            string
 	GitHubRepo         string
 	LogBuf             *logbuf.RingBuffer
+	TaskLogs           tasklogs.Getter
 }
 
 type PolicyPushTracker struct {
@@ -146,7 +148,9 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	taskHandler := NewTaskHandler(cfg.Database, cfg.Hub)
 	taskHandler.Commands = commandService
 	taskHandler.ProgressGetter = cfg.TaskProgressGetter
+	taskHandler.TaskLogs = cfg.TaskLogs
 	commandHandler := NewCommandHandler(cfg.Database)
+	commandHandler.TaskLogs = cfg.TaskLogs
 	notificationHandler := NewNotificationHandler(cfg.Database)
 	systemHandler := NewSystemHandler(cfg.Database)
 	systemHandler.Version = cfg.Version

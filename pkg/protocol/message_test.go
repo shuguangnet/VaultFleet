@@ -64,6 +64,37 @@ func TestDefaultAgentCapabilitiesIncludesCurrentFeatureSet(t *testing.T) {
 	assert.Contains(t, capabilities, CapabilityPolicyPlaintextRclonePass)
 	assert.Contains(t, capabilities, CapabilityArchiveBackup)
 	assert.Contains(t, capabilities, CapabilityBackupVerification)
+	assert.Contains(t, capabilities, CapabilityLiveTaskLogs)
+}
+
+func TestTaskLogPayloadRoundTrip(t *testing.T) {
+	ts := time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC)
+	payload := TaskLogPayload{
+		AgentID:   "agent-1",
+		MessageID: "msg-1",
+		TaskType:  "backup",
+		Sequence:  7,
+		Timestamp: ts,
+		Level:     "info",
+		Phase:     "backup",
+		Stream:    "stdout",
+		Line:      "uploaded /srv/app.db",
+		Truncated: true,
+	}
+
+	msg, parsed := roundTripPayload[TaskLogPayload](t, TypeTaskLog, payload)
+
+	assert.Equal(t, TypeTaskLog, msg.Type)
+	assert.Equal(t, payload.AgentID, parsed.AgentID)
+	assert.Equal(t, payload.MessageID, parsed.MessageID)
+	assert.Equal(t, payload.TaskType, parsed.TaskType)
+	assert.Equal(t, payload.Sequence, parsed.Sequence)
+	assert.Equal(t, payload.Timestamp, parsed.Timestamp)
+	assert.Equal(t, payload.Level, parsed.Level)
+	assert.Equal(t, payload.Phase, parsed.Phase)
+	assert.Equal(t, payload.Stream, parsed.Stream)
+	assert.Equal(t, payload.Line, parsed.Line)
+	assert.True(t, parsed.Truncated)
 }
 
 func TestPolicyPushPayload(t *testing.T) {
