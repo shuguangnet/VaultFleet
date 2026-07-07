@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -47,6 +48,7 @@ type agentResponse struct {
 	ID           string     `json:"id"`
 	Name         string     `json:"name"`
 	Status       string     `json:"status"`
+	Tags         []string   `json:"tags"`
 	LastSeenAt   *time.Time `json:"last_seen_at"`
 	LastSeen     *time.Time `json:"last_seen"`
 	SystemInfo   string     `json:"system_info"`
@@ -62,6 +64,10 @@ type agentResponse struct {
 type updateAgentRequest struct {
 	Version    string `json:"version"`
 	GitHubRepo string `json:"github_repo"`
+}
+
+type updateAgentTagsRequest struct {
+	Tags []string `json:"tags"`
 }
 
 type updateAgentResponse struct {
@@ -115,12 +121,70 @@ func (h *AgentHandler) List(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"ok": true, "data": agentResponses(agents)})
+	tagFilters, ok := normalizeAgentTagsFromValues(c, requestedAgentTags(c))
+	if !ok {
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true, "data": agentResponses(filterAgentsByTags(agents, tagFilters))})
 }
 
 func (h *AgentHandler) Get(c *gin.Context) {
 	agent, ok := h.findAgentByID(c, c.Param("id"))
 	if !ok {
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true, "data": newAgentResponse(agent)})
+}
+
+func (h *AgentHandler) ListTags(c *gin.Context) {
+	agents := []db.Agent{}
+	if err := h.DB.DB.Find(&agents).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "database error"})
+		return
+	}
+
+	set := map[string]bool{}
+	for _, agent := range agents {
+		for _, tag := range agentTags(agent) {
+			set[tag] = true
+		}
+	}
+
+	tags := make([]string, 0, len(set))
+	for tag := range set {
+		tags = append(tags, tag)
+	}
+	sort.Strings(tags)
+	c.JSON(http.StatusOK, gin.H{"ok": true, "data": tags})
+}
+
+func (h *AgentHandler) UpdateTags(c *gin.Context) {
+	agent, ok := h.findAgentByID(c, c.Param("id"))
+	if !ok {
+		return
+	}
+
+	var request updateAgentTagsRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "invalid request"})
+		return
+	}
+
+	tags, ok := normalizeAgentTagsFromValues(c, request.Tags)
+	if !ok {
+		return
+	}
+	raw, err := json.Marshal(tags)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "encode tags"})
+		return
+	}
+
+	agent.Tags = string(raw)
+	if err := h.DB.DB.Save(&agent).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "database error"})
 		return
 	}
 
@@ -310,6 +374,7 @@ func newAgentResponse(agent db.Agent) agentResponse {
 		ID:           agent.ID,
 		Name:         agent.Name,
 		Status:       agent.Status,
+		Tags:         agentTags(agent),
 		LastSeenAt:   agent.LastSeenAt,
 		LastSeen:     agent.LastSeenAt,
 		SystemInfo:   agent.SystemInfo,
@@ -346,6 +411,119 @@ func agentResponses(agents []db.Agent) []agentResponse {
 		responses = append(responses, newAgentResponse(agent))
 	}
 	return responses
+}
+
+const (
+	maxAgentTags       = 20
+	maxAgentTagLength  = 40
+	agentTagQueryParam = "tag"
+)
+
+func requestedAgentTags(c *gin.Context) []string {
+	values := append([]string{}, c.QueryArray(agentTagQueryParam)...)
+	if csv := strings.TrimSpace(c.Query("tags")); csv != "" {
+		for _, value := range strings.Split(csv, ",") {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+func normalizeAgentTagsFromValues(c *gin.Context, values []string) ([]string, bool) {
+	tags, err := normalizeAgentTags(values)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
+		return nil, false
+	}
+	return tags, true
+}
+
+func normalizeAgentTags(values []string) ([]string, error) {
+	if len(values) == 0 {
+		return []string{}, nil
+	}
+
+	seen := map[string]bool{}
+	tags := make([]string, 0, len(values))
+	for _, value := range values {
+		tag := strings.ToLower(strings.TrimSpace(value))
+		if tag == "" {
+			return nil, errors.New("tag cannot be empty")
+		}
+		if len(tag) > maxAgentTagLength {
+			return nil, errors.New("tag is too long")
+		}
+		if !validAgentTag(tag) {
+			return nil, errors.New("tag contains unsupported characters")
+		}
+		if seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		tags = append(tags, tag)
+		if len(tags) > maxAgentTags {
+			return nil, errors.New("too many tags")
+		}
+	}
+	sort.Strings(tags)
+	return tags, nil
+}
+
+func validAgentTag(tag string) bool {
+	for _, ch := range tag {
+		switch {
+		case ch >= 'a' && ch <= 'z':
+		case ch >= '0' && ch <= '9':
+		case ch == '-' || ch == '_' || ch == '.' || ch == ':':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func agentTags(agent db.Agent) []string {
+	if strings.TrimSpace(agent.Tags) == "" {
+		return []string{}
+	}
+	var tags []string
+	if err := json.Unmarshal([]byte(agent.Tags), &tags); err != nil {
+		return []string{}
+	}
+	normalized, err := normalizeAgentTags(tags)
+	if err != nil {
+		return []string{}
+	}
+	return normalized
+}
+
+func filterAgentsByTags(agents []db.Agent, tags []string) []db.Agent {
+	if len(tags) == 0 {
+		return agents
+	}
+	filtered := make([]db.Agent, 0, len(agents))
+	for _, agent := range agents {
+		if agentHasAllTags(agent, tags) {
+			filtered = append(filtered, agent)
+		}
+	}
+	return filtered
+}
+
+func agentHasAllTags(agent db.Agent, tags []string) bool {
+	if len(tags) == 0 {
+		return true
+	}
+	set := map[string]bool{}
+	for _, tag := range agentTags(agent) {
+		set[tag] = true
+	}
+	for _, tag := range tags {
+		if !set[tag] {
+			return false
+		}
+	}
+	return true
 }
 
 const tokenGenerationAttempts = 3

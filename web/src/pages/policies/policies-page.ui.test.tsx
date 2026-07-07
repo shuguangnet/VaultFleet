@@ -8,9 +8,10 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { listAgents, backupNow, discoverDockerAgent } from "@/services/agents";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { listAgents, backupNow, discoverDockerAgent, listAgentTags } from "@/services/agents";
 import {
+  bulkAssignPolicy,
   createPolicy,
   deletePolicy,
   listPolicies,
@@ -22,10 +23,12 @@ import { PoliciesPage } from "./policies-page";
 vi.mock("@/services/agents", () => ({
   backupNow: vi.fn(),
   discoverDockerAgent: vi.fn(),
+  listAgentTags: vi.fn(),
   listAgents: vi.fn(),
 }));
 
 vi.mock("@/services/policies", () => ({
+  bulkAssignPolicy: vi.fn(),
   createPolicy: vi.fn(),
   deletePolicy: vi.fn(),
   listPolicies: vi.fn(),
@@ -65,6 +68,19 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+});
+
+beforeEach(() => {
+  vi.mocked(listAgentTags).mockResolvedValue([]);
+  vi.mocked(bulkAssignPolicy).mockResolvedValue({
+    source_policy_id: "policy-1",
+    target_tags: [],
+    requested_count: 0,
+    matched_count: 0,
+    created_count: 0,
+    failed_count: 0,
+    results: [],
+  });
 });
 
 describe("PoliciesPage rclone form state", () => {

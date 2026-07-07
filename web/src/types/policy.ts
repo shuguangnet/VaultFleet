@@ -30,6 +30,30 @@ export interface BackupPolicy {
   latest_verification?: BackupVerificationSummary;
 }
 
+export interface BulkAssignPolicyRequest {
+  source_policy_id: string;
+  target_agent_ids?: string[];
+  target_tags?: string[];
+}
+
+export interface BulkAssignPolicyResponse {
+  source_policy_id: string;
+  target_tags: string[];
+  requested_count: number;
+  matched_count: number;
+  created_count: number;
+  failed_count: number;
+  results: BulkAssignPolicyResult[];
+}
+
+export interface BulkAssignPolicyResult {
+  agent_id?: string;
+  agent_name?: string;
+  policy_id?: string;
+  ok: boolean;
+  error?: string;
+}
+
 export interface RetentionConfig {
   keep_last?: number;
   keep_daily?: number;

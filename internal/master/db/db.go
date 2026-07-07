@@ -57,6 +57,9 @@ func New(dataDir string) (*Database, error) {
 	if err := ensureIdentityAccessColumns(gormDB); err != nil {
 		return nil, fmt.Errorf("ensure identity access columns: %w", err)
 	}
+	if err := ensureAgentTagsColumn(gormDB); err != nil {
+		return nil, fmt.Errorf("ensure agent tags column: %w", err)
+	}
 	if err := backfillUserRoles(gormDB); err != nil {
 		return nil, fmt.Errorf("backfill user roles: %w", err)
 	}
@@ -87,6 +90,15 @@ func ensureIdentityAccessColumns(gormDB *gorm.DB) error {
 					return err
 				}
 			}
+		}
+	}
+	return nil
+}
+
+func ensureAgentTagsColumn(gormDB *gorm.DB) error {
+	if gormDB.Migrator().HasTable(&Agent{}) && !gormDB.Migrator().HasColumn(&Agent{}, "Tags") {
+		if err := gormDB.Migrator().AddColumn(&Agent{}, "Tags"); err != nil {
+			return err
 		}
 	}
 	return nil

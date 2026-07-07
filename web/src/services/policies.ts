@@ -1,4 +1,4 @@
-import { BackupPolicy, PolicyInput } from "@/types/policy";
+import { BackupPolicy, BulkAssignPolicyRequest, BulkAssignPolicyResponse, PolicyInput } from "@/types/policy";
 import { apiDelete, apiGet, apiPost, apiPut } from "./http";
 
 export const listPolicies = (agentId?: string) =>
@@ -8,3 +8,5 @@ export const getPolicy = (id: string) => apiGet<BackupPolicy>(`/api/policies/${i
 export const updatePolicy = (id: string, body: Partial<PolicyInput>) => apiPut<BackupPolicy>(`/api/policies/${id}`, body);
 export const deletePolicy = (id: string) => apiDelete(`/api/policies/${id}`);
 export const verifyPolicyNow = (id: string) => apiPost<{ command_id: string; message_id: string }>(`/api/policies/${id}/verify-now`, {});
+export const bulkAssignPolicy = (body: BulkAssignPolicyRequest) =>
+  apiPost<BulkAssignPolicyResponse>("/api/policies/bulk-assign", body);

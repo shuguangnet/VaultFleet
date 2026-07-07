@@ -81,6 +81,39 @@ func TestIdentityAccessRBACAndBearerTokenScopes(t *testing.T) {
 	assert.NotContains(t, listData[0].(map[string]any), "token")
 }
 
+func TestIdentityAccessBulkPolicyAssignmentRequiresWritePolicyAndAudits(t *testing.T) {
+	setup := setupRouterAssembly(t)
+	adminCookie := loginRouterUser(t, setup.router, "admin", "secret123")
+	createViewer := authedJSON(t, setup.router, http.MethodPost, "/api/users", adminCookie, map[string]any{
+		"username": "viewer",
+		"password": "secret123",
+		"role":     RoleViewer,
+	})
+	require.Equal(t, http.StatusCreated, createViewer.Code, createViewer.Body.String())
+	viewerCookie := loginExistingRouterUser(t, setup.router, "viewer", "secret123")
+
+	sourceAgent := createStorageTestAgent(t, setup.database, "source")
+	targetAgent := createStorageTestAgent(t, setup.database, "target")
+	storage := createPolicyTestStorage(t, setup.database)
+	sourcePolicy := createStorageTestPolicy(t, setup.database, sourceAgent.ID, storage.ID, true)
+
+	payload := map[string]any{
+		"source_policy_id": sourcePolicy.ID,
+		"target_agent_ids": []string{targetAgent.ID},
+	}
+	viewerResp := authedJSON(t, setup.router, http.MethodPost, "/api/policies/bulk-assign", viewerCookie, payload)
+	require.Equal(t, http.StatusForbidden, viewerResp.Code, viewerResp.Body.String())
+
+	adminResp := authedJSON(t, setup.router, http.MethodPost, "/api/policies/bulk-assign", adminCookie, payload)
+	require.Equal(t, http.StatusOK, adminResp.Code, adminResp.Body.String())
+
+	eventsResp := authedJSON(t, setup.router, http.MethodGet, "/api/audit-events?action=policy.create", adminCookie, nil)
+	require.Equal(t, http.StatusOK, eventsResp.Code, eventsResp.Body.String())
+	events := dataList(t, eventsResp)
+	require.NotEmpty(t, events)
+	assert.Equal(t, AuditResultSuccess, events[0].(map[string]any)["result"])
+}
+
 func TestIdentityAccessAPITokenRejectsRevokedExpiredAndAgentTokens(t *testing.T) {
 	setup := setupRouterAssembly(t)
 	adminCookie := loginRouterUser(t, setup.router, "admin", "secret123")

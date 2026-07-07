@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { getAgent, listAgents, normalizeAgent, updateAgent } from "./agents";
+import { getAgent, listAgentTags, listAgents, normalizeAgent, updateAgent, updateAgentTags } from "./agents";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -16,6 +16,7 @@ describe("agent service", () => {
       id: "agent-1",
       name: "Debian-AMD64",
       status: "online",
+      tags: [],
       last_seen: "2026-05-21T05:20:52.803465124Z",
       version: "0.1.0",
       hostname: "ser4885257919",
@@ -37,6 +38,7 @@ describe("agent service", () => {
     });
 
     expect(normalized.last_seen).toBe("");
+    expect(normalized.tags).toEqual([]);
     expect(normalized.hostname).toBe("");
     expect(normalized.os).toBe("");
     expect(normalized.arch).toBe("");
@@ -72,6 +74,47 @@ describe("agent service", () => {
 
     await expect(listAgents()).resolves.toMatchObject([{ id: "agent-1", hostname: "host-a", arch: "arm64" }]);
     await expect(getAgent("agent-2")).resolves.toMatchObject({ id: "agent-2", last_seen: "" });
+  });
+
+  it("supports tag discovery, tag-filtered listing, and tag updates", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ok: true,
+        data: ["prod", "web"],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ok: true,
+        data: [{
+          id: "agent-1",
+          name: "Agent",
+          status: "online",
+          tags: ["prod", "web"],
+          last_seen_at: null,
+          system_info: "{}",
+          created_at: "2026-05-21T05:17:11Z",
+        }],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ok: true,
+        data: {
+          id: "agent-1",
+          name: "Agent",
+          status: "online",
+          tags: ["prod"],
+          last_seen_at: null,
+          system_info: "{}",
+          created_at: "2026-05-21T05:17:11Z",
+        },
+      }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(listAgentTags()).resolves.toEqual(["prod", "web"]);
+    await expect(listAgents(["prod", "web"])).resolves.toMatchObject([{ tags: ["prod", "web"] }]);
+    await expect(updateAgentTags("agent-1", ["prod"])).resolves.toMatchObject({ tags: ["prod"] });
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/agents?tag=prod&tag=web", expect.any(Object));
+    expect(fetchMock).toHaveBeenNthCalledWith(3, "/api/agents/agent-1/tags", expect.objectContaining({
+      method: "PUT",
+    }));
   });
 
   it("requests an agent update through the master API", async () => {

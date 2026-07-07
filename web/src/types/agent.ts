@@ -2,6 +2,7 @@ export interface Agent {
   id: string;
   name: string;
   status: "online" | "offline";
+  tags?: string[];
   last_seen: string;
   version: string;
   hostname: string;
@@ -15,6 +16,7 @@ export interface ApiAgent {
   id: string;
   name: string;
   status: "online" | "offline";
+  tags?: string[] | null;
   last_seen?: string | null;
   last_seen_at?: string | null;
   version?: string | null;

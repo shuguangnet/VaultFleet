@@ -82,6 +82,7 @@ type Agent struct {
 	Status      string     `gorm:"type:text;default:offline" json:"status"`
 	LastSeenAt  *time.Time `json:"last_seen_at"`
 	SystemInfo  string     `gorm:"type:text" json:"system_info"`
+	Tags        string     `gorm:"type:text" json:"-"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 }

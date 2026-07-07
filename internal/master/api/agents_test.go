@@ -39,7 +39,9 @@ func setupTestAgents(t *testing.T) testAgentsSetup {
 
 	router.POST("/api/agents", handler.Create)
 	router.GET("/api/agents", handler.List)
+	router.GET("/api/agents/tags", handler.ListTags)
 	router.GET("/api/agents/:id", handler.Get)
+	router.PUT("/api/agents/:id/tags", handler.UpdateTags)
 	router.DELETE("/api/agents/:id", handler.Delete)
 	router.POST("/api/agents/:id/regenerate-token", handler.RegenerateToken)
 	router.POST("/api/agent/enroll", handler.Enroll)
@@ -250,6 +252,68 @@ func TestListAgents(t *testing.T) {
 	}
 	assert.True(t, seen[first["id"].(string)])
 	assert.True(t, seen[second["id"].(string)])
+}
+
+func TestUpdateAgentTagsNormalizesAndListsTags(t *testing.T) {
+	setup := setupTestAgents(t)
+	agent := createTestAgent(t, setup.router, "Tokyo-1")
+	id := agent["id"].(string)
+
+	w := putJSON(t, setup.router, "/api/agents/"+id+"/tags", map[string]any{
+		"tags": []string{" Prod ", "openstack:az1", "prod", "Web"},
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	data := requireMap(t, body["data"])
+	assertJSONList(t, data["tags"], []string{"openstack:az1", "prod", "web"})
+
+	w = getJSON(t, setup.router, "/api/agents/tags")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body = parseJSON(t, w)
+	assertJSONList(t, body["data"], []string{"openstack:az1", "prod", "web"})
+
+	w = getJSON(t, setup.router, "/api/agents/"+id)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body = parseJSON(t, w)
+	data = requireMap(t, body["data"])
+	assertJSONList(t, data["tags"], []string{"openstack:az1", "prod", "web"})
+}
+
+func TestListAgentsFiltersByAllTags(t *testing.T) {
+	setup := setupTestAgents(t)
+	first := createTestAgent(t, setup.router, "Tokyo-1")
+	second := createTestAgent(t, setup.router, "Tokyo-2")
+	third := createTestAgent(t, setup.router, "Tokyo-3")
+
+	require.Equal(t, http.StatusOK, putJSON(t, setup.router, "/api/agents/"+first["id"].(string)+"/tags", map[string]any{
+		"tags": []string{"prod", "web"},
+	}).Code)
+	require.Equal(t, http.StatusOK, putJSON(t, setup.router, "/api/agents/"+second["id"].(string)+"/tags", map[string]any{
+		"tags": []string{"prod", "db"},
+	}).Code)
+	require.Equal(t, http.StatusOK, putJSON(t, setup.router, "/api/agents/"+third["id"].(string)+"/tags", map[string]any{
+		"tags": []string{"stage", "web"},
+	}).Code)
+
+	w := getJSON(t, setup.router, "/api/agents?tag=prod&tag=web")
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	data := body["data"].([]any)
+	require.Len(t, data, 1)
+	assert.Equal(t, first["id"], data[0].(map[string]any)["id"])
+}
+
+func TestUpdateAgentTagsRejectsInvalidTag(t *testing.T) {
+	setup := setupTestAgents(t)
+	agent := createTestAgent(t, setup.router, "Tokyo-1")
+
+	w := putJSON(t, setup.router, "/api/agents/"+agent["id"].(string)+"/tags", map[string]any{
+		"tags": []string{"prod", "bad tag"},
+	})
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestListAgentsExposesAcceptanceFieldAliases(t *testing.T) {

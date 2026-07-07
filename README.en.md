@@ -16,6 +16,7 @@ Backup data does not pass through the Master. The Master manages the control pla
 
 - **Outbound-only Agents**: nodes do not need inbound ports.
 - **Centralized backup policies** for paths, excludes, cron schedules, retention, task timeout, and storage settings.
+- **Node tags and bulk policy rollout** to group multi-node fleets and clone an existing policy to selected nodes or tag-matched nodes. See [Node Tags And Bulk Policy Rollout](docs/bulk-operations.md).
 - **Web console** for dashboard, nodes, storage, policies, tasks, snapshots, notifications, and system management.
 - **One-time enrollment tokens** exchanged for long-lived Agent tokens after enrollment.
 - **Multi-user access and API tokens** with admin, operator, viewer roles, scoped automation tokens, and audit logs for sensitive actions.
@@ -119,12 +120,14 @@ This stops the service and removes `vaultfleet-agent`, `restic`, `rclone`, and A
 
 1. Add a storage backend and run the connection test.
 2. Create a node, copy the generated install command, and wait for Agent enrollment.
-3. Create a backup policy with repository path, backup sources, excludes, cron schedule, retention, and timeout. Sources can be host directories or Docker containers discovered from a Docker-capable Agent.
-4. Tune rclone transfer parameters when using WebDAV, AList proxies, or rate-limited storage.
-5. For Docker-hosted workloads, back up mounted data directories, bind mounts, `docker-compose.yml`, and `.env`, and use optional hooks when you need logical exports or a brief stop/start window.
-6. Track manual backups, scheduled backups, restore jobs, and running backup progress from task history; cancel running jobs when needed.
-7. Browse snapshots, select the source node and snapshot, choose a target node, restore mode, target path or Docker source, run restore preflight, then confirm the restore task.
-8. For cross-node migration, make sure the new Agent is online and can access the same storage; select that node as the target in the restore drawer instead of creating a matching policy just to reveal old snapshots.
+3. Optionally tag nodes by environment, region, workload, or cloud placement, for example `prod`, `web`, or `openstack:az1`.
+4. Create a backup policy with repository path, backup sources, excludes, cron schedule, retention, and timeout. Sources can be host directories or Docker containers discovered from a Docker-capable Agent.
+5. In multi-node environments, use bulk rollout from an existing policy's action menu to clone it to selected nodes or tag-matched nodes.
+6. Tune rclone transfer parameters when using WebDAV, AList proxies, or rate-limited storage.
+7. For Docker-hosted workloads, back up mounted data directories, bind mounts, `docker-compose.yml`, and `.env`, and use optional hooks when you need logical exports or a brief stop/start window.
+8. Track manual backups, scheduled backups, restore jobs, and running backup progress from task history; cancel running jobs when needed.
+9. Browse snapshots, select the source node and snapshot, choose a target node, restore mode, target path or Docker source, run restore preflight, then confirm the restore task.
+10. For cross-node migration, make sure the new Agent is online and can access the same storage; select that node as the target in the restore drawer instead of creating a matching policy just to reveal old snapshots.
 
 ## Docker Workload Backup Notes
 

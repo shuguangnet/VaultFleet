@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -71,6 +72,12 @@ type updatePolicyRequest struct {
 	Verification    *protocol.BackupVerificationSettings `json:"verification"`
 }
 
+type bulkAssignPolicyRequest struct {
+	SourcePolicyID string   `json:"source_policy_id" binding:"required"`
+	TargetAgentIDs []string `json:"target_agent_ids"`
+	TargetTags     []string `json:"target_tags"`
+}
+
 type policyResponse struct {
 	ID                 string                               `json:"id"`
 	AgentID            string                               `json:"agent_id"`
@@ -102,6 +109,24 @@ type policyVerificationSummary struct {
 	Error      string     `json:"error,omitempty"`
 }
 
+type bulkAssignPolicyResponse struct {
+	SourcePolicyID string                   `json:"source_policy_id"`
+	TargetTags     []string                 `json:"target_tags"`
+	RequestedCount int                      `json:"requested_count"`
+	MatchedCount   int                      `json:"matched_count"`
+	CreatedCount   int                      `json:"created_count"`
+	FailedCount    int                      `json:"failed_count"`
+	Results        []bulkAssignPolicyResult `json:"results"`
+}
+
+type bulkAssignPolicyResult struct {
+	AgentID   string `json:"agent_id,omitempty"`
+	AgentName string `json:"agent_name,omitempty"`
+	PolicyID  string `json:"policy_id,omitempty"`
+	OK        bool   `json:"ok"`
+	Error     string `json:"error,omitempty"`
+}
+
 type policyHookInput struct {
 	Command        string `json:"command"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
@@ -112,6 +137,7 @@ const maxPolicyHookTimeoutSeconds = 3600
 func RegisterPolicyRoutes(rg *gin.RouterGroup, h *PolicyHandler) {
 	rg.POST("/policies", h.CreatePolicy)
 	rg.GET("/policies", h.ListPolicies)
+	rg.POST("/policies/bulk-assign", h.BulkAssignPolicies)
 	rg.GET("/policies/:id", h.GetPolicy)
 	rg.PUT("/policies/:id", h.UpdatePolicy)
 	rg.DELETE("/policies/:id", h.DeletePolicy)
@@ -229,6 +255,135 @@ func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
 	h.writePolicyResponse(c, http.StatusCreated, policy)
 }
 
+func (h *PolicyHandler) BulkAssignPolicies(c *gin.Context) {
+	var request bulkAssignPolicyRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+
+	source, ok := h.findPolicyByID(c, request.SourcePolicyID)
+	if !ok {
+		return
+	}
+	if !h.storageExists(c, source.StorageID) {
+		return
+	}
+
+	targetTags, ok := normalizeAgentTagsFromValues(c, request.TargetTags)
+	if !ok {
+		return
+	}
+	if len(request.TargetAgentIDs) == 0 && len(targetTags) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "target_agent_ids or target_tags is required"})
+		return
+	}
+
+	requiresDocker, err := policyRequiresDockerWorkload(source)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "decode source policy"})
+		return
+	}
+
+	var agents []db.Agent
+	if err := h.DB.DB.Order("created_at DESC").Find(&agents).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
+		return
+	}
+
+	response := h.bulkAssignPolicies(source, agents, request.TargetAgentIDs, targetTags, requiresDocker)
+	writeDataResponse(c, http.StatusOK, response)
+}
+
+func (h *PolicyHandler) bulkAssignPolicies(source db.BackupPolicy, agents []db.Agent, targetAgentIDs []string, targetTags []string, requiresDocker bool) bulkAssignPolicyResponse {
+	agentByID := make(map[string]db.Agent, len(agents))
+	for _, agent := range agents {
+		agentByID[agent.ID] = agent
+	}
+
+	response := bulkAssignPolicyResponse{
+		SourcePolicyID: source.ID,
+		TargetTags:     targetTags,
+		Results:        []bulkAssignPolicyResult{},
+	}
+
+	targets := make([]db.Agent, 0, len(targetAgentIDs)+len(agents))
+	targetSeen := map[string]bool{}
+	requestedSeen := map[string]bool{}
+	for _, rawID := range targetAgentIDs {
+		id := strings.TrimSpace(rawID)
+		if id == "" || requestedSeen[id] {
+			continue
+		}
+		requestedSeen[id] = true
+		response.RequestedCount++
+		agent, found := agentByID[id]
+		if !found {
+			response.Results = append(response.Results, bulkAssignPolicyResult{
+				AgentID: id,
+				OK:      false,
+				Error:   "agent not found",
+			})
+			response.FailedCount++
+			continue
+		}
+		targets = append(targets, agent)
+		targetSeen[id] = true
+	}
+
+	if len(targetTags) > 0 {
+		matched := filterAgentsByTags(agents, targetTags)
+		sort.SliceStable(matched, func(i, j int) bool {
+			return matched[i].Name < matched[j].Name
+		})
+		for _, agent := range matched {
+			if targetSeen[agent.ID] {
+				continue
+			}
+			response.RequestedCount++
+			targetSeen[agent.ID] = true
+			targets = append(targets, agent)
+		}
+	}
+
+	response.MatchedCount = len(targets)
+	for _, agent := range targets {
+		result := bulkAssignPolicyResult{
+			AgentID:   agent.ID,
+			AgentName: agent.Name,
+		}
+		if requiresDocker {
+			supported, err := agentHasCapability(h.DB, agent.ID, protocol.CapabilityDockerWorkloadBackups)
+			if err != nil {
+				result.Error = "agent not found"
+			} else if !supported {
+				result.Error = "agent does not support Docker workload backups"
+			}
+			if result.Error != "" {
+				response.Results = append(response.Results, result)
+				response.FailedCount++
+				continue
+			}
+		}
+
+		policy := clonePolicyForAgent(source, agent.ID)
+		if err := h.DB.DB.Create(&policy).Error; err != nil {
+			result.Error = "database error"
+			response.Results = append(response.Results, result)
+			response.FailedCount++
+			continue
+		}
+
+		result.OK = true
+		result.PolicyID = policy.ID
+		response.CreatedCount++
+		response.Results = append(response.Results, result)
+		h.publishPolicyChanged(agent.ID, "bulk_assigned")
+	}
+
+	return response
+}
+
 func (h *PolicyHandler) ListPolicies(c *gin.Context) {
 	var policies []db.BackupPolicy
 	query := h.DB.DB.Order("created_at DESC")
@@ -252,6 +407,41 @@ func (h *PolicyHandler) ListPolicies(c *gin.Context) {
 	}
 
 	writeDataResponse(c, http.StatusOK, responses)
+}
+
+func clonePolicyForAgent(source db.BackupPolicy, agentID string) db.BackupPolicy {
+	return db.BackupPolicy{
+		AgentID:         agentID,
+		StorageID:       source.StorageID,
+		BackupMode:      normalizeBackupMode(source.BackupMode),
+		ArchiveFormat:   normalizeArchiveFormat(source.ArchiveFormat),
+		RepoPath:        "vaultfleet/" + agentID,
+		ResticPassword:  source.ResticPassword,
+		BackupDirs:      source.BackupDirs,
+		BackupSources:   source.BackupSources,
+		ExcludePatterns: source.ExcludePatterns,
+		PreBackupHook:   source.PreBackupHook,
+		PostBackupHook:  source.PostBackupHook,
+		Schedule:        source.Schedule,
+		Retention:       source.Retention,
+		RcloneArgs:      source.RcloneArgs,
+		TimeoutHours:    normalizedPolicyTimeoutHours(source.TimeoutHours),
+		Verification:    source.Verification,
+		Synced:          false,
+	}
+}
+
+func policyRequiresDockerWorkload(policy db.BackupPolicy) (bool, error) {
+	sources, err := policyBackupSources(policy)
+	if err != nil {
+		return false, err
+	}
+	for _, source := range sources {
+		if source.Type == protocol.BackupSourceTypeDockerContainer {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (h *PolicyHandler) GetPolicy(c *gin.Context) {

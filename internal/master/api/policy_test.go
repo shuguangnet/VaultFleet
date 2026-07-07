@@ -98,6 +98,107 @@ func TestCreatePolicyDefaultsTimeoutHours(t *testing.T) {
 	assert.Equal(t, 6, stored.TimeoutHours)
 }
 
+func TestBulkAssignPoliciesClonesSourcePolicyToSelectedAgents(t *testing.T) {
+	setup := setupTestPolicyAPI(t)
+	sourceAgent := createPolicyTestAgent(t, setup.database)
+	targetA := createNamedPolicyTestAgent(t, setup.database, "Target A")
+	targetB := createNamedPolicyTestAgent(t, setup.database, "Target B")
+	storage := createPolicyTestStorage(t, setup.database)
+	source := createPolicy(t, setup.router, sourceAgent.ID, storage.ID)
+
+	w := postAnyJSON(t, setup.router, "/api/policies/bulk-assign", map[string]any{
+		"source_policy_id": source["id"],
+		"target_agent_ids": []string{targetA.ID, "missing-agent", targetB.ID},
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assert.Equal(t, float64(3), body["requested_count"])
+	assert.Equal(t, float64(2), body["matched_count"])
+	assert.Equal(t, float64(2), body["created_count"])
+	assert.Equal(t, float64(1), body["failed_count"])
+
+	results := body["results"].([]any)
+	require.Len(t, results, 3)
+	var createdPolicies []db.BackupPolicy
+	require.NoError(t, setup.database.DB.Where("agent_id IN ?", []string{targetA.ID, targetB.ID}).Order("agent_id").Find(&createdPolicies).Error)
+	require.Len(t, createdPolicies, 2)
+	for _, policy := range createdPolicies {
+		assert.Equal(t, storage.ID, policy.StorageID)
+		assert.Equal(t, "vaultfleet/"+policy.AgentID, policy.RepoPath)
+		assert.False(t, policy.Synced)
+	}
+}
+
+func TestBulkAssignPoliciesResolvesTargetsByTags(t *testing.T) {
+	setup := setupTestPolicyAPI(t)
+	sourceAgent := createPolicyTestAgent(t, setup.database)
+	targetA := createNamedPolicyTestAgent(t, setup.database, "Web A")
+	targetB := createNamedPolicyTestAgent(t, setup.database, "DB B")
+	targetC := createNamedPolicyTestAgent(t, setup.database, "Web C")
+	setPolicyAgentTags(t, setup.database, targetA.ID, []string{"prod", "web"})
+	setPolicyAgentTags(t, setup.database, targetB.ID, []string{"prod", "db"})
+	setPolicyAgentTags(t, setup.database, targetC.ID, []string{"stage", "web"})
+	storage := createPolicyTestStorage(t, setup.database)
+	source := createPolicy(t, setup.router, sourceAgent.ID, storage.ID)
+
+	w := postAnyJSON(t, setup.router, "/api/policies/bulk-assign", map[string]any{
+		"source_policy_id": source["id"],
+		"target_tags":      []string{" Prod ", "web"},
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assert.Equal(t, float64(1), body["matched_count"])
+	assert.Equal(t, float64(1), body["created_count"])
+	results := body["results"].([]any)
+	require.Len(t, results, 1)
+	assert.Equal(t, targetA.ID, results[0].(map[string]any)["agent_id"])
+}
+
+func TestBulkAssignPoliciesReportsDockerCapabilityPartialFailures(t *testing.T) {
+	setup := setupTestPolicyAPI(t)
+	sourceAgent := createPolicyTestAgent(t, setup.database)
+	markPolicyAgentCapabilities(t, setup.database, sourceAgent.ID, []string{protocol.CapabilityDockerWorkloadBackups})
+	supportedTarget := createNamedPolicyTestAgent(t, setup.database, "Docker Target")
+	markPolicyAgentCapabilities(t, setup.database, supportedTarget.ID, []string{protocol.CapabilityDockerWorkloadBackups})
+	unsupportedTarget := createNamedPolicyTestAgent(t, setup.database, "Plain Target")
+	storage := createPolicyTestStorage(t, setup.database)
+
+	w := postAnyJSON(t, setup.router, "/api/policies", map[string]any{
+		"agent_id":   sourceAgent.ID,
+		"storage_id": storage.ID,
+		"backup_sources": []map[string]any{
+			{
+				"type": "docker_container",
+				"docker_container": map[string]any{
+					"name":                "app",
+					"include_bind_mounts": true,
+				},
+			},
+		},
+		"schedule":  "0 3 * * *",
+		"retention": map[string]any{"keep_last": 3},
+	})
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	source := parseJSON(t, w)
+
+	w = postAnyJSON(t, setup.router, "/api/policies/bulk-assign", map[string]any{
+		"source_policy_id": source["id"],
+		"target_agent_ids": []string{supportedTarget.ID, unsupportedTarget.ID},
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assert.Equal(t, float64(1), body["created_count"])
+	assert.Equal(t, float64(1), body["failed_count"])
+	results := body["results"].([]any)
+	require.Len(t, results, 2)
+	assert.Equal(t, true, results[0].(map[string]any)["ok"])
+	assert.Equal(t, false, results[1].(map[string]any)["ok"])
+	assert.Equal(t, "agent does not support Docker workload backups", results[1].(map[string]any)["error"])
+}
+
 func TestCreatePolicySupportsArchiveBackupMode(t *testing.T) {
 	setup := setupTestPolicyAPI(t)
 	agent := createPolicyTestAgent(t, setup.database)
@@ -829,12 +930,25 @@ func TestDeletePolicyNotFound(t *testing.T) {
 func createPolicyTestAgent(t *testing.T, database *db.Database) db.Agent {
 	t.Helper()
 
+	return createNamedPolicyTestAgent(t, database, "Tokyo-1")
+}
+
+func createNamedPolicyTestAgent(t *testing.T, database *db.Database, name string) db.Agent {
+	t.Helper()
+
 	agent := db.Agent{
-		Name:   "Tokyo-1",
+		Name:   name,
 		Status: "online",
 	}
 	require.NoError(t, database.DB.Create(&agent).Error)
 	return agent
+}
+
+func setPolicyAgentTags(t *testing.T, database *db.Database, agentID string, tags []string) {
+	t.Helper()
+	raw, err := json.Marshal(tags)
+	require.NoError(t, err)
+	require.NoError(t, database.DB.Model(&db.Agent{}).Where("id = ?", agentID).Update("tags", string(raw)).Error)
 }
 
 func markPolicyAgentCapabilities(t *testing.T, database *db.Database, agentID string, capabilities []string) {

@@ -25,6 +25,7 @@ import {
   AlertOutlined,
   DatabaseOutlined,
   DeleteOutlined,
+  DeploymentUnitOutlined,
   EditOutlined,
   EllipsisOutlined,
   PlayCircleOutlined,
@@ -38,12 +39,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   backupNow,
   discoverDockerAgent,
+  listAgentTags,
   listAgents,
 } from "@/services/agents";
 import { listStorage } from "@/services/storage";
 import {
   createPolicy,
   deletePolicy,
+  bulkAssignPolicy,
   listPolicies,
   updatePolicy,
   verifyPolicyNow,
@@ -57,6 +60,7 @@ import {
 import type {
   BackupPolicy,
   BackupSource,
+  BulkAssignPolicyResponse,
   DockerContainerBackupSource,
   PolicyHook,
   PolicyInput,
@@ -262,6 +266,13 @@ export function PoliciesPage() {
   const [confirmBackupAgentId, setConfirmBackupAgentId] = useState<
     string | null
   >(null);
+  const [bulkSourcePolicy, setBulkSourcePolicy] = useState<BackupPolicy | null>(
+    null,
+  );
+  const [bulkAgentIds, setBulkAgentIds] = useState<string[]>([]);
+  const [bulkTags, setBulkTags] = useState<string[]>([]);
+  const [bulkResult, setBulkResult] =
+    useState<BulkAssignPolicyResponse | null>(null);
   const [retentionPreset, setRetentionPreset] = useState("standard");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const preBackupTimeout = Form.useWatch(
@@ -280,6 +291,10 @@ export function PoliciesPage() {
   const { data: agents } = useQuery({
     queryKey: ["agents"],
     queryFn: listAgents,
+  });
+  const { data: knownTags } = useQuery({
+    queryKey: ["agent-tags"],
+    queryFn: listAgentTags,
   });
   const { data: storageList } = useQuery({
     queryKey: ["storage"],
@@ -352,6 +367,16 @@ export function PoliciesPage() {
     onError: (error: any) => message.error(error.message),
   });
 
+  const bulkAssignMutation = useMutation({
+    mutationFn: bulkAssignPolicy,
+    onSuccess: (result) => {
+      setBulkResult(result);
+      queryClient.invalidateQueries({ queryKey: ["policies"] });
+      message.success(`已创建 ${result.created_count} 条策略`);
+    },
+    onError: (error: any) => message.error(error.message || "批量下发失败"),
+  });
+
   const handleEdit = (policy: BackupPolicy) => {
     setEditingId(policy.id);
     const repoSuffix = policy.repo_path.startsWith("vaultfleet/")
@@ -389,6 +414,35 @@ export function PoliciesPage() {
     setRetentionPreset(detectRetentionPreset(policy.retention));
     setAdvancedOpen(!!cleanRcloneArgs(policy.rclone_args));
     setDrawerOpen(true);
+  };
+
+  const openBulkAssign = (policy: BackupPolicy) => {
+    setBulkSourcePolicy(policy);
+    setBulkAgentIds([]);
+    setBulkTags([]);
+    setBulkResult(null);
+    bulkAssignMutation.reset();
+  };
+
+  const closeBulkAssign = () => {
+    setBulkSourcePolicy(null);
+    setBulkAgentIds([]);
+    setBulkTags([]);
+    setBulkResult(null);
+    bulkAssignMutation.reset();
+  };
+
+  const submitBulkAssign = () => {
+    if (!bulkSourcePolicy) return;
+    if (bulkAgentIds.length === 0 && bulkTags.length === 0) {
+      message.warning("请选择目标节点或标签");
+      return;
+    }
+    bulkAssignMutation.mutate({
+      source_policy_id: bulkSourcePolicy.id,
+      target_agent_ids: bulkAgentIds,
+      target_tags: bulkTags,
+    });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -515,6 +569,12 @@ export function PoliciesPage() {
                 icon: <EditOutlined />,
                 label: "编辑",
                 onClick: () => handleEdit(record),
+              } : null,
+              canWritePolicies ? {
+                key: "bulk-assign",
+                icon: <DeploymentUnitOutlined />,
+                label: "批量下发",
+                onClick: () => openBulkAssign(record),
               } : null,
               canRunBackup ? {
                 key: "backup",
@@ -1459,6 +1519,113 @@ export function PoliciesPage() {
           {/* 隐藏的 submit 用于支持 Enter 键 */}
           <button type="submit" style={{ display: "none" }} />
         </form>
+      </Drawer>
+
+      <Drawer
+        title="批量下发策略"
+        open={!!bulkSourcePolicy}
+        onClose={closeBulkAssign}
+        width="min(100vw, 520px)"
+        destroyOnClose
+        footer={
+          <Button
+            type="primary"
+            block
+            loading={bulkAssignMutation.isPending}
+            onClick={submitBulkAssign}
+          >
+            执行批量下发
+          </Button>
+        }
+      >
+        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+          {bulkSourcePolicy && (
+            <Alert
+              type="info"
+              showIcon
+              message="从现有策略克隆"
+              description={`源节点：${
+                agents?.find((a) => a.id === bulkSourcePolicy.agent_id)?.name ||
+                bulkSourcePolicy.agent_id
+              }，调度：${bulkSourcePolicy.schedule}`}
+            />
+          )}
+
+          <div>
+            <Typography.Text strong>目标节点</Typography.Text>
+            <Select
+              mode="multiple"
+              allowClear
+              value={bulkAgentIds}
+              onChange={setBulkAgentIds}
+              placeholder="选择一个或多个节点"
+              style={{ width: "100%", marginTop: 4 }}
+              options={(agents ?? [])
+                .filter((agent) => agent.id !== bulkSourcePolicy?.agent_id)
+                .map((agent) => ({
+                  value: agent.id,
+                  label: agent.name,
+                }))}
+            />
+          </div>
+
+          <div>
+            <Typography.Text strong>目标标签</Typography.Text>
+            <Select
+              mode="tags"
+              allowClear
+              value={bulkTags}
+              onChange={setBulkTags}
+              placeholder="匹配同时拥有这些标签的节点"
+              style={{ width: "100%", marginTop: 4 }}
+              options={(knownTags ?? []).map((tag) => ({
+                value: tag,
+                label: tag,
+              }))}
+            />
+          </div>
+
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            每个目标节点会创建一条独立策略，仓库路径自动使用 vaultfleet/目标节点 ID。
+          </Typography.Text>
+
+          {bulkResult && (
+            <div>
+              <Alert
+                type={bulkResult.failed_count ? "warning" : "success"}
+                showIcon
+                message={`成功 ${bulkResult.created_count}，失败 ${bulkResult.failed_count}`}
+                style={{ marginBottom: 12 }}
+              />
+              <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                {bulkResult.results.map((result, index) => (
+                  <div
+                    key={`${result.agent_id || index}-${result.policy_id || result.error}`}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      padding: "8px 10px",
+                      border: "1px solid #f0f0f0",
+                      borderRadius: 6,
+                    }}
+                  >
+                    <Typography.Text>
+                      {result.agent_name || result.agent_id || "未知节点"}
+                    </Typography.Text>
+                    {result.ok ? (
+                      <Tag color="green">已创建</Tag>
+                    ) : (
+                      <Typography.Text type="danger" style={{ fontSize: 12 }}>
+                        {result.error}
+                      </Typography.Text>
+                    )}
+                  </div>
+                ))}
+              </Space>
+            </div>
+          )}
+        </Space>
       </Drawer>
 
       <ConfirmDialog

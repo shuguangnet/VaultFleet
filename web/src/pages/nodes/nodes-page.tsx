@@ -7,21 +7,20 @@ import {
   Empty,
   Input,
   Popconfirm,
+  Select,
   Space,
-  Spin,
   Table,
+  Tag,
   Typography,
 } from "antd";
 import {
-  CopyOutlined,
-  CheckOutlined,
   EllipsisOutlined,
   DesktopOutlined,
   LinkOutlined,
   PlusOutlined,
-  ReloadOutlined,
   SearchOutlined,
   CodeOutlined,
+  TagsOutlined,
   WarningOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
@@ -31,8 +30,10 @@ import {
   createAgent,
   deleteAgent,
   getInstallToken,
+  listAgentTags,
   listAgents,
   regenerateAgentToken,
+  updateAgentTags,
 } from "@/services/agents";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { InstallCommand } from "@/components/install-command";
@@ -52,15 +53,22 @@ export function NodesPage() {
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [newNodeName, setNewNodeName] = useState("");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagEditorAgent, setTagEditorAgent] = useState<Agent | null>(null);
+  const [tagDraft, setTagDraft] = useState<string[]>([]);
   const [enrollToken, setEnrollToken] = useState<string | null>(null);
   const [installCommandAgent, setInstallCommandAgent] = useState<
     { id: string; token: string } | null
   >(null);
 
   const { data: agents, isLoading } = useQuery({
-    queryKey: ["agents"],
-    queryFn: listAgents,
+    queryKey: ["agents", selectedTags],
+    queryFn: () => listAgents(selectedTags),
     refetchInterval: 10000,
+  });
+  const { data: knownTags } = useQuery({
+    queryKey: ["agent-tags"],
+    queryFn: listAgentTags,
   });
 
   const createMutation = useMutation({
@@ -87,6 +95,19 @@ export function NodesPage() {
     },
   });
 
+  const updateTagsMutation = useMutation({
+    mutationFn: ({ id, tags }: { id: string; tags: string[] }) =>
+      updateAgentTags(id, tags),
+    onSuccess: () => {
+      message.success("节点标签已更新");
+      setTagEditorAgent(null);
+      setTagDraft([]);
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
+      queryClient.invalidateQueries({ queryKey: ["agent-tags"] });
+    },
+    onError: (err: any) => message.error(err.message || "标签更新失败"),
+  });
+
   const filtered = agents?.filter((a) =>
     a.name.toLowerCase().includes(search.toLowerCase())
   ) || [];
@@ -106,6 +127,11 @@ export function NodesPage() {
     setNewNodeName("");
     setInstallCommandAgent(null);
     createMutation.reset();
+  };
+
+  const openTagEditor = (agent: Agent) => {
+    setTagEditorAgent(agent);
+    setTagDraft(agent.tags ?? []);
   };
 
   const handleShowInstallCommand = async (agentId: string) => {
@@ -153,6 +179,24 @@ export function NodesPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => <StatusBadge status={s as any} />,
+    },
+    {
+      title: "标签",
+      dataIndex: "tags",
+      key: "tags",
+      responsive: ["md"],
+      render: (tags: string[]) =>
+        tags?.length ? (
+          <Space size={[4, 4]} wrap>
+            {tags.map((tag) => (
+              <Tag key={tag}>{tag}</Tag>
+            ))}
+          </Space>
+        ) : (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            -
+          </Typography.Text>
+        ),
     },
     {
       title: "最后在线",
@@ -208,6 +252,12 @@ export function NodesPage() {
                   </Link>
                 ),
               },
+              canWriteNodes ? {
+                key: "tags",
+                icon: <TagsOutlined />,
+                label: "编辑标签",
+                onClick: () => openTagEditor(record),
+              } : null,
               canWriteNodes ? {
                 key: "install",
                 icon: <CodeOutlined />,
@@ -268,6 +318,17 @@ export function NodesPage() {
         onChange={(e) => setSearch(e.target.value)}
         style={{ maxWidth: 320 }}
       />
+      <Select
+        className="vf-mobile-full"
+        mode="multiple"
+        allowClear
+        placeholder="按标签筛选"
+        value={selectedTags}
+        onChange={setSelectedTags}
+        options={(knownTags ?? []).map((tag) => ({ label: tag, value: tag }))}
+        style={{ maxWidth: 360, minWidth: 220, marginLeft: 8 }}
+        suffixIcon={<TagsOutlined />}
+      />
 
       <Card className="vf-table-card" styles={{ body: { padding: 0 } }}>
         <Table<Agent>
@@ -321,6 +382,47 @@ export function NodesPage() {
             </Space>
           </form>
         )}
+      </Drawer>
+
+      <Drawer
+        title={tagEditorAgent ? `编辑标签：${tagEditorAgent.name}` : "编辑标签"}
+        open={!!tagEditorAgent}
+        onClose={() => {
+          setTagEditorAgent(null);
+          setTagDraft([]);
+        }}
+        width="min(100vw, 420px)"
+        destroyOnClose
+        footer={
+          <Button
+            type="primary"
+            block
+            loading={updateTagsMutation.isPending}
+            onClick={() =>
+              tagEditorAgent &&
+              updateTagsMutation.mutate({
+                id: tagEditorAgent.id,
+                tags: tagDraft,
+              })
+            }
+          >
+            保存标签
+          </Button>
+        }
+      >
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Typography.Paragraph type="secondary">
+            使用环境、区域、业务或 OpenStack 可用区等标签组织节点。
+          </Typography.Paragraph>
+          <Select
+            mode="tags"
+            value={tagDraft}
+            onChange={setTagDraft}
+            placeholder="例如 prod、web、openstack:az1"
+            options={(knownTags ?? []).map((tag) => ({ label: tag, value: tag }))}
+            style={{ width: "100%" }}
+          />
+        </Space>
       </Drawer>
     </div>
   );
