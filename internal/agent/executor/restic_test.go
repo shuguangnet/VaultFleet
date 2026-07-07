@@ -45,8 +45,9 @@ func TestBaseArgsIncludesRcloneExtraArgs(t *testing.T) {
 		PasswordFile:   pwFile,
 		RepoPath:       "repo",
 		RcloneExtraArgs: map[string]string{
-			"transfers": "2",
-			"tpslimit":  "4",
+			"transfers":              "2",
+			"tpslimit":               "4",
+			"local-no-check-updated": "true",
 		},
 	}
 
@@ -60,7 +61,7 @@ func TestBaseArgsIncludesRcloneExtraArgs(t *testing.T) {
 		"--password-file",
 		pwFile,
 		"-o",
-		"rclone.args=serve restic --stdio --config /tmp/rclone.conf --tpslimit 4 --transfers 2",
+		"rclone.args=serve restic --stdio --config /tmp/rclone.conf --local-no-check-updated --tpslimit 4 --transfers 2",
 	})
 }
 

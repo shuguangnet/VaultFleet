@@ -348,9 +348,10 @@ func TestCreatePolicyWithRclone(t *testing.T) {
 	agent := createPolicyTestAgent(t, setup.database)
 	storage := createPolicyTestStorage(t, setup.database)
 	rcloneArgs := map[string]string{
-		"transfers":     "4",
-		"tpslimit":      "2.5",
-		"retries-sleep": "10s",
+		"transfers":              "4",
+		"tpslimit":               "2.5",
+		"retries-sleep":          "10s",
+		"local-no-check-updated": "true",
 	}
 
 	w := postAnyJSON(t, setup.router, "/api/policies", map[string]any{
@@ -368,10 +369,11 @@ func TestCreatePolicyWithRclone(t *testing.T) {
 	assert.Equal(t, "4", responseArgs["transfers"])
 	assert.Equal(t, "2.5", responseArgs["tpslimit"])
 	assert.Equal(t, "10s", responseArgs["retries-sleep"])
+	assert.Equal(t, "true", responseArgs["local-no-check-updated"])
 
 	var stored db.BackupPolicy
 	require.NoError(t, setup.database.DB.First(&stored, "id = ?", body["id"]).Error)
-	assert.JSONEq(t, `{"transfers":"4","tpslimit":"2.5","retries-sleep":"10s"}`, stored.RcloneArgs)
+	assert.JSONEq(t, `{"transfers":"4","tpslimit":"2.5","retries-sleep":"10s","local-no-check-updated":"true"}`, stored.RcloneArgs)
 
 	payload, err := policyPushPayload(setup.database, stored, storage)
 	require.NoError(t, err)
@@ -407,6 +409,11 @@ func TestCreatePolicyRejectsInvalidRcloneArgs(t *testing.T) {
 		{
 			name:  "whitespace injection",
 			args:  map[string]string{"timeout": "10s --config /tmp/other.conf"},
+			error: "invalid rclone_args",
+		},
+		{
+			name:  "invalid boolean",
+			args:  map[string]string{"local-no-check-updated": "false"},
 			error: "invalid rclone_args",
 		},
 	}

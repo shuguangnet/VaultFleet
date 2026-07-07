@@ -69,6 +69,10 @@ func (r PlainRunner) normalizedRcloneExtraArgs() []string {
 
 	args := make([]string, 0, len(keys)*2)
 	for _, key := range keys {
+		if isRcloneBooleanExtraArg(key) {
+			args = append(args, "--"+key)
+			continue
+		}
 		args = append(args, "--"+key, values[key])
 	}
 	return args

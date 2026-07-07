@@ -170,6 +170,21 @@ export function cleanRcloneArgs(args?: Record<string, string>) {
   return Object.keys(cleaned).length > 0 ? cleaned : undefined;
 }
 
+function rcloneBooleanArgEnabled(args: Record<string, string> | undefined, key: string): boolean {
+  const value = args?.[key]?.trim().toLowerCase();
+  return value === "true" || value === "1" || value === "yes" || value === "on";
+}
+
+function setRcloneBooleanArg(args: Record<string, string> | undefined, key: string, enabled: boolean): Record<string, string> {
+  const next = { ...(args ?? {}) };
+  if (enabled) {
+    next[key] = "true";
+  } else {
+    delete next[key];
+  }
+  return next;
+}
+
 export function submitRcloneArgs(
   args: Record<string, string> | undefined,
   clearWhenEmpty: boolean
@@ -1513,6 +1528,28 @@ export function PoliciesPage() {
                     </Typography.Text>
                   </Col>
                 ))}
+                <Col xs={24}>
+                  <Checkbox
+                    checked={rcloneBooleanArgEnabled(formData.rclone_args, "local-no-check-updated")}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        rclone_args: setRcloneBooleanArg(
+                          formData.rclone_args,
+                          "local-no-check-updated",
+                          e.target.checked,
+                        ),
+                      })
+                    }
+                  >
+                    允许备份正在变化的本地文件
+                  </Checkbox>
+                  <div>
+                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                      仅建议用于日志文件；开启后 rclone 不再因为上传期间文件大小变化而失败。
+                    </Typography.Text>
+                  </div>
+                </Col>
               </Row>
             )}
           </div>

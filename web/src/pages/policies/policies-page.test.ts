@@ -31,10 +31,12 @@ describe("policy rclone args helpers", () => {
         tpslimit: "",
         retries: "   ",
         timeout: " 10m0s",
+        "local-no-check-updated": " true ",
       }),
     ).toEqual({
       transfers: "2",
       timeout: "10m0s",
+      "local-no-check-updated": "true",
     });
   });
 

@@ -1075,6 +1075,8 @@ func normalizePolicyRcloneArgValue(key string, value string) (string, bool) {
 		}
 		parsed, err := time.ParseDuration(normalized)
 		return normalized, err == nil && parsed >= 0
+	case "local-no-check-updated":
+		return "true", isTruthyPolicyRcloneArgValue(normalized)
 	default:
 		return "", false
 	}
@@ -1082,7 +1084,16 @@ func normalizePolicyRcloneArgValue(key string, value string) (string, bool) {
 
 func isAllowedPolicyRcloneArg(key string) bool {
 	switch key {
-	case "transfers", "tpslimit", "retries", "retries-sleep", "low-level-retries", "timeout":
+	case "transfers", "tpslimit", "retries", "retries-sleep", "low-level-retries", "timeout", "local-no-check-updated":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTruthyPolicyRcloneArgValue(value string) bool {
+	switch strings.ToLower(value) {
+	case "true", "1", "yes", "on":
 		return true
 	default:
 		return false

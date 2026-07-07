@@ -110,6 +110,10 @@ func (r ResticRunner) normalizedRcloneExtraArgs() []string {
 
 	args := make([]string, 0, len(keys)*2)
 	for _, key := range keys {
+		if isRcloneBooleanExtraArg(key) {
+			args = append(args, "--"+key)
+			continue
+		}
 		args = append(args, "--"+key, values[key])
 	}
 	return args
@@ -117,11 +121,15 @@ func (r ResticRunner) normalizedRcloneExtraArgs() []string {
 
 func isAllowedRcloneExtraArg(key string) bool {
 	switch key {
-	case "transfers", "tpslimit", "retries", "retries-sleep", "low-level-retries", "timeout":
+	case "transfers", "tpslimit", "retries", "retries-sleep", "low-level-retries", "timeout", "local-no-check-updated":
 		return true
 	default:
 		return false
 	}
+}
+
+func isRcloneBooleanExtraArg(key string) bool {
+	return key == "local-no-check-updated"
 }
 
 func normalizeRcloneExtraArgValue(key string, value string) (string, bool) {
@@ -146,8 +154,19 @@ func normalizeRcloneExtraArgValue(key string, value string) (string, bool) {
 		}
 		parsed, err := time.ParseDuration(normalized)
 		return normalized, err == nil && parsed >= 0
+	case "local-no-check-updated":
+		return "true", isTruthyRcloneExtraArgValue(normalized)
 	default:
 		return "", false
+	}
+}
+
+func isTruthyRcloneExtraArgValue(value string) bool {
+	switch strings.ToLower(value) {
+	case "true", "1", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 

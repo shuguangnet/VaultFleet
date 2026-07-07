@@ -116,6 +116,38 @@ func TestNewExecutorUsesPlainRunnerWhenNoPasswordFile(t *testing.T) {
 	}
 }
 
+func TestPlainRunnerRcloneBaseArgsIncludesBooleanExtraArg(t *testing.T) {
+	runner := PlainRunner{
+		RcloneConfPath: "/tmp/rclone.conf",
+		RcloneExtraArgs: map[string]string{
+			"local-no-check-updated": "true",
+			"transfers":              "2",
+			"timeout":                "10s",
+		},
+	}
+
+	got := runner.rcloneBaseArgs()
+	want := []string{
+		"--config", "/tmp/rclone.conf",
+		"--local-no-check-updated",
+		"--timeout", "10s",
+		"--transfers", "2",
+	}
+	assertStringSlicesEqual(t, got, want)
+}
+
+func assertStringSlicesEqual(t *testing.T, got []string, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d: got %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("arg[%d] = %q, want %q: got %#v", i, got[i], want[i], got)
+		}
+	}
+}
+
 func TestNewExecutorUsesPlainRunnerWhenPasswordFileIsEmpty(t *testing.T) {
 	cfgDir := t.TempDir()
 	os.WriteFile(filepath.Join(cfgDir, ".restic-password"), []byte("  \n  "), 0o600)
