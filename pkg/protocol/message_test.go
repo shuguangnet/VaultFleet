@@ -60,6 +60,7 @@ func TestDefaultAgentCapabilitiesIncludesCurrentFeatureSet(t *testing.T) {
 
 	assert.Contains(t, capabilities, CapabilitySnapshotBrowse)
 	assert.Contains(t, capabilities, CapabilityRestoreIncludePaths)
+	assert.Contains(t, capabilities, CapabilityRestorePreflight)
 	assert.Contains(t, capabilities, CapabilityPolicyPlaintextRclonePass)
 	assert.Contains(t, capabilities, CapabilityArchiveBackup)
 }
@@ -470,6 +471,35 @@ func TestRestorePayloads(t *testing.T) {
 	assert.InDelta(t, 75.5, parsedProgress.Percent, 0.01)
 }
 
+func TestRestorePreflightPayloads(t *testing.T) {
+	reqPayload := RestorePreflightReqPayload{
+		AgentID:      "agent-001",
+		SnapshotID:   "abc123",
+		Target:       "/restore/target",
+		IncludePaths: []string{"/etc/hosts"},
+		RestoreMode:  RestoreModeDockerContainer,
+		Docker: &DockerRestoreRequest{
+			Sources: []DockerResolvedSource{{ContainerID: "container-1", ResolvedPaths: []string{"/srv/app"}}},
+		},
+	}
+
+	_, parsedReq := roundTripPayload[RestorePreflightReqPayload](t, TypeRestorePreflightReq, reqPayload)
+	assert.Equal(t, reqPayload, *parsedReq)
+
+	respPayload := RestorePreflightRespPayload{
+		AgentID:    "agent-001",
+		SnapshotID: "abc123",
+		Status:     RestorePreflightStatusFailed,
+		Checks: []RestorePreflightCheck{
+			{Code: "target_path_writable", Severity: RestorePreflightSeverityError, Message: "target path is not writable", Detail: "permission denied"},
+			{Code: "docker_available", Severity: RestorePreflightSeverityInfo, Message: "Docker is available"},
+		},
+	}
+
+	_, parsedResp := roundTripPayload[RestorePreflightRespPayload](t, TypeRestorePreflightResp, respPayload)
+	assert.Equal(t, respPayload, *parsedResp)
+}
+
 func TestDirSizeRoundTrip(t *testing.T) {
 	reqPayload := DirSizeReqPayload{Path: "/home/data"}
 
@@ -536,6 +566,8 @@ func TestAllMessageTypeConstants(t *testing.T) {
 		TypeRestoreReq,
 		TypeSelectiveRestoreReq,
 		TypeRestoreProgress,
+		TypeRestorePreflightReq,
+		TypeRestorePreflightResp,
 		TypeSnapshotListReq,
 		TypeSnapshotListResp,
 		TypeSnapshotBrowseReq,
@@ -563,6 +595,8 @@ func TestAllMessageTypeConstants(t *testing.T) {
 		"restore_req",
 		"selective_restore_req",
 		"restore_progress",
+		"restore_preflight_req",
+		"restore_preflight_resp",
 		"snapshot_list_req",
 		"snapshot_list_resp",
 		"snapshot_browse_req",
@@ -579,7 +613,7 @@ func TestAllMessageTypeConstants(t *testing.T) {
 	}
 
 	assert.Equal(t, expected, types)
-	assert.Len(t, types, 25)
+	assert.Len(t, types, 27)
 	seen := make(map[string]bool)
 	for _, typ := range types {
 		assert.NotEmpty(t, typ)

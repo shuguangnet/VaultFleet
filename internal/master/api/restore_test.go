@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -481,6 +482,181 @@ func TestRestoreSendFailureLeavesCommandQueued(t *testing.T) {
 	assert.Empty(t, history.ErrorLog)
 }
 
+func TestRestorePreflightSuccessDoesNotCreateCommandOrTask(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	agent := createRestoreTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+	markAgentCapabilities(t, setup.database, agent.ID, []string{
+		protocol.CapabilityRestorePreflight,
+		protocol.CapabilityRestoreIncludePaths,
+	})
+	snapshot := db.Snapshot{
+		AgentID:    agent.ID,
+		SnapshotID: "restic-snap-1",
+		Timestamp:  time.Date(2026, 6, 12, 8, 0, 0, 0, time.UTC),
+		Paths:      `["/data"]`,
+	}
+	require.NoError(t, setup.database.DB.Create(&snapshot).Error)
+	resp, err := protocol.NewMessage(protocol.TypeRestorePreflightResp, protocol.RestorePreflightRespPayload{
+		AgentID:    agent.ID,
+		SnapshotID: "restic-snap-1",
+		Status:     protocol.RestorePreflightStatusPassed,
+		Checks:     []protocol.RestorePreflightCheck{{Code: "target_path_writable", Severity: protocol.RestorePreflightSeverityInfo, Message: "target path is writable"}},
+	})
+	require.NoError(t, err)
+	setup.hub.waitResp = resp
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore/preflight", map[string]any{
+		"snapshot_id":   snapshot.ID,
+		"target_path":   "/restore/target",
+		"include_paths": []string{"/data/file.txt"},
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	data := requireMap(t, body["data"])
+	assert.Equal(t, protocol.RestorePreflightStatusPassed, data["status"])
+	require.Len(t, setup.hub.sent, 1)
+	assert.Equal(t, protocol.TypeRestorePreflightReq, setup.hub.sent[0].message.Type)
+	payload, err := protocol.ParsePayload[protocol.RestorePreflightReqPayload](&setup.hub.sent[0].message)
+	require.NoError(t, err)
+	assert.Equal(t, "restic-snap-1", payload.SnapshotID)
+	assert.Equal(t, "/restore/target", payload.Target)
+	assert.Equal(t, []string{"/data/file.txt"}, payload.IncludePaths)
+
+	var commandCount int64
+	require.NoError(t, setup.database.DB.Model(&db.AgentCommand{}).Count(&commandCount).Error)
+	assert.Equal(t, int64(0), commandCount)
+	var taskCount int64
+	require.NoError(t, setup.database.DB.Model(&db.TaskHistory{}).Count(&taskCount).Error)
+	assert.Equal(t, int64(0), taskCount)
+}
+
+func TestRestorePreflightRejectsMissingSnapshotWithoutDispatch(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	agent := createRestoreTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+	markAgentCapabilities(t, setup.database, agent.ID, []string{protocol.CapabilityRestorePreflight})
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore/preflight", map[string]any{
+		"snapshot_id": "missing-snap",
+		"target_path": "/restore/target",
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assertPreflightData(t, w, protocol.RestorePreflightStatusFailed, "source_snapshot_found", protocol.RestorePreflightSeverityError)
+	assert.Empty(t, setup.hub.sent)
+}
+
+func TestRestorePreflightRejectsOfflineTarget(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	agent := createRestoreTestAgent(t, setup.database, "offline")
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore/preflight", map[string]any{
+		"snapshot_id": "snap-1",
+		"target_path": "/restore/target",
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assertPreflightData(t, w, protocol.RestorePreflightStatusFailed, "target_agent_online", protocol.RestorePreflightSeverityError)
+	assert.Empty(t, setup.hub.sent)
+}
+
+func TestRestorePreflightRejectsMissingPreflightCapability(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	agent := createRestoreTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+	markAgentCapabilities(t, setup.database, agent.ID, []string{protocol.CapabilityRestoreIncludePaths})
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore/preflight", map[string]any{
+		"snapshot_id": "snap-1",
+		"target_path": "/restore/target",
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assertPreflightData(t, w, protocol.RestorePreflightStatusFailed, "restore_preflight_capability", protocol.RestorePreflightSeverityError)
+	assert.Empty(t, setup.hub.sent)
+}
+
+func TestRestorePreflightRejectsMissingSelectiveRestoreCapability(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	agent := createRestoreTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+	markAgentCapabilities(t, setup.database, agent.ID, []string{protocol.CapabilityRestorePreflight})
+	require.NoError(t, setup.database.DB.Create(&db.Snapshot{
+		AgentID:    agent.ID,
+		SnapshotID: "snap-1",
+		Timestamp:  time.Date(2026, 6, 12, 8, 0, 0, 0, time.UTC),
+		Paths:      `["/data"]`,
+	}).Error)
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore/preflight", map[string]any{
+		"snapshot_id":   "snap-1",
+		"target_path":   "/restore/target",
+		"include_paths": []string{"/data/file.txt"},
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assertPreflightData(t, w, protocol.RestorePreflightStatusFailed, "restore_include_paths_capability", protocol.RestorePreflightSeverityError)
+	assert.Empty(t, setup.hub.sent)
+}
+
+func TestRestorePreflightRejectsMissingDockerMetadata(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	agent := createRestoreTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+	markAgentCapabilities(t, setup.database, agent.ID, []string{
+		protocol.CapabilityRestorePreflight,
+		protocol.CapabilityRestoreIncludePaths,
+		protocol.CapabilityDockerContainerRestore,
+	})
+	require.NoError(t, setup.database.DB.Create(&db.Snapshot{
+		AgentID:    agent.ID,
+		SnapshotID: "snap-1",
+		Timestamp:  time.Date(2026, 6, 12, 8, 0, 0, 0, time.UTC),
+		Paths:      `["/var/lib/docker/volumes/db/_data"]`,
+	}).Error)
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore/preflight", map[string]any{
+		"snapshot_id":  "snap-1",
+		"restore_mode": protocol.RestoreModeDockerContainer,
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assertPreflightData(t, w, protocol.RestorePreflightStatusFailed, "docker_metadata", protocol.RestorePreflightSeverityError)
+	assert.Empty(t, setup.hub.sent)
+}
+
+func TestRestorePreflightMergesAgentFailure(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	agent := createRestoreTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+	markAgentCapabilities(t, setup.database, agent.ID, []string{protocol.CapabilityRestorePreflight})
+	require.NoError(t, setup.database.DB.Create(&db.Snapshot{
+		AgentID:    agent.ID,
+		SnapshotID: "snap-1",
+		Timestamp:  time.Date(2026, 6, 12, 8, 0, 0, 0, time.UTC),
+		Paths:      `["/data"]`,
+	}).Error)
+	resp, err := protocol.NewMessage(protocol.TypeRestorePreflightResp, protocol.RestorePreflightRespPayload{
+		AgentID:    agent.ID,
+		SnapshotID: "snap-1",
+		Status:     protocol.RestorePreflightStatusFailed,
+		Checks:     []protocol.RestorePreflightCheck{{Code: "target_path_writable", Severity: protocol.RestorePreflightSeverityError, Message: "target path is not writable"}},
+	})
+	require.NoError(t, err)
+	setup.hub.waitResp = resp
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore/preflight", map[string]any{
+		"snapshot_id": "snap-1",
+		"target_path": "/restore/target",
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assertPreflightData(t, w, protocol.RestorePreflightStatusFailed, "target_path_writable", protocol.RestorePreflightSeverityError)
+	require.Len(t, setup.hub.sent, 1)
+}
+
 type restoreAPISetup struct {
 	database *db.Database
 	hub      *fakeRestoreHub
@@ -513,6 +689,9 @@ type sentRestoreMessage struct {
 type fakeRestoreHub struct {
 	online           map[string]bool
 	sendErr          error
+	waitErr          error
+	waitResp         *protocol.Message
+	waitClosed       bool
 	beforeSend       func()
 	beforeSendCalled bool
 	sent             []sentRestoreMessage
@@ -538,10 +717,47 @@ func (h *fakeRestoreHub) Send(agentID string, msg interface{}) error {
 	return nil
 }
 
+func (h *fakeRestoreHub) SendAndWait(agentID string, msg protocol.Message, _ time.Duration) (<-chan protocol.Message, error) {
+	if h.waitErr != nil {
+		return nil, h.waitErr
+	}
+	if err := h.Send(agentID, msg); err != nil {
+		return nil, err
+	}
+	ch := make(chan protocol.Message, 1)
+	if h.waitClosed {
+		close(ch)
+		return ch, nil
+	}
+	if h.waitResp != nil {
+		resp := *h.waitResp
+		resp.ID = msg.ID
+		ch <- resp
+	}
+	close(ch)
+	return ch, nil
+}
+
 func createRestoreTestAgent(t *testing.T, database *db.Database, status string) db.Agent {
 	t.Helper()
 
 	agent := db.Agent{Name: "Restore Agent", Status: status}
 	require.NoError(t, database.DB.Create(&agent).Error)
 	return agent
+}
+
+func assertPreflightData(t *testing.T, w *httptest.ResponseRecorder, status string, code string, severity string) {
+	t.Helper()
+	body := parseJSON(t, w)
+	data := requireMap(t, body["data"])
+	assert.Equal(t, status, data["status"])
+	checks, ok := data["checks"].([]any)
+	require.True(t, ok, "checks missing from preflight response: %#v", data)
+	for _, rawCheck := range checks {
+		check := requireMap(t, rawCheck)
+		if check["code"] == code && check["severity"] == severity {
+			return
+		}
+	}
+	t.Fatalf("preflight check %s with severity %s not found in %#v", code, severity, checks)
 }

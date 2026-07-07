@@ -7,7 +7,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { SnapshotTreeBrowser } from "@/components/snapshot-tree-browser";
 import { listAgents } from "@/services/agents";
 import { listPolicies } from "@/services/policies";
-import { listSnapshots, restoreSnapshot } from "@/services/snapshots";
+import { listSnapshots, preflightRestore, restoreSnapshot } from "@/services/snapshots";
 import { listStorage } from "@/services/storage";
 import { SnapshotsPage } from "./snapshots-page";
 
@@ -25,6 +25,7 @@ vi.mock("@/services/storage", () => ({
 
 vi.mock("@/services/snapshots", () => ({
   listSnapshots: vi.fn(),
+  preflightRestore: vi.fn(),
   refreshSnapshots: vi.fn(),
   restoreSnapshot: vi.fn(),
 }));
@@ -66,6 +67,7 @@ describe("SnapshotsPage", () => {
       hostname: "node-1",
       os: "linux",
       arch: "amd64",
+      capabilities: ["restore_preflight"],
       created_at: "2026-05-22T00:00:00Z",
     }]);
     vi.mocked(listPolicies).mockResolvedValue([]);
@@ -77,6 +79,11 @@ describe("SnapshotsPage", () => {
       hostname: "node-1",
       username: "root",
     }]);
+    vi.mocked(preflightRestore).mockResolvedValue({
+      snapshot_id: "snap-1",
+      status: "passed",
+      checks: [{ code: "target_path_writable", severity: "info", message: "target path is writable" }],
+    });
     vi.mocked(restoreSnapshot).mockResolvedValue({ message_id: "msg-1" });
 
     renderPage();
@@ -86,6 +93,16 @@ describe("SnapshotsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "选择测试路径" }));
     expect(screen.getByRole("button", { name: "恢复选中的 2 项" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /执行恢复预检/ }));
+    await waitFor(() => expect(preflightRestore).toHaveBeenCalledWith("agent-1", {
+      snapshot_id: "snap-1",
+      source_agent_id: "agent-1",
+      restore_mode: "files",
+      target_path: "/data",
+      include_paths: ["/data/docs", "/data/docs/readme.md"],
+    }));
+    expect(await screen.findByText("预检通过")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("checkbox", { name: /确认恢复/ }));
     fireEvent.click(screen.getByRole("button", { name: "恢复选中的 2 项" }));
@@ -109,7 +126,7 @@ describe("SnapshotsPage", () => {
       hostname: "node-1",
       os: "linux",
       arch: "amd64",
-      capabilities: ["docker_workload_backups", "docker_container_restore"],
+      capabilities: ["restore_preflight", "docker_workload_backups", "docker_container_restore"],
       created_at: "2026-05-22T00:00:00Z",
     }]);
     vi.mocked(listPolicies).mockResolvedValue([]);
@@ -129,6 +146,11 @@ describe("SnapshotsPage", () => {
         }],
       },
     }]);
+    vi.mocked(preflightRestore).mockResolvedValue({
+      snapshot_id: "snap-1",
+      status: "passed",
+      checks: [{ code: "docker_available", severity: "info", message: "Docker Engine is available" }],
+    });
     vi.mocked(restoreSnapshot).mockResolvedValue({ message_id: "msg-1" });
 
     renderPage();
@@ -139,6 +161,9 @@ describe("SnapshotsPage", () => {
     await waitFor(() => {
       expect(screen.queryByText("选择测试路径")).not.toBeInTheDocument();
     });
+
+    fireEvent.click(screen.getByRole("button", { name: /执行恢复预检/ }));
+    expect(await screen.findByText("Docker Engine is available")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("checkbox", { name: /确认恢复/ }));
     const submitButtons = screen.getAllByRole("button", { name: /恢复容器/ });
@@ -163,7 +188,7 @@ describe("SnapshotsPage", () => {
         hostname: "source-node",
         os: "linux",
         arch: "amd64",
-        capabilities: ["snapshot_browse", "restore_include_paths"],
+        capabilities: ["snapshot_browse", "restore_preflight", "restore_include_paths"],
         created_at: "2026-05-22T00:00:00Z",
       },
       {
@@ -175,7 +200,7 @@ describe("SnapshotsPage", () => {
         hostname: "target-node",
         os: "linux",
         arch: "amd64",
-        capabilities: ["restore_include_paths"],
+        capabilities: ["restore_preflight", "restore_include_paths"],
         created_at: "2026-05-22T00:00:00Z",
       },
     ]);
@@ -188,6 +213,11 @@ describe("SnapshotsPage", () => {
       hostname: "source-node",
       username: "root",
     }]);
+    vi.mocked(preflightRestore).mockResolvedValue({
+      snapshot_id: "snap-1",
+      status: "passed",
+      checks: [{ code: "target_path_writable", severity: "info", message: "target path is writable" }],
+    });
     vi.mocked(restoreSnapshot).mockResolvedValue({ message_id: "msg-1" });
 
     renderPage("/snapshots?agent_id=source-agent");
@@ -196,6 +226,14 @@ describe("SnapshotsPage", () => {
     const targetSelect = screen.getAllByRole("combobox")[1];
     fireEvent.mouseDown(targetSelect);
     fireEvent.click(await screen.findByText("target-node"));
+
+    fireEvent.click(screen.getByRole("button", { name: /执行恢复预检/ }));
+    await waitFor(() => expect(preflightRestore).toHaveBeenCalledWith("target-agent", {
+      snapshot_id: "snap-1",
+      source_agent_id: "source-agent",
+      restore_mode: "files",
+      target_path: "/data",
+    }));
 
     fireEvent.click(screen.getByRole("checkbox", { name: /确认恢复/ }));
     fireEvent.click(screen.getByRole("button", { name: "恢复全部" }));
@@ -206,6 +244,47 @@ describe("SnapshotsPage", () => {
       restore_mode: "files",
       target_path: "/data",
     }));
+  }, 10000);
+
+  it("blocks final restore when preflight fails", async () => {
+    vi.mocked(listAgents).mockResolvedValue([{
+      id: "agent-1",
+      name: "node-1",
+      status: "online",
+      last_seen: "2026-05-22T00:00:00Z",
+      version: "0.5.26",
+      hostname: "node-1",
+      os: "linux",
+      arch: "amd64",
+      capabilities: ["restore_preflight"],
+      created_at: "2026-05-22T00:00:00Z",
+    }]);
+    vi.mocked(listPolicies).mockResolvedValue([]);
+    vi.mocked(listStorage).mockResolvedValue([]);
+    vi.mocked(listSnapshots).mockResolvedValue([{
+      id: "snap-1",
+      time: "2026-05-22T00:00:00Z",
+      paths: ["/data"],
+      hostname: "node-1",
+      username: "root",
+    }]);
+    vi.mocked(preflightRestore).mockResolvedValue({
+      snapshot_id: "snap-1",
+      status: "failed",
+      checks: [{ code: "target_path_writable", severity: "error", message: "target path is not writable", detail: "permission denied" }],
+    });
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: /恢复/ }));
+    fireEvent.click(screen.getByRole("button", { name: /执行恢复预检/ }));
+
+    expect(await screen.findByText("预检未通过")).toBeInTheDocument();
+    expect(screen.getByText(/target path is not writable/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /确认恢复/ }));
+    expect(screen.getByRole("button", { name: "恢复全部" })).toBeDisabled();
+    expect(restoreSnapshot).not.toHaveBeenCalled();
   }, 10000);
 });
 

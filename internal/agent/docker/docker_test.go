@@ -170,6 +170,43 @@ func TestRestoreDockerSourceRunsContainerWithRecordedMounts(t *testing.T) {
 	assert.Equal(t, "docker run -d --name db -v /srv/db:/var/lib/postgresql/data -v /srv/config:/config:ro -e POSTGRES_DB=app --label app=vaultfleet -p 15432:5432 --restart unless-stopped -w /var/lib/postgresql -u 999:999 postgres:16 postgres -c config_file=/config/postgresql.conf", calls[1])
 }
 
+func TestPreflightRestoreReportsMissingSources(t *testing.T) {
+	checks := PreflightRestore(context.Background(), fakeDockerAPI{}, protocol.DockerRestoreRequest{})
+
+	assertDockerPreflightCheck(t, checks, "docker_metadata", protocol.RestorePreflightSeverityError)
+}
+
+func TestPreflightRestoreReportsDockerUnavailable(t *testing.T) {
+	checks := PreflightRestore(context.Background(), fakeDockerAPI{pingErr: errors.New("permission denied")}, protocol.DockerRestoreRequest{
+		Sources: []protocol.DockerResolvedSource{{Name: "db", Image: "postgres:16", ResolvedPaths: []string{"/srv/db"}}},
+	})
+
+	assertDockerPreflightCheck(t, checks, "docker_available", protocol.RestorePreflightSeverityError)
+}
+
+func TestPreflightRestoreReportsConflictAndPathWarnings(t *testing.T) {
+	restorePath := t.TempDir()
+	checks := PreflightRestore(context.Background(), fakeDockerAPI{
+		containers: []ContainerSummary{
+			{ID: "abc123", Names: []string{"/db"}, Labels: map[string]string{"com.docker.compose.project": "app", "com.docker.compose.service": "db"}},
+		},
+	}, protocol.DockerRestoreRequest{
+		Sources: []protocol.DockerResolvedSource{
+			{
+				Name:          "db",
+				Image:         "postgres:16",
+				Compose:       protocol.DockerComposeInfo{Project: "app", Service: "db"},
+				ResolvedPaths: []string{restorePath, filepath.Join(restorePath, "missing-child")},
+			},
+		},
+	})
+
+	assertDockerPreflightCheck(t, checks, "docker_available", protocol.RestorePreflightSeverityInfo)
+	assertDockerPreflightCheck(t, checks, "docker_container_conflict", protocol.RestorePreflightSeverityWarning)
+	assertDockerPreflightCheck(t, checks, "docker_restore_path_exists", protocol.RestorePreflightSeverityWarning)
+	assertDockerPreflightCheck(t, checks, "docker_restore_path_missing", protocol.RestorePreflightSeverityWarning)
+}
+
 func TestResolveAmbiguousComposeSelection(t *testing.T) {
 	api := fakeDockerAPI{
 		containers: []ContainerSummary{
@@ -200,6 +237,16 @@ func TestResolveUnreadableMount(t *testing.T) {
 	_, _, err := Resolve(context.Background(), api, []protocol.BackupSource{dockerSource("app", "db")})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unreadable")
+}
+
+func assertDockerPreflightCheck(t *testing.T, checks []protocol.RestorePreflightCheck, code string, severity string) {
+	t.Helper()
+	for _, check := range checks {
+		if check.Code == code && check.Severity == severity {
+			return
+		}
+	}
+	t.Fatalf("preflight check %s with severity %s not found in %#v", code, severity, checks)
 }
 
 func dockerSource(project string, service string) protocol.BackupSource {

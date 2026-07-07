@@ -152,6 +152,8 @@ func expectedResponseType(requestType string) (string, error) {
 		return protocol.TypeSnapshotListResp, nil
 	case protocol.TypeSnapshotBrowseReq:
 		return protocol.TypeSnapshotBrowseResp, nil
+	case protocol.TypeRestorePreflightReq:
+		return protocol.TypeRestorePreflightResp, nil
 	case protocol.TypeCollectLogsReq:
 		return protocol.TypeCollectLogsResp, nil
 	case protocol.TypeUpdateAgent:

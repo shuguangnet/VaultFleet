@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -15,14 +17,20 @@ import (
 )
 
 type RestoreHandler struct {
-	DB       *db.Database
-	Hub      RestoreHub
-	Commands *commands.Service
+	DB          *db.Database
+	Hub         RestoreHub
+	Commands    *commands.Service
+	timeout     time.Duration
+	sendAndWait func(agentID string, msg protocol.Message, timeout time.Duration) (<-chan protocol.Message, error)
 }
 
 type RestoreHub interface {
 	IsOnline(agentID string) bool
 	Send(agentID string, msg interface{}) error
+}
+
+type restorePreflightHub interface {
+	SendAndWait(agentID string, msg protocol.Message, timeout time.Duration) (<-chan protocol.Message, error)
 }
 
 type restoreRequest struct {
@@ -37,11 +45,151 @@ type restoreRequest struct {
 }
 
 func NewRestoreHandler(database *db.Database, hub RestoreHub) *RestoreHandler {
-	return &RestoreHandler{DB: database, Hub: hub}
+	handler := &RestoreHandler{DB: database, Hub: hub, timeout: 30 * time.Second}
+	if waitHub, ok := hub.(restorePreflightHub); ok {
+		handler.sendAndWait = waitHub.SendAndWait
+	}
+	return handler
 }
 
 func RegisterRestoreRoutes(rg *gin.RouterGroup, h *RestoreHandler) {
 	rg.POST("/agents/:id/restore", h.Restore)
+	rg.POST("/agents/:id/restore/preflight", h.Preflight)
+}
+
+func (h *RestoreHandler) Preflight(c *gin.Context) {
+	targetAgentID := c.Param("id")
+	var request restoreRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		writeErrorResponse(c, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	targetPath := request.TargetPath
+	if targetPath == "" {
+		targetPath = request.Target
+	}
+	restoreMode := strings.TrimSpace(request.RestoreMode)
+	if restoreMode == "" {
+		restoreMode = protocol.RestoreModeFiles
+	}
+	sourceAgentID := strings.TrimSpace(request.SourceAgentID)
+	if sourceAgentID == "" {
+		sourceAgentID = targetAgentID
+	}
+	checks := []protocol.RestorePreflightCheck{}
+
+	if exists, err := h.agentExists(contextFromGin(c), targetAgentID); err != nil {
+		writeErrorResponse(c, http.StatusInternalServerError, "database error")
+		return
+	} else if !exists {
+		checks = append(checks, restorePreflightCheck("target_agent_exists", protocol.RestorePreflightSeverityError, "target agent not found", targetAgentID))
+		h.writePreflightReport(c, "", checks)
+		return
+	}
+	checks = append(checks, restorePreflightCheck("target_agent_exists", protocol.RestorePreflightSeverityInfo, "target agent exists", targetAgentID))
+
+	if sourceExists, err := h.agentExists(contextFromGin(c), sourceAgentID); err != nil {
+		writeErrorResponse(c, http.StatusInternalServerError, "database error")
+		return
+	} else if !sourceExists {
+		checks = append(checks, restorePreflightCheck("source_agent_exists", protocol.RestorePreflightSeverityError, "source agent not found", sourceAgentID))
+		h.writePreflightReport(c, "", checks)
+		return
+	}
+	checks = append(checks, restorePreflightCheck("source_agent_exists", protocol.RestorePreflightSeverityInfo, "source agent exists", sourceAgentID))
+
+	if h.Hub == nil || !h.Hub.IsOnline(targetAgentID) {
+		checks = append(checks, restorePreflightCheck("target_agent_online", protocol.RestorePreflightSeverityError, "target agent is offline", targetAgentID))
+		h.writePreflightReport(c, "", checks)
+		return
+	}
+	checks = append(checks, restorePreflightCheck("target_agent_online", protocol.RestorePreflightSeverityInfo, "target agent is online", targetAgentID))
+
+	supportsPreflight, err := agentHasCapability(h.DB, targetAgentID, protocol.CapabilityRestorePreflight)
+	if err != nil {
+		writeErrorResponse(c, http.StatusInternalServerError, "database error")
+		return
+	}
+	if !supportsPreflight {
+		checks = append(checks, restorePreflightCheck("restore_preflight_capability", protocol.RestorePreflightSeverityError, "target agent does not support restore preflight; upgrade the Agent", targetAgentID))
+		h.writePreflightReport(c, "", checks)
+		return
+	}
+	checks = append(checks, restorePreflightCheck("restore_preflight_capability", protocol.RestorePreflightSeverityInfo, "target agent supports restore preflight", targetAgentID))
+
+	snapshotID, found, err := h.resolveKnownSnapshotID(contextFromGin(c), sourceAgentID, request.SnapshotID)
+	if err != nil {
+		writeErrorResponse(c, http.StatusInternalServerError, "database error")
+		return
+	}
+	if !found {
+		checks = append(checks, restorePreflightCheck("source_snapshot_found", protocol.RestorePreflightSeverityError, "source snapshot not found", request.SnapshotID))
+		h.writePreflightReport(c, "", checks)
+		return
+	}
+	checks = append(checks, restorePreflightCheck("source_snapshot_found", protocol.RestorePreflightSeverityInfo, "source snapshot found", snapshotID))
+
+	dockerRestore := restoreMode == protocol.RestoreModeDockerContainer || request.Docker != nil
+	includePaths := append([]string(nil), request.IncludePaths...)
+	var dockerRequest *protocol.DockerRestoreRequest
+	if dockerRestore {
+		supportsDockerRestore, err := agentHasCapability(h.DB, targetAgentID, protocol.CapabilityDockerContainerRestore)
+		if err != nil {
+			writeErrorResponse(c, http.StatusInternalServerError, "database error")
+			return
+		}
+		if !supportsDockerRestore {
+			checks = append(checks, restorePreflightCheck("docker_restore_capability", protocol.RestorePreflightSeverityError, "target agent does not support Docker container restore", targetAgentID))
+		} else {
+			checks = append(checks, restorePreflightCheck("docker_restore_capability", protocol.RestorePreflightSeverityInfo, "target agent supports Docker container restore", targetAgentID))
+		}
+		resolvedDocker, err := h.resolveDockerRestoreRequest(c, sourceAgentID, snapshotID, request)
+		if err != nil {
+			checks = append(checks, restorePreflightCheck("docker_metadata", protocol.RestorePreflightSeverityError, err.Error(), snapshotID))
+		} else {
+			dockerRequest = &resolvedDocker
+			dockerPaths := dockerRestoreIncludePaths(resolvedDocker)
+			if len(dockerPaths) == 0 {
+				checks = append(checks, restorePreflightCheck("docker_restore_paths", protocol.RestorePreflightSeverityError, "docker metadata has no restore paths", snapshotID))
+			} else {
+				includePaths = appendUniqueRestoreStrings(includePaths, dockerPaths...)
+				checks = append(checks, restorePreflightCheck("docker_metadata", protocol.RestorePreflightSeverityInfo, "docker metadata found", snapshotID))
+			}
+		}
+		targetPath = "/"
+	} else if strings.TrimSpace(targetPath) == "" {
+		checks = append(checks, restorePreflightCheck("target_path_required", protocol.RestorePreflightSeverityError, "target path is required for file restore", ""))
+	}
+
+	if len(includePaths) > 0 {
+		supportsSelectiveRestore, err := agentHasCapability(h.DB, targetAgentID, protocol.CapabilityRestoreIncludePaths)
+		if err != nil {
+			writeErrorResponse(c, http.StatusInternalServerError, "database error")
+			return
+		}
+		if !supportsSelectiveRestore {
+			checks = append(checks, restorePreflightCheck("restore_include_paths_capability", protocol.RestorePreflightSeverityError, "target agent does not support selective restore", targetAgentID))
+		} else {
+			checks = append(checks, restorePreflightCheck("restore_include_paths_capability", protocol.RestorePreflightSeverityInfo, "target agent supports selective restore", targetAgentID))
+		}
+	}
+
+	if restorePreflightHasError(checks) {
+		h.writePreflightReport(c, snapshotID, checks)
+		return
+	}
+
+	agentChecks := h.runAgentRestorePreflight(c, targetAgentID, protocol.RestorePreflightReqPayload{
+		AgentID:      targetAgentID,
+		SnapshotID:   snapshotID,
+		Target:       targetPath,
+		IncludePaths: includePaths,
+		RestoreMode:  restoreMode,
+		Docker:       dockerRequest,
+	})
+	checks = append(checks, agentChecks...)
+	h.writePreflightReport(c, snapshotID, checks)
 }
 
 func (h *RestoreHandler) Restore(c *gin.Context) {
@@ -201,6 +349,80 @@ func (h *RestoreHandler) resolveDockerRestoreRequest(c *gin.Context, agentID str
 	return filterDockerRestoreRequest(protocol.DockerRestoreRequest{Sources: metadata.Sources}, request.DockerSourceID)
 }
 
+func (h *RestoreHandler) runAgentRestorePreflight(c *gin.Context, agentID string, payload protocol.RestorePreflightReqPayload) []protocol.RestorePreflightCheck {
+	msg, err := protocol.NewMessage(protocol.TypeRestorePreflightReq, payload)
+	if err != nil {
+		return []protocol.RestorePreflightCheck{restorePreflightCheck("restore_preflight_encode", protocol.RestorePreflightSeverityError, "encode restore preflight request failed", err.Error())}
+	}
+	wait := h.sendAndWait
+	if wait == nil {
+		if waitHub, ok := h.Hub.(restorePreflightHub); ok {
+			wait = waitHub.SendAndWait
+		}
+	}
+	if wait == nil {
+		return []protocol.RestorePreflightCheck{restorePreflightCheck("restore_preflight_dispatch", protocol.RestorePreflightSeverityError, "restore preflight is not available on this Master", "")}
+	}
+	respCh, err := wait(agentID, *msg, h.timeout)
+	if err != nil {
+		return []protocol.RestorePreflightCheck{restorePreflightCheck("restore_preflight_dispatch", protocol.RestorePreflightSeverityError, "send restore preflight request failed", err.Error())}
+	}
+	select {
+	case resp, ok := <-respCh:
+		if !ok {
+			return []protocol.RestorePreflightCheck{restorePreflightCheck("restore_preflight_timeout", protocol.RestorePreflightSeverityError, "timeout waiting for target agent preflight response", "")}
+		}
+		if resp.Type != protocol.TypeRestorePreflightResp {
+			return []protocol.RestorePreflightCheck{restorePreflightCheck("restore_preflight_response", protocol.RestorePreflightSeverityError, "invalid agent preflight response type", resp.Type)}
+		}
+		agentPayload, err := protocol.ParsePayload[protocol.RestorePreflightRespPayload](&resp)
+		if err != nil {
+			return []protocol.RestorePreflightCheck{restorePreflightCheck("restore_preflight_response", protocol.RestorePreflightSeverityError, "decode agent preflight response failed", err.Error())}
+		}
+		if agentPayload.Error != "" {
+			return append(agentPayload.Checks, restorePreflightCheck("restore_preflight_agent_error", protocol.RestorePreflightSeverityError, "target agent reported restore preflight error", agentPayload.Error))
+		}
+		return agentPayload.Checks
+	case <-c.Request.Context().Done():
+		return []protocol.RestorePreflightCheck{restorePreflightCheck("restore_preflight_cancelled", protocol.RestorePreflightSeverityError, "restore preflight request was cancelled", "")}
+	}
+}
+
+func (h *RestoreHandler) writePreflightReport(c *gin.Context, snapshotID string, checks []protocol.RestorePreflightCheck) {
+	payload := protocol.RestorePreflightRespPayload{
+		AgentID:    c.Param("id"),
+		SnapshotID: snapshotID,
+		Status:     restorePreflightStatus(checks),
+		Checks:     checks,
+	}
+	writeDataResponse(c, http.StatusOK, payload)
+}
+
+func restorePreflightStatus(checks []protocol.RestorePreflightCheck) string {
+	if restorePreflightHasError(checks) {
+		return protocol.RestorePreflightStatusFailed
+	}
+	return protocol.RestorePreflightStatusPassed
+}
+
+func restorePreflightHasError(checks []protocol.RestorePreflightCheck) bool {
+	for _, check := range checks {
+		if check.Severity == protocol.RestorePreflightSeverityError {
+			return true
+		}
+	}
+	return false
+}
+
+func restorePreflightCheck(code string, severity string, message string, detail string) protocol.RestorePreflightCheck {
+	return protocol.RestorePreflightCheck{
+		Code:     code,
+		Severity: severity,
+		Message:  message,
+		Detail:   detail,
+	}
+}
+
 func filterDockerRestoreRequest(request protocol.DockerRestoreRequest, sourceID string) (protocol.DockerRestoreRequest, error) {
 	if strings.TrimSpace(sourceID) == "" {
 		if len(request.Sources) == 0 {
@@ -250,18 +472,41 @@ func appendUniqueRestoreStrings(values []string, more ...string) []string {
 }
 
 func (h *RestoreHandler) resolveSnapshotID(c *gin.Context, agentID string, requestedID string) (string, bool) {
+	snapshotID, found, err := h.resolveSnapshotIDValue(contextFromGin(c), agentID, requestedID)
+	if err != nil {
+		writeErrorResponse(c, http.StatusInternalServerError, "database error")
+		return "", false
+	}
+	if !found {
+		return requestedID, true
+	}
+	return snapshotID, true
+}
+
+func (h *RestoreHandler) resolveSnapshotIDValue(ctx context.Context, agentID string, requestedID string) (string, bool, error) {
 	var snapshot db.Snapshot
-	err := h.DB.DB.WithContext(contextFromGin(c)).
+	err := h.DB.DB.WithContext(ctx).
 		Where("agent_id = ? AND (id = ? OR snapshot_id = ?)", agentID, requestedID, requestedID).
 		First(&snapshot).Error
 	if err == nil {
-		return snapshot.SnapshotID, true
+		return snapshot.SnapshotID, true, nil
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return requestedID, true
+		return "", false, nil
 	}
-	writeErrorResponse(c, http.StatusInternalServerError, "database error")
-	return "", false
+	return "", false, err
+}
+
+func (h *RestoreHandler) resolveKnownSnapshotID(ctx context.Context, agentID string, requestedID string) (string, bool, error) {
+	return h.resolveSnapshotIDValue(ctx, agentID, requestedID)
+}
+
+func (h *RestoreHandler) agentExists(ctx context.Context, agentID string) (bool, error) {
+	var count int64
+	if err := h.DB.DB.WithContext(ctx).Model(&db.Agent{}).Where("id = ?", agentID).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (h *RestoreHandler) commandService() *commands.Service {

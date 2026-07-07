@@ -25,6 +25,24 @@ export interface RestoreRequest {
   docker_source_id?: string;
 }
 
+export type RestorePreflightSeverity = "info" | "warning" | "error";
+export type RestorePreflightStatus = "passed" | "failed";
+
+export interface RestorePreflightCheck {
+  code: string;
+  severity: RestorePreflightSeverity;
+  message: string;
+  detail?: string;
+}
+
+export interface RestorePreflightReport {
+  agent_id?: string;
+  snapshot_id: string;
+  status: RestorePreflightStatus;
+  checks: RestorePreflightCheck[];
+  error?: string;
+}
+
 export interface RestoreAccepted {
   message_id: string;
   command_id?: string;

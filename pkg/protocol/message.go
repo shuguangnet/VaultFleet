@@ -10,36 +10,39 @@ import (
 
 // Message type constants identify WebSocket payload kinds exchanged by master and agents.
 const (
-	TypeHeartbeat           = "heartbeat"
-	TypeDirBrowseReq        = "dir_browse_req"
-	TypeDirBrowseResp       = "dir_browse_resp"
-	TypeDockerDiscoveryReq  = "docker_discovery_req"
-	TypeDockerDiscoveryResp = "docker_discovery_resp"
-	TypePolicyPush          = "policy_push"
-	TypePolicyAck           = "policy_ack"
-	TypeBackupNow           = "backup_now"
-	TypeTaskResult          = "task_result"
-	TypeRestoreReq          = "restore_req"
-	TypeSelectiveRestoreReq = "selective_restore_req"
-	TypeRestoreProgress     = "restore_progress"
-	TypeSnapshotListReq     = "snapshot_list_req"
-	TypeSnapshotListResp    = "snapshot_list_resp"
-	TypeSnapshotBrowseReq   = "snapshot_browse_req"
-	TypeSnapshotBrowseResp  = "snapshot_browse_resp"
-	TypeCollectLogsReq      = "collect_logs_req"
-	TypeCollectLogsResp     = "collect_logs_resp"
-	TypeDirSizeReq          = "dir_size_req"
-	TypeDirSizeResp         = "dir_size_resp"
-	TypeVersionInfo         = "version_info"
-	TypeUpdateAgent         = "update_agent"
-	TypeUpdateAgentResp     = "update_agent_resp"
-	TypeBackupProgress      = "backup_progress"
-	TypeCancelTask          = "cancel_task"
+	TypeHeartbeat            = "heartbeat"
+	TypeDirBrowseReq         = "dir_browse_req"
+	TypeDirBrowseResp        = "dir_browse_resp"
+	TypeDockerDiscoveryReq   = "docker_discovery_req"
+	TypeDockerDiscoveryResp  = "docker_discovery_resp"
+	TypePolicyPush           = "policy_push"
+	TypePolicyAck            = "policy_ack"
+	TypeBackupNow            = "backup_now"
+	TypeTaskResult           = "task_result"
+	TypeRestoreReq           = "restore_req"
+	TypeSelectiveRestoreReq  = "selective_restore_req"
+	TypeRestoreProgress      = "restore_progress"
+	TypeRestorePreflightReq  = "restore_preflight_req"
+	TypeRestorePreflightResp = "restore_preflight_resp"
+	TypeSnapshotListReq      = "snapshot_list_req"
+	TypeSnapshotListResp     = "snapshot_list_resp"
+	TypeSnapshotBrowseReq    = "snapshot_browse_req"
+	TypeSnapshotBrowseResp   = "snapshot_browse_resp"
+	TypeCollectLogsReq       = "collect_logs_req"
+	TypeCollectLogsResp      = "collect_logs_resp"
+	TypeDirSizeReq           = "dir_size_req"
+	TypeDirSizeResp          = "dir_size_resp"
+	TypeVersionInfo          = "version_info"
+	TypeUpdateAgent          = "update_agent"
+	TypeUpdateAgentResp      = "update_agent_resp"
+	TypeBackupProgress       = "backup_progress"
+	TypeCancelTask           = "cancel_task"
 )
 
 const (
 	CapabilitySnapshotBrowse            = "snapshot_browse"
 	CapabilityRestoreIncludePaths       = "restore_include_paths"
+	CapabilityRestorePreflight          = "restore_preflight"
 	CapabilityPolicyPlaintextRclonePass = "policy_plaintext_rclone_pass"
 	CapabilityArchiveBackup             = "archive_backup"
 	CapabilityDockerWorkloadBackups     = "docker_workload_backups"
@@ -52,6 +55,7 @@ func DefaultAgentCapabilities() []string {
 	return []string{
 		CapabilitySnapshotBrowse,
 		CapabilityRestoreIncludePaths,
+		CapabilityRestorePreflight,
 		CapabilityPolicyPlaintextRclonePass,
 		CapabilityArchiveBackup,
 		CapabilityTypedBackupSources,
@@ -368,6 +372,42 @@ type RestoreReqPayload struct {
 
 type DockerRestoreRequest struct {
 	Sources []DockerResolvedSource `json:"sources,omitempty"`
+}
+
+const (
+	RestorePreflightStatusPassed = "passed"
+	RestorePreflightStatusFailed = "failed"
+
+	RestorePreflightSeverityInfo    = "info"
+	RestorePreflightSeverityWarning = "warning"
+	RestorePreflightSeverityError   = "error"
+)
+
+// RestorePreflightReqPayload asks an agent to validate local restore readiness.
+type RestorePreflightReqPayload struct {
+	AgentID      string                `json:"agent_id,omitempty"`
+	SnapshotID   string                `json:"snapshot_id"`
+	Target       string                `json:"target,omitempty"`
+	IncludePaths []string              `json:"include_paths,omitempty"`
+	RestoreMode  string                `json:"restore_mode,omitempty"`
+	Docker       *DockerRestoreRequest `json:"docker,omitempty"`
+}
+
+// RestorePreflightRespPayload reports structured readiness checks for a restore plan.
+type RestorePreflightRespPayload struct {
+	AgentID    string                  `json:"agent_id,omitempty"`
+	SnapshotID string                  `json:"snapshot_id"`
+	Status     string                  `json:"status"`
+	Checks     []RestorePreflightCheck `json:"checks"`
+	Error      string                  `json:"error,omitempty"`
+}
+
+// RestorePreflightCheck is one preflight finding.
+type RestorePreflightCheck struct {
+	Code     string `json:"code"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+	Detail   string `json:"detail,omitempty"`
 }
 
 // SnapshotListReqPayload requests repository snapshots from an agent.

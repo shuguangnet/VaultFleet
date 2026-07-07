@@ -388,6 +388,168 @@ func Restore(ctx context.Context, request protocol.DockerRestoreRequest, runner 
 	return nil
 }
 
+func PreflightRestore(ctx context.Context, client API, request protocol.DockerRestoreRequest) []protocol.RestorePreflightCheck {
+	var checks []protocol.RestorePreflightCheck
+	if len(request.Sources) == 0 {
+		return append(checks, preflightCheck("docker_metadata", protocol.RestorePreflightSeverityError, "docker restore metadata has no sources", ""))
+	}
+	if client == nil {
+		client = NewClient("")
+	}
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	if err := client.Ping(ctx); err != nil {
+		return append(checks, preflightCheck("docker_available", protocol.RestorePreflightSeverityError, "Docker Engine is not available", err.Error()))
+	}
+	checks = append(checks, preflightCheck("docker_available", protocol.RestorePreflightSeverityInfo, "Docker Engine is available", ""))
+
+	containers, err := client.ListContainers(ctx)
+	if err != nil {
+		return append(checks, preflightCheck("docker_list_containers", protocol.RestorePreflightSeverityError, "cannot list Docker containers", err.Error()))
+	}
+
+	for _, source := range request.Sources {
+		checks = append(checks, preflightSource(containers, source)...)
+	}
+	return checks
+}
+
+func preflightSource(containers []ContainerSummary, source protocol.DockerResolvedSource) []protocol.RestorePreflightCheck {
+	var checks []protocol.RestorePreflightCheck
+	sourceName := sourceDescriptionFromResolved(source)
+	if strings.TrimSpace(source.Image) == "" && !hasComposeRestoreMetadata(source) {
+		checks = append(checks, preflightCheck("docker_image_metadata", protocol.RestorePreflightSeverityWarning, "Docker image metadata is missing", sourceName))
+	}
+	if conflict := containerConflict(containers, source); conflict != "" {
+		checks = append(checks, preflightCheck("docker_container_conflict", protocol.RestorePreflightSeverityWarning, "target host already has a matching Docker container or Compose service", conflict))
+	}
+	if len(source.ResolvedPaths) == 0 {
+		checks = append(checks, preflightCheck("docker_restore_paths", protocol.RestorePreflightSeverityError, "Docker source has no restore paths", sourceName))
+		return checks
+	}
+	for _, restorePath := range source.ResolvedPaths {
+		checks = append(checks, preflightRestorePath(restorePath)...)
+	}
+	return checks
+}
+
+func hasComposeRestoreMetadata(source protocol.DockerResolvedSource) bool {
+	compose := source.Compose
+	if compose.Service == "" {
+		compose.Service = source.Selection.ComposeService
+	}
+	if len(compose.ConfigFiles) == 0 {
+		compose.ConfigFiles = source.Selection.ComposeConfigFiles
+	}
+	return compose.Service != "" && len(compose.ConfigFiles) > 0
+}
+
+func containerConflict(containers []ContainerSummary, source protocol.DockerResolvedSource) string {
+	name := strings.TrimSpace(source.Name)
+	if name == "" {
+		name = strings.TrimSpace(source.Selection.Name)
+	}
+	composeProject := strings.TrimSpace(source.Compose.Project)
+	if composeProject == "" {
+		composeProject = strings.TrimSpace(source.Selection.ComposeProject)
+	}
+	composeService := strings.TrimSpace(source.Compose.Service)
+	if composeService == "" {
+		composeService = strings.TrimSpace(source.Selection.ComposeService)
+	}
+	for _, container := range containers {
+		if name != "" {
+			for _, existingName := range cleanContainerNames(container.Names) {
+				if existingName == name {
+					return "container name " + name
+				}
+			}
+		}
+		if composeProject != "" && composeService != "" &&
+			container.Labels["com.docker.compose.project"] == composeProject &&
+			container.Labels["com.docker.compose.service"] == composeService {
+			return "compose service " + composeProject + "/" + composeService
+		}
+	}
+	return ""
+}
+
+func preflightRestorePath(path string) []protocol.RestorePreflightCheck {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return []protocol.RestorePreflightCheck{preflightCheck("docker_restore_path_empty", protocol.RestorePreflightSeverityWarning, "Docker restore path is empty", "")}
+	}
+	if !filepath.IsAbs(path) {
+		return []protocol.RestorePreflightCheck{preflightCheck("docker_restore_path_absolute", protocol.RestorePreflightSeverityError, "Docker restore path must be absolute", path)}
+	}
+	info, err := os.Stat(path)
+	if err == nil {
+		checks := []protocol.RestorePreflightCheck{preflightCheck("docker_restore_path_exists", protocol.RestorePreflightSeverityWarning, "Docker restore path already exists and may be overwritten", path)}
+		if info.IsDir() {
+			if err := probeWritableDir(path); err != nil {
+				checks = append(checks, preflightCheck("docker_restore_path_writable", protocol.RestorePreflightSeverityError, "Docker restore path is not writable", err.Error()))
+			}
+			return checks
+		}
+		if err := probeWritableDir(filepath.Dir(path)); err != nil {
+			checks = append(checks, preflightCheck("docker_restore_path_writable", protocol.RestorePreflightSeverityError, "Docker restore path parent is not writable", err.Error()))
+		}
+		return checks
+	}
+	if !os.IsNotExist(err) {
+		return []protocol.RestorePreflightCheck{preflightCheck("docker_restore_path_stat", protocol.RestorePreflightSeverityError, "cannot inspect Docker restore path", err.Error())}
+	}
+	parent := nearestExistingParent(path)
+	if parent == "" {
+		return []protocol.RestorePreflightCheck{preflightCheck("docker_restore_path_parent", protocol.RestorePreflightSeverityError, "Docker restore path has no existing writable parent", path)}
+	}
+	if err := probeWritableDir(parent); err != nil {
+		return []protocol.RestorePreflightCheck{preflightCheck("docker_restore_path_parent", protocol.RestorePreflightSeverityError, "Docker restore path parent is not writable", err.Error())}
+	}
+	return []protocol.RestorePreflightCheck{preflightCheck("docker_restore_path_missing", protocol.RestorePreflightSeverityWarning, "Docker restore path does not exist and will be created during restore", path)}
+}
+
+func nearestExistingParent(path string) string {
+	current := filepath.Clean(path)
+	for {
+		parent := filepath.Dir(current)
+		if parent == current {
+			return ""
+		}
+		if info, err := os.Stat(parent); err == nil && info.IsDir() {
+			return parent
+		}
+		current = parent
+	}
+}
+
+func probeWritableDir(dir string) error {
+	probe, err := os.CreateTemp(dir, ".vaultfleet-docker-restore-preflight-*")
+	if err != nil {
+		return err
+	}
+	probePath := probe.Name()
+	if _, err := probe.Write([]byte("ok")); err != nil {
+		_ = probe.Close()
+		_ = os.Remove(probePath)
+		return err
+	}
+	if err := probe.Close(); err != nil {
+		_ = os.Remove(probePath)
+		return err
+	}
+	return os.Remove(probePath)
+}
+
+func preflightCheck(code string, severity string, message string, detail string) protocol.RestorePreflightCheck {
+	return protocol.RestorePreflightCheck{
+		Code:     code,
+		Severity: severity,
+		Message:  message,
+		Detail:   detail,
+	}
+}
+
 func restoreSource(ctx context.Context, source protocol.DockerResolvedSource, runner CommandRunner) error {
 	if args, ok := composeRestoreArgs(source); ok {
 		if output, err := runner(ctx, "docker", args...); err != nil {

@@ -181,6 +181,8 @@ func (h *Handler) Handle(msg protocol.Message) {
 		h.handleDirSizeReq(msg)
 	case protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq:
 		h.handleRestoreReq(msg)
+	case protocol.TypeRestorePreflightReq:
+		h.handleRestorePreflightReq(msg)
 	case protocol.TypeSnapshotListReq:
 		h.handleSnapshotListReq(msg)
 	case protocol.TypeSnapshotBrowseReq:
@@ -1153,6 +1155,134 @@ func (h *Handler) handleRestoreReq(msg protocol.Message) {
 	})
 	if startErr != nil {
 		h.sendTaskResultWithID(msg.ID, h.failedTypedTaskResult(agentID, "restore", req.SnapshotID, startErr.Error(), time.Now()))
+	}
+}
+
+func (h *Handler) handleRestorePreflightReq(msg protocol.Message) {
+	req, err := protocol.ParsePayload[protocol.RestorePreflightReqPayload](&msg)
+	if err != nil {
+		log.Printf("parse restore preflight request failed: %v", err)
+		h.sendRestorePreflightResp(msg.ID, protocol.RestorePreflightRespPayload{
+			AgentID: h.agentID,
+			Status:  protocol.RestorePreflightStatusFailed,
+			Checks: []protocol.RestorePreflightCheck{
+				restorePreflightCheck("invalid_request", protocol.RestorePreflightSeverityError, "invalid restore preflight request", err.Error()),
+			},
+			Error: err.Error(),
+		})
+		return
+	}
+	agentID := req.AgentID
+	if agentID == "" {
+		agentID = h.agentID
+	}
+
+	checks := h.restorePreflightChecks(context.Background(), *req)
+	payload := protocol.RestorePreflightRespPayload{
+		AgentID:    agentID,
+		SnapshotID: req.SnapshotID,
+		Status:     restorePreflightStatus(checks),
+		Checks:     checks,
+	}
+	h.sendRestorePreflightResp(msg.ID, payload)
+}
+
+func (h *Handler) restorePreflightChecks(ctx context.Context, req protocol.RestorePreflightReqPayload) []protocol.RestorePreflightCheck {
+	checks := []protocol.RestorePreflightCheck{
+		restorePreflightCheck("agent_reachable", protocol.RestorePreflightSeverityInfo, "target agent received restore preflight request", ""),
+	}
+	restoreMode := strings.TrimSpace(req.RestoreMode)
+	if restoreMode == "" {
+		restoreMode = protocol.RestoreModeFiles
+	}
+	if restoreMode == protocol.RestoreModeDockerContainer || req.Docker != nil {
+		if req.Docker == nil {
+			checks = append(checks, restorePreflightCheck("docker_metadata", protocol.RestorePreflightSeverityError, "docker restore metadata is missing", ""))
+			return checks
+		}
+		checks = append(checks, agentdocker.PreflightRestore(ctx, h.dockerAPI, *req.Docker)...)
+		return checks
+	}
+	checks = append(checks, fileRestorePreflightChecks(req.Target, req.IncludePaths)...)
+	return checks
+}
+
+func fileRestorePreflightChecks(target string, includePaths []string) []protocol.RestorePreflightCheck {
+	checks := []protocol.RestorePreflightCheck{
+		restorePreflightCheck("restore_mode", protocol.RestorePreflightSeverityInfo, "file restore mode selected", ""),
+	}
+	if len(includePaths) > 0 {
+		checks = append(checks, restorePreflightCheck("include_paths", protocol.RestorePreflightSeverityInfo, "selected snapshot paths will be restored", strings.Join(includePaths, "\n")))
+	}
+	if err := ensureRestoreTargetWritable(target); err != nil {
+		checks = append(checks, restorePreflightCheck("target_path_writable", protocol.RestorePreflightSeverityError, "target path is not writable", err.Error()))
+		return checks
+	}
+	checks = append(checks, restorePreflightCheck("target_path_writable", protocol.RestorePreflightSeverityInfo, "target path is writable", target))
+	return checks
+}
+
+func ensureRestoreTargetWritable(target string) error {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return errors.New("target path is required")
+	}
+	cleaned := filepath.Clean(target)
+	if !filepath.IsAbs(cleaned) {
+		return errors.New("target path must be absolute")
+	}
+	if info, err := os.Stat(cleaned); err == nil && !info.IsDir() {
+		return errors.New("target path exists and is not a directory")
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.MkdirAll(cleaned, 0o755); err != nil {
+		return err
+	}
+	probe, err := os.CreateTemp(cleaned, ".vaultfleet-restore-preflight-*")
+	if err != nil {
+		return err
+	}
+	probePath := probe.Name()
+	if _, err := probe.Write([]byte("ok")); err != nil {
+		_ = probe.Close()
+		_ = os.Remove(probePath)
+		return err
+	}
+	if err := probe.Close(); err != nil {
+		_ = os.Remove(probePath)
+		return err
+	}
+	return os.Remove(probePath)
+}
+
+func restorePreflightStatus(checks []protocol.RestorePreflightCheck) string {
+	for _, check := range checks {
+		if check.Severity == protocol.RestorePreflightSeverityError {
+			return protocol.RestorePreflightStatusFailed
+		}
+	}
+	return protocol.RestorePreflightStatusPassed
+}
+
+func restorePreflightCheck(code string, severity string, message string, detail string) protocol.RestorePreflightCheck {
+	return protocol.RestorePreflightCheck{
+		Code:     code,
+		Severity: severity,
+		Message:  message,
+		Detail:   detail,
+	}
+}
+
+func (h *Handler) sendRestorePreflightResp(messageID string, payload protocol.RestorePreflightRespPayload) {
+	resp, err := protocol.NewMessage(protocol.TypeRestorePreflightResp, payload)
+	if err != nil {
+		log.Printf("create restore preflight response failed: %v", err)
+		return
+	}
+	resp.ID = messageID
+	if err := h.sendMessage(*resp); err != nil {
+		log.Printf("send restore preflight response failed: %v", err)
 	}
 }
 

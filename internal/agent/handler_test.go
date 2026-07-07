@@ -1691,6 +1691,85 @@ func TestHandleRestoreDockerContainerRestoresOriginalPathsAndStartsContainer(t *
 	assert.Equal(t, "success", result.Status)
 }
 
+func TestHandleRestorePreflightFileSuccess(t *testing.T) {
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{
+		AgentID:  "agent-1",
+		SendFunc: sent.send,
+	})
+	target := filepath.Join(t.TempDir(), "restore-target")
+	msg, err := protocol.NewMessage(protocol.TypeRestorePreflightReq, protocol.RestorePreflightReqPayload{
+		AgentID:      "agent-1",
+		SnapshotID:   "snap-1",
+		Target:       target,
+		IncludePaths: []string{"/etc/hosts"},
+		RestoreMode:  protocol.RestoreModeFiles,
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	respMsg := waitForMessageType(t, sent, protocol.TypeRestorePreflightResp, time.Second)
+	assert.Equal(t, msg.ID, respMsg.ID)
+	resp, err := protocol.ParsePayload[protocol.RestorePreflightRespPayload](&respMsg)
+	require.NoError(t, err)
+	assert.Equal(t, "agent-1", resp.AgentID)
+	assert.Equal(t, "snap-1", resp.SnapshotID)
+	assert.Equal(t, protocol.RestorePreflightStatusPassed, resp.Status)
+	assertPreflightCheck(t, resp.Checks, "target_path_writable", protocol.RestorePreflightSeverityInfo)
+}
+
+func TestHandleRestorePreflightFileRejectsNonDirectoryTarget(t *testing.T) {
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{
+		AgentID:  "agent-1",
+		SendFunc: sent.send,
+	})
+	target := filepath.Join(t.TempDir(), "target-file")
+	require.NoError(t, os.WriteFile(target, []byte("not a directory"), 0o600))
+	msg, err := protocol.NewMessage(protocol.TypeRestorePreflightReq, protocol.RestorePreflightReqPayload{
+		AgentID:     "agent-1",
+		SnapshotID:  "snap-1",
+		Target:      target,
+		RestoreMode: protocol.RestoreModeFiles,
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	respMsg := waitForMessageType(t, sent, protocol.TypeRestorePreflightResp, time.Second)
+	resp, err := protocol.ParsePayload[protocol.RestorePreflightRespPayload](&respMsg)
+	require.NoError(t, err)
+	assert.Equal(t, protocol.RestorePreflightStatusFailed, resp.Status)
+	assertPreflightCheck(t, resp.Checks, "target_path_writable", protocol.RestorePreflightSeverityError)
+}
+
+func TestHandleRestorePreflightDockerUnavailable(t *testing.T) {
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{
+		AgentID:   "agent-1",
+		SendFunc:  sent.send,
+		DockerAPI: fakeAgentDockerAPI{pingErr: errors.New("permission denied")},
+	})
+	msg, err := protocol.NewMessage(protocol.TypeRestorePreflightReq, protocol.RestorePreflightReqPayload{
+		AgentID:     "agent-1",
+		SnapshotID:  "snap-1",
+		RestoreMode: protocol.RestoreModeDockerContainer,
+		Docker: &protocol.DockerRestoreRequest{
+			Sources: []protocol.DockerResolvedSource{{Name: "db", Image: "postgres:16", ResolvedPaths: []string{"/srv/db"}}},
+		},
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	respMsg := waitForMessageType(t, sent, protocol.TypeRestorePreflightResp, time.Second)
+	resp, err := protocol.ParsePayload[protocol.RestorePreflightRespPayload](&respMsg)
+	require.NoError(t, err)
+	assert.Equal(t, protocol.RestorePreflightStatusFailed, resp.Status)
+	assertPreflightCheck(t, resp.Checks, "docker_available", protocol.RestorePreflightSeverityError)
+}
+
 func TestHandleRestoreRefreshesRcloneConfWithObscuredSFTPPassword(t *testing.T) {
 	store := policy.NewStore(t.TempDir())
 	configDir := t.TempDir()
@@ -2713,6 +2792,16 @@ func messageTypes(msgs []protocol.Message) []string {
 		types[i] = msg.Type
 	}
 	return types
+}
+
+func assertPreflightCheck(t *testing.T, checks []protocol.RestorePreflightCheck, code string, severity string) {
+	t.Helper()
+	for _, check := range checks {
+		if check.Code == code && check.Severity == severity {
+			return
+		}
+	}
+	t.Fatalf("preflight check %s with severity %s not found in %#v", code, severity, checks)
 }
 
 type fakeAgentDockerAPI struct {

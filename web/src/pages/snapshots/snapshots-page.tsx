@@ -30,13 +30,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   listSnapshots,
+  preflightRestore,
   refreshSnapshots,
   restoreSnapshot,
 } from "@/services/snapshots";
 import { listAgents } from "@/services/agents";
 import { listPolicies } from "@/services/policies";
 import { listStorage } from "@/services/storage";
-import type { RestoreRequest, Snapshot } from "@/types/snapshot";
+import type { RestorePreflightReport, RestoreRequest, Snapshot } from "@/types/snapshot";
 import type { DockerResolvedSource } from "@/types/task";
 import { safeFormatDate } from "@/lib/date";
 import { ErrorPanel } from "@/components/error-panel";
@@ -67,6 +68,17 @@ const dockerSourceLabel = (source: DockerResolvedSource) => {
   return `${name}${image}${compose}`;
 };
 
+const preflightAlertType = (report: RestorePreflightReport | null) => {
+  if (!report) return "info" as const;
+  return report.status === "passed" ? "success" as const : "error" as const;
+};
+
+const preflightSeverityColor = (severity: string) => {
+  if (severity === "error") return "#cf1322";
+  if (severity === "warning") return "#ad6800";
+  return "#237804";
+};
+
 export function SnapshotsPage() {
   const { message } = App.useApp();
   const navigate = useNavigate();
@@ -86,6 +98,8 @@ export function SnapshotsPage() {
   const [restoreMode, setRestoreMode] = useState<"files" | "docker_container">("files");
   const [selectedDockerSourceId, setSelectedDockerSourceId] = useState("");
   const [targetAgentId, setTargetAgentId] = useState("");
+  const [preflightReport, setPreflightReport] = useState<RestorePreflightReport | null>(null);
+  const [preflightPlanKey, setPreflightPlanKey] = useState("");
 
   const { data: agents } = useQuery({
     queryKey: ["agents"],
@@ -130,6 +144,21 @@ export function SnapshotsPage() {
     onError: (error: any) => message.error(error.message),
   });
 
+  const preflightMutation = useMutation({
+    mutationFn: (data: { targetAgentId: string; request: RestoreRequest; planKey: string }) =>
+      preflightRestore(data.targetAgentId, data.request),
+    onSuccess: (data, variables) => {
+      setPreflightReport(data);
+      setPreflightPlanKey(variables.planKey);
+      if (data.status === "passed") {
+        message.success("恢复预检通过");
+      } else {
+        message.error("恢复预检未通过");
+      }
+    },
+    onError: (error: any) => message.error(error.message),
+  });
+
   const handleAgentChange = (val: string) => {
     const newParams = new URLSearchParams(searchParams);
     if (val && val !== "all") newParams.set("agent_id", val);
@@ -144,11 +173,35 @@ export function SnapshotsPage() {
     capability === "docker_container_restore" || capability === "docker_workload_backups"
   );
   const canRestoreSelectedDocker = selectedDockerSources.length > 0 && !!targetAgentId;
-  const restoreConfirmed = confirmed && !!targetAgentId && (
+  const currentRestoreRequest: RestoreRequest | null = selectedSnapshot ? (
+    restoreMode === "docker_container"
+      ? {
+        snapshot_id: selectedSnapshot.id,
+        source_agent_id: agentId,
+        restore_mode: "docker_container",
+        docker_source_id: selectedDockerSourceId,
+      }
+      : {
+        snapshot_id: selectedSnapshot.id,
+        source_agent_id: agentId,
+        restore_mode: "files",
+        target_path: targetPath,
+        ...(includePaths.length > 0 ? { include_paths: includePaths } : {}),
+      }
+  ) : null;
+  const currentPreflightPlanKey = targetAgentId && currentRestoreRequest
+    ? JSON.stringify({ targetAgentId, request: currentRestoreRequest })
+    : "";
+  const preflightPassed = !!preflightReport &&
+    preflightReport.status === "passed" &&
+    preflightPlanKey === currentPreflightPlanKey;
+  const preflightStale = !!preflightReport && preflightPlanKey !== currentPreflightPlanKey;
+  const restoreReady = !!targetAgentId && (
     restoreMode === "docker_container"
       ? canRestoreSelectedDocker && !!selectedDockerSourceId
       : !!targetPath
   );
+  const restoreConfirmed = confirmed && restoreReady && preflightPassed;
 
   const handleOpenRestore = (s: Snapshot, mode: "files" | "docker_container" = "files") => {
     const sources = s.docker?.sources ?? [];
@@ -160,32 +213,26 @@ export function SnapshotsPage() {
     setConfirmed(false);
     setRestoreSuccessId(null);
     setIncludePaths([]);
+    setPreflightReport(null);
+    setPreflightPlanKey("");
     restoreMutation.reset();
+    preflightMutation.reset();
+  };
+
+  const handlePreflight = () => {
+    if (!currentRestoreRequest || !targetAgentId || !currentPreflightPlanKey) return;
+    preflightMutation.mutate({
+      targetAgentId,
+      request: currentRestoreRequest,
+      planKey: currentPreflightPlanKey,
+    });
   };
 
   const handleRestore = () => {
-    if (!restoreConfirmed || !selectedSnapshot) return;
-    if (restoreMode === "docker_container") {
-      restoreMutation.mutate({
-        targetAgentId,
-        request: {
-          snapshot_id: selectedSnapshot.id,
-          source_agent_id: agentId,
-          restore_mode: "docker_container",
-          docker_source_id: selectedDockerSourceId,
-        },
-      });
-      return;
-    }
+    if (!restoreConfirmed || !currentRestoreRequest) return;
     restoreMutation.mutate({
       targetAgentId,
-      request: {
-        snapshot_id: selectedSnapshot.id,
-        source_agent_id: agentId,
-        restore_mode: "files",
-        target_path: targetPath,
-        ...(includePaths.length > 0 ? { include_paths: includePaths } : {}),
-      },
+      request: currentRestoreRequest,
     });
   };
 
@@ -408,6 +455,7 @@ export function SnapshotsPage() {
         ) : (
           <Form layout="vertical">
             <ErrorPanel error={restoreMutation.error as any} />
+            <ErrorPanel error={preflightMutation.error as any} />
             <Form.Item label="快照 ID">
               <Typography.Text code style={{ fontSize: 12 }}>
                 {selectedSnapshot?.id}
@@ -500,6 +548,46 @@ export function SnapshotsPage() {
                   />
                 </Form.Item>
               </>
+            )}
+
+            <Button
+              block
+              icon={<CheckCircleOutlined />}
+              disabled={!restoreReady || preflightMutation.isPending}
+              loading={preflightMutation.isPending}
+              onClick={handlePreflight}
+            >
+              执行恢复预检
+            </Button>
+
+            {(preflightReport || preflightStale) && (
+              <Alert
+                type={preflightStale ? "warning" : preflightAlertType(preflightReport)}
+                showIcon
+                style={{ marginTop: 16 }}
+                message={
+                  preflightStale
+                    ? "恢复计划已变更，请重新执行预检"
+                    : preflightReport?.status === "passed"
+                    ? "预检通过"
+                    : "预检未通过"
+                }
+                description={
+                  preflightReport ? (
+                    <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                      {preflightReport.checks.map((check, index) => (
+                        <Typography.Text
+                          key={`${check.code}-${index}`}
+                          style={{ fontSize: 12, color: preflightSeverityColor(check.severity) }}
+                        >
+                          {check.message}
+                          {check.detail ? `：${check.detail}` : ""}
+                        </Typography.Text>
+                      ))}
+                    </Space>
+                  ) : undefined
+                }
+              />
             )}
 
             <Alert
