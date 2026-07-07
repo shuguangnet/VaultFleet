@@ -153,6 +153,9 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	diagnosticHandler := NewDiagnosticHandler(cfg.Database, cfg.Hub, cfg.LogBuf)
 	diagnosticHandler.Version = cfg.Version
 	healthHandler := NewHealthHandler(cfg.Database, cfg.Hub)
+	userHandler := NewUserHandler(cfg.Database)
+	apiTokenHandler := NewAPITokenHandler(cfg.Database)
+	auditHandler := NewAuditHandler(cfg.Database)
 
 	public := r.Group("/api")
 	public.GET("/auth/check", authHandler.CheckInit)
@@ -167,7 +170,7 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	r.GET("/ws/agent", agentWebSocket)
 
 	protected := r.Group("/api")
-	protected.Use(RequireInit(cfg.Database), RequireAuth(authHandler.Sessions))
+	protected.Use(RequireInit(cfg.Database), RequireAuth(authHandler.Sessions, cfg.Database), AuditMiddleware(cfg.Database), AuthorizeByRoute())
 	protected.POST("/auth/logout", authHandler.Logout)
 	protected.POST("/agents", agentHandler.Create)
 	protected.GET("/agents", agentHandler.List)
@@ -187,6 +190,9 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	RegisterNotificationRoutes(protected, notificationHandler)
 	RegisterSystemRoutes(protected.Group("/system"), systemHandler)
 	RegisterDiagnosticRoutes(protected.Group("/system"), diagnosticHandler)
+	RegisterUserRoutes(protected, userHandler)
+	RegisterAPITokenRoutes(protected, apiTokenHandler)
+	RegisterAuditRoutes(protected, auditHandler)
 
 	RegisterDownloadRoutes(r, cfg.Database.DataDir, cfg.Version, cfg.GitHubRepo)
 	RegisterHealthRoutes(r, healthHandler)

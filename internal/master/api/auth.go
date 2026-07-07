@@ -41,6 +41,7 @@ func setTokenGeneratorForTest(generator func(string) (string, error)) func() {
 type Session struct {
 	UserID   string
 	Username string
+	Role     string
 	CreateAt time.Time
 }
 
@@ -151,8 +152,13 @@ func (h *AuthHandler) CheckInit(c *gin.Context) {
 	}
 	if token, err := c.Cookie(sessionCookieName); err == nil {
 		if session, ok := h.Sessions.Get(token); ok {
-			data["authenticated"] = true
-			data["username"] = session.Username
+			if user, ok := h.validSessionUser(session); ok {
+				data["authenticated"] = true
+				data["username"] = user.Username
+				data["role"] = normalizeRole(user.Role)
+				data["permissions"] = effectivePermissions(user.Role, nil, false)
+				data["user"] = authUserData(user)
+			}
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -190,6 +196,7 @@ func (h *AuthHandler) InitSetup(c *gin.Context) {
 	user := db.User{
 		Username:     request.Username,
 		PasswordHash: string(passwordHash),
+		Role:         RoleAdmin,
 	}
 	if err := h.DB.DB.Create(&user).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "database error"})
@@ -200,7 +207,7 @@ func (h *AuthHandler) InitSetup(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "session creation failed"})
 		return
 	}
-	c.JSON(http.StatusOK, authUserResponse(user.Username))
+	c.JSON(http.StatusOK, authUserResponse(user.Username, user.Role))
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
@@ -213,6 +220,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	var user db.User
 	if err := h.DB.DB.First(&user, "username = ?", request.Username).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			RecordAudit(h.DB, c, "auth.login", "user", "", AuditResultFailure, "invalid credentials")
 			c.JSON(http.StatusUnauthorized, gin.H{"ok": false, "error": "invalid credentials"})
 			return
 		}
@@ -221,15 +229,30 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(request.Password)); err != nil {
+		RecordAudit(h.DB, c, "auth.login", "user", user.ID, AuditResultFailure, "invalid credentials")
 		c.JSON(http.StatusUnauthorized, gin.H{"ok": false, "error": "invalid credentials"})
 		return
 	}
+	if user.DisabledAt != nil {
+		RecordAudit(h.DB, c, "auth.login", "user", user.ID, AuditResultDenied, "user disabled")
+		c.JSON(http.StatusUnauthorized, gin.H{"ok": false, "error": "user disabled"})
+		return
+	}
+
+	loginAt := nowFunc()
+	if err := h.DB.DB.Model(&user).Update("last_login_at", loginAt).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "database error"})
+		return
+	}
+	user.LastLoginAt = &loginAt
 
 	if err := h.createSessionCookie(c, &user); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "session creation failed"})
 		return
 	}
-	c.JSON(http.StatusOK, authUserResponse(user.Username))
+	c.Set("actor", &Actor{Type: ActorTypeUser, UserID: user.ID, Username: user.Username, Role: normalizeRole(user.Role), Permissions: effectivePermissions(user.Role, nil, false)})
+	RecordAudit(h.DB, c, "auth.login", "user", user.ID, AuditResultSuccess, "")
+	c.JSON(http.StatusOK, authUserResponse(user.Username, user.Role))
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {
@@ -245,6 +268,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		SameSite: http.SameSiteLaxMode,
 		Secure:   requestIsSecure(c.Request),
 	})
+	RecordAudit(h.DB, c, "auth.logout", "user", c.GetString("user_id"), AuditResultSuccess, "")
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -262,6 +286,7 @@ func (h *AuthHandler) createSessionCookie(c *gin.Context, user *db.User) error {
 	token, err := h.Sessions.createWithError(&Session{
 		UserID:   user.ID,
 		Username: user.Username,
+		Role:     normalizeRole(user.Role),
 	})
 	if err != nil {
 		return err
@@ -281,11 +306,22 @@ func (h *AuthHandler) createSessionCookie(c *gin.Context, user *db.User) error {
 	return nil
 }
 
-func authUserResponse(username string) gin.H {
+func authUserResponse(username string, role ...string) gin.H {
+	userRole := RoleAdmin
+	if len(role) > 0 && normalizeRole(role[0]) != "" {
+		userRole = normalizeRole(role[0])
+	}
 	return gin.H{
 		"ok": true,
 		"data": gin.H{
-			"username": username,
+			"username":    username,
+			"role":        userRole,
+			"permissions": effectivePermissions(userRole, nil, false),
+			"user": gin.H{
+				"username":    username,
+				"role":        userRole,
+				"permissions": effectivePermissions(userRole, nil, false),
+			},
 		},
 	}
 }
@@ -304,6 +340,33 @@ func sessionExpired(session *Session) bool {
 	}
 
 	return nowFunc().Sub(session.CreateAt) >= sessionTTL
+}
+
+func (h *AuthHandler) validSessionUser(session *Session) (db.User, bool) {
+	if session == nil || session.UserID == "" {
+		return db.User{}, false
+	}
+	var user db.User
+	if err := h.DB.DB.First(&user, "id = ?", session.UserID).Error; err != nil {
+		return db.User{}, false
+	}
+	if user.DisabledAt != nil {
+		return db.User{}, false
+	}
+	return user, true
+}
+
+func authUserData(user db.User) gin.H {
+	role := normalizeRole(user.Role)
+	if role == "" {
+		role = RoleAdmin
+	}
+	return gin.H{
+		"id":          user.ID,
+		"username":    user.Username,
+		"role":        role,
+		"permissions": effectivePermissions(role, nil, false),
+	}
 }
 
 func requestIsSecure(r *http.Request) bool {

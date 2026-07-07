@@ -34,6 +34,7 @@ import { listAgents } from "@/services/agents";
 import { logout } from "@/services/auth";
 import { antdTheme } from "@/styles/antd-theme";
 import type { AuthUser } from "@/types/api";
+import { AuthProvider } from "@/contexts/auth-context";
 
 const { Header, Sider, Content } = Layout;
 const { useBreakpoint } = Grid;
@@ -108,7 +109,7 @@ export function AppLayout({ user }: AppLayoutProps) {
   }, [location.pathname]);
 
   const userMenuItems: MenuProps["items"] = [
-    { key: "username", label: user.username, disabled: true },
+    { key: "username", label: `${user.username} (${user.role ?? "admin"})`, disabled: true },
     { type: "divider" },
     {
       key: "change-password",
@@ -160,6 +161,7 @@ export function AppLayout({ user }: AppLayoutProps) {
   );
 
   return (
+    <AuthProvider user={user}>
     <Layout className="vf-app-shell">
       {!isMobile && (
         <Sider
@@ -302,6 +304,7 @@ export function AppLayout({ user }: AppLayoutProps) {
         </Content>
       </Layout>
     </Layout>
+    </AuthProvider>
   );
 }
 

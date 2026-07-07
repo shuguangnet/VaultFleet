@@ -68,6 +68,8 @@ import { DirectoryBrowser } from "@/components/directory-browser";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
+import { useAuth } from "@/contexts/auth-context";
+import { permissions } from "@/services/identity";
 
 const RETENTION_PRESETS: Record<
   string,
@@ -251,6 +253,9 @@ function detectRetentionPreset(r: RetentionConfig): string {
 
 export function PoliciesPage() {
   const { message } = App.useApp();
+  const auth = useAuth();
+  const canWritePolicies = auth.hasPermission(permissions.writePolicies);
+  const canRunBackup = auth.hasPermission(permissions.runBackup);
   const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -505,19 +510,19 @@ export function PoliciesPage() {
         <Dropdown
           menu={{
             items: [
-              {
+              canWritePolicies ? {
                 key: "edit",
                 icon: <EditOutlined />,
                 label: "编辑",
                 onClick: () => handleEdit(record),
-              },
-              {
+              } : null,
+              canRunBackup ? {
                 key: "backup",
                 icon: <PlayCircleOutlined />,
                 label: "立即备份",
                 onClick: () => setConfirmBackupAgentId(record.agent_id),
-              },
-              {
+              } : null,
+              canRunBackup ? {
                 key: "verify",
                 icon: <SafetyCertificateOutlined />,
                 label: "立即验证",
@@ -527,9 +532,9 @@ export function PoliciesPage() {
                     ?.find((a) => a.id === record.agent_id)
                     ?.capabilities?.includes("backup_verification"),
                 onClick: () => verifyMutation.mutate(record.id),
-              },
-              { type: "divider" },
-              {
+              } : null,
+              canWritePolicies ? { type: "divider" as const } : null,
+              canWritePolicies ? {
                 key: "delete",
                 icon: <DeleteOutlined />,
                 label: (
@@ -544,8 +549,8 @@ export function PoliciesPage() {
                     <span style={{ color: "#ff4d4f" }}>删除</span>
                   </Popconfirm>
                 ),
-              },
-            ],
+              } : null,
+            ].filter(Boolean) as any,
           }}
           trigger={["click"]}
         >
@@ -567,9 +572,9 @@ export function PoliciesPage() {
         description="节点 / 存储 / 调度 / 保留"
         icon={<SafetyCertificateOutlined />}
         actions={
-          <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
+          canWritePolicies ? <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
             添加策略
-          </Button>
+          </Button> : null
         }
       />
 

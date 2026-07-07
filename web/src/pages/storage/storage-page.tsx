@@ -50,6 +50,8 @@ import { PageHeader } from "@/components/page-header";
 import dayjs from "dayjs";
 import { safeFormatDate } from "@/lib/date";
 import type { StorageTestResult } from "@/types/health";
+import { useAuth } from "@/contexts/auth-context";
+import { permissions } from "@/services/identity";
 
 export const STORAGE_TEMPLATES: Record<
   string,
@@ -120,6 +122,8 @@ interface StorageFormValues {
 
 export function StoragePage() {
   const { message } = App.useApp();
+  const auth = useAuth();
+  const canWriteStorage = auth.hasPermission(permissions.writeStorage);
   const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -273,15 +277,15 @@ export function StoragePage() {
       align: "right",
       render: (_, record) => (
         <Space>
-          <Button
+          {canWriteStorage && <Button
             size="small"
             icon={<ThunderboltOutlined />}
             onClick={() => listTestMutation.mutate(record.id)}
             loading={listTestMutation.isPending && listTestMutation.variables === record.id}
           >
             测试
-          </Button>
-          <Dropdown
+          </Button>}
+          {canWriteStorage && <Dropdown
             menu={{
               items: [
                 {
@@ -304,7 +308,7 @@ export function StoragePage() {
             trigger={["click"]}
           >
             <Button type="text" icon={<EllipsisOutlined />} size="small" />
-          </Dropdown>
+          </Dropdown>}
         </Space>
       ),
     },
@@ -320,9 +324,9 @@ export function StoragePage() {
         description="S3 / SFTP / WebDAV / 本地路径"
         icon={<DatabaseOutlined />}
         actions={
-          <Button type="primary" icon={<PlusOutlined />} onClick={openAddDrawer}>
+          canWriteStorage ? <Button type="primary" icon={<PlusOutlined />} onClick={openAddDrawer}>
             添加存储
-          </Button>
+          </Button> : null
         }
       />
 

@@ -42,6 +42,8 @@ import type { NotificationConfig, NotificationInput } from "@/types/notification
 import { ErrorPanel } from "@/components/error-panel";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
+import { useAuth } from "@/contexts/auth-context";
+import { permissions } from "@/services/identity";
 
 const EVENT_OPTIONS = [
   { id: "backup_failed", label: "备份失败" },
@@ -99,6 +101,8 @@ function parseConfigList(value: string) {
 
 export function NotificationsPage() {
   const { message } = App.useApp();
+  const auth = useAuth();
+  const canWriteNotifications = auth.hasPermission(permissions.writeNotifications);
   const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -243,7 +247,7 @@ export function NotificationsPage() {
       align: "right",
       render: (_, record) => (
         <Space>
-          <Button
+          {canWriteNotifications && <Button
             type="text"
             icon={
               testSuccessId === record.id ? (
@@ -255,8 +259,8 @@ export function NotificationsPage() {
             onClick={() => testMutation.mutate(record.id)}
             loading={testMutation.isPending && testMutation.variables === record.id}
             title="发送测试消息"
-          />
-          <Dropdown
+          />}
+          {canWriteNotifications && <Dropdown
             menu={{
               items: [
                 {
@@ -287,7 +291,7 @@ export function NotificationsPage() {
             trigger={["click"]}
           >
             <Button type="text" icon={<EllipsisOutlined />} />
-          </Dropdown>
+          </Dropdown>}
         </Space>
       ),
     },
@@ -300,7 +304,7 @@ export function NotificationsPage() {
         description="Telegram / Webhook / Email"
         icon={<MessageOutlined />}
         actions={
-          <Button
+          canWriteNotifications ? <Button
             type="primary"
             icon={<PlusOutlined />}
             onClick={() => {
@@ -309,7 +313,7 @@ export function NotificationsPage() {
             }}
           >
             添加通知
-          </Button>
+          </Button> : null
         }
       />
 

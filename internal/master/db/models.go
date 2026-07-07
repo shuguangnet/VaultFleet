@@ -8,16 +8,68 @@ import (
 )
 
 type User struct {
-	ID           string    `gorm:"type:text;primaryKey" json:"id"`
-	Username     string    `gorm:"type:text;uniqueIndex;not null" json:"username"`
-	PasswordHash string    `gorm:"type:text;not null" json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           string     `gorm:"type:text;primaryKey" json:"id"`
+	Username     string     `gorm:"type:text;uniqueIndex;not null" json:"username"`
+	PasswordHash string     `gorm:"type:text;not null" json:"-"`
+	Role         string     `gorm:"type:text;default:admin;index" json:"role"`
+	DisabledAt   *time.Time `json:"disabled_at,omitempty"`
+	LastLoginAt  *time.Time `json:"last_login_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 func (u *User) BeforeCreate(tx *gorm.DB) error {
 	if u.ID == "" {
 		u.ID = uuid.NewString()
+	}
+	if u.Role == "" {
+		u.Role = "admin"
+	}
+	return nil
+}
+
+type APIToken struct {
+	ID          string     `gorm:"type:text;primaryKey" json:"id"`
+	Name        string     `gorm:"type:text;not null" json:"name"`
+	TokenPrefix string     `gorm:"type:text;uniqueIndex;not null" json:"token_prefix"`
+	SecretHash  string     `gorm:"type:text;not null" json:"-"`
+	OwnerUserID string     `gorm:"type:text;index;not null" json:"owner_user_id"`
+	Role        string     `gorm:"type:text;index;not null" json:"role"`
+	Scopes      string     `gorm:"type:text" json:"scopes"`
+	ExpiresAt   *time.Time `gorm:"index" json:"expires_at,omitempty"`
+	RevokedAt   *time.Time `gorm:"index" json:"revoked_at,omitempty"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+func (t *APIToken) BeforeCreate(tx *gorm.DB) error {
+	if t.ID == "" {
+		t.ID = uuid.NewString()
+	}
+	return nil
+}
+
+type AuditEvent struct {
+	ID         string    `gorm:"type:text;primaryKey" json:"id"`
+	ActorType  string    `gorm:"type:text;index" json:"actor_type"`
+	ActorID    string    `gorm:"type:text;index" json:"actor_id"`
+	ActorName  string    `gorm:"type:text" json:"actor_name"`
+	ActorRole  string    `gorm:"type:text;index" json:"actor_role"`
+	TokenID    string    `gorm:"type:text;index" json:"token_id,omitempty"`
+	Action     string    `gorm:"type:text;index;not null" json:"action"`
+	TargetType string    `gorm:"type:text;index" json:"target_type,omitempty"`
+	TargetID   string    `gorm:"type:text;index" json:"target_id,omitempty"`
+	Result     string    `gorm:"type:text;index;not null" json:"result"`
+	Message    string    `gorm:"type:text" json:"message,omitempty"`
+	IPAddress  string    `gorm:"type:text" json:"ip_address,omitempty"`
+	UserAgent  string    `gorm:"type:text" json:"user_agent,omitempty"`
+	CreatedAt  time.Time `gorm:"index" json:"created_at"`
+}
+
+func (e *AuditEvent) BeforeCreate(tx *gorm.DB) error {
+	if e.ID == "" {
+		e.ID = uuid.NewString()
 	}
 	return nil
 }

@@ -383,7 +383,8 @@ describe("PoliciesPage rclone form state", () => {
     await user.click(screen.getAllByRole("combobox")[1]);
     await clickOptionByName("S3 Store");
     expect(await screen.findByText("postgres:16")).toBeInTheDocument();
-    await user.click(screen.getByRole("checkbox"));
+    const dockerCheckboxes = screen.getAllByRole("checkbox");
+    await user.click(dockerCheckboxes[dockerCheckboxes.length - 1]);
     fireEvent.submit(screen.getByRole("form", { name: "备份策略表单" }));
 
     await waitFor(() => expect(createPolicy).toHaveBeenCalledTimes(1));

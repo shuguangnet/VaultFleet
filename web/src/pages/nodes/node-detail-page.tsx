@@ -56,6 +56,8 @@ import { copyToClipboard } from "@/lib/utils";
 import { formatBytes } from "@/pages/tasks/tasks-page";
 import type { RestoreRequest, Snapshot } from "@/types/snapshot";
 import type { DockerResolvedSource } from "@/types/task";
+import { useAuth } from "@/contexts/auth-context";
+import { permissions } from "@/services/identity";
 
 const COMMAND_TYPE_LABELS: Record<string, string> = {
   backup_now: "手动备份",
@@ -68,6 +70,10 @@ const COMMAND_TYPE_LABELS: Record<string, string> = {
 
 export function NodeDetailPage() {
   const { message } = App.useApp();
+  const auth = useAuth();
+  const canWriteNodes = auth.hasPermission(permissions.writeNodes);
+  const canRunBackup = auth.hasPermission(permissions.runBackup);
+  const canRunRestore = auth.hasPermission(permissions.runRestore);
   const { agentId } = useParams<{ agentId: string }>();
   const queryClient = useQueryClient();
   const [selectedSnapshot, setSelectedSnapshot] = useState<Snapshot | null>(null);
@@ -277,15 +283,15 @@ export function NodeDetailPage() {
         const hasDocker = agentSupportsDockerRestore && (record.docker?.sources?.length ?? 0) > 0;
         return (
           <Space size={4}>
-            <Button
+            {canRunRestore && <Button
               type="link"
               size="small"
               icon={<RedoOutlined />}
               onClick={() => openRestoreModal(record, "files")}
             >
               恢复
-            </Button>
-            {hasDocker && (
+            </Button>}
+            {canRunRestore && hasDocker && (
               <Button
                 type="link"
                 size="small"
@@ -493,15 +499,15 @@ export function NodeDetailPage() {
           </Space>
         </Space>
         <Space className="vf-page-actions">
-          <Button
+          {canWriteNodes && <Button
             icon={<CloudUploadOutlined />}
             disabled={agent.status !== "online" || updateMutation.isPending}
             onClick={() => updateMutation.mutate()}
             loading={updateMutation.isPending}
           >
             更新 Agent
-          </Button>
-          <Button
+          </Button>}
+          {canRunBackup && <Button
             type="primary"
             icon={<PlayCircleOutlined />}
             onClick={() => backupMutation.mutate()}
@@ -509,7 +515,7 @@ export function NodeDetailPage() {
             disabled={backupMutation.isPending}
           >
             立即备份
-          </Button>
+          </Button>}
         </Space>
       </div>
 
@@ -705,7 +711,7 @@ export function NodeDetailPage() {
         }}
         okText="确认恢复"
         cancelText="取消"
-        okButtonProps={{ disabled: !restoreConfirmed, loading: restoreMutation.isPending }}
+        okButtonProps={{ disabled: !canRunRestore || !restoreConfirmed, loading: restoreMutation.isPending }}
         destroyOnClose
       >
         <Form layout="vertical" style={{ marginTop: 12 }}>

@@ -36,6 +36,8 @@ func New(dataDir string) (*Database, error) {
 
 	if err := gormDB.AutoMigrate(
 		&User{},
+		&APIToken{},
+		&AuditEvent{},
 		&Agent{},
 		&StorageConfig{},
 		&BackupPolicy{},
@@ -51,6 +53,12 @@ func New(dataDir string) (*Database, error) {
 	}
 	if err := ensureBackupVerificationColumns(gormDB); err != nil {
 		return nil, fmt.Errorf("ensure backup verification columns: %w", err)
+	}
+	if err := ensureIdentityAccessColumns(gormDB); err != nil {
+		return nil, fmt.Errorf("ensure identity access columns: %w", err)
+	}
+	if err := backfillUserRoles(gormDB); err != nil {
+		return nil, fmt.Errorf("backfill user roles: %w", err)
 	}
 	if err := migrateTaskHistoryArtifacts(gormDB); err != nil {
 		return nil, fmt.Errorf("migrate task history artifacts: %w", err)
@@ -69,6 +77,28 @@ func New(dataDir string) (*Database, error) {
 		DataDir:   dataDir,
 		MasterKey: masterKey,
 	}, nil
+}
+
+func ensureIdentityAccessColumns(gormDB *gorm.DB) error {
+	if gormDB.Migrator().HasTable(&User{}) {
+		for _, column := range []string{"Role", "DisabledAt", "LastLoginAt"} {
+			if !gormDB.Migrator().HasColumn(&User{}, column) {
+				if err := gormDB.Migrator().AddColumn(&User{}, column); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func backfillUserRoles(gormDB *gorm.DB) error {
+	if !gormDB.Migrator().HasTable(&User{}) {
+		return nil
+	}
+	return gormDB.Model(&User{}).
+		Where("role = '' OR role IS NULL").
+		Update("role", "admin").Error
 }
 
 func ensureBackupVerificationColumns(gormDB *gorm.DB) error {

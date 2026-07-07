@@ -39,11 +39,15 @@ import { InstallCommand } from "@/components/install-command";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { App } from "antd";
+import { useAuth } from "@/contexts/auth-context";
+import { permissions } from "@/services/identity";
 
 type Agent = Awaited<ReturnType<typeof listAgents>>[number];
 
 export function NodesPage() {
   const { message } = App.useApp();
+  const auth = useAuth();
+  const canWriteNodes = auth.hasPermission(permissions.writeNodes);
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -204,14 +208,14 @@ export function NodesPage() {
                   </Link>
                 ),
               },
-              {
+              canWriteNodes ? {
                 key: "install",
                 icon: <CodeOutlined />,
                 label: "安装指令",
                 onClick: () => handleShowInstallCommand(record.id),
-              },
-              { type: "divider" },
-              {
+              } : null,
+              canWriteNodes ? { type: "divider" as const } : null,
+              canWriteNodes ? {
                 key: "delete",
                 icon: <WarningOutlined style={{ color: "#ff4d4f" }} />,
                 label: (
@@ -226,8 +230,8 @@ export function NodesPage() {
                     <span style={{ color: "#ff4d4f" }}>删除</span>
                   </Popconfirm>
                 ),
-              },
-            ],
+              } : null,
+            ].filter(Boolean) as any,
           }}
           trigger={["click"]}
           placement="bottomRight"
@@ -245,13 +249,13 @@ export function NodesPage() {
         description="Agent / 状态 / 安装令牌"
         icon={<DesktopOutlined />}
         actions={
-          <Button
+          canWriteNodes ? <Button
             type="primary"
             icon={<PlusOutlined />}
             onClick={() => setDrawerOpen(true)}
           >
             添加节点
-          </Button>
+          </Button> : null
         }
       />
 

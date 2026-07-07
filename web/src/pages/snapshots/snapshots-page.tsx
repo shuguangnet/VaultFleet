@@ -43,6 +43,8 @@ import { safeFormatDate } from "@/lib/date";
 import { ErrorPanel } from "@/components/error-panel";
 import { PageHeader } from "@/components/page-header";
 import { SnapshotTreeBrowser } from "@/components/snapshot-tree-browser";
+import { useAuth } from "@/contexts/auth-context";
+import { permissions } from "@/services/identity";
 
 const EVENT_OPTIONS = [
   { id: "backup_failed", label: "备份失败" },
@@ -81,6 +83,9 @@ const preflightSeverityColor = (severity: string) => {
 
 export function SnapshotsPage() {
   const { message } = App.useApp();
+  const auth = useAuth();
+  const canRunBackup = auth.hasPermission(permissions.runBackup);
+  const canRunRestore = auth.hasPermission(permissions.runRestore);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -284,6 +289,7 @@ export function SnapshotsPage() {
         const hasDocker = (record.docker?.sources?.length ?? 0) > 0;
         return (
           <Space size={4}>
+            {canRunRestore && (
             <Button
               type="link"
               size="small"
@@ -292,7 +298,8 @@ export function SnapshotsPage() {
             >
               恢复
             </Button>
-            {hasDocker && (
+            )}
+            {canRunRestore && hasDocker && (
               <Button
                 type="link"
                 size="small"
@@ -357,12 +364,12 @@ export function SnapshotsPage() {
               label: a.name,
             }))}
           />
-          <Button
+          {canRunBackup && <Button
             icon={<ReloadOutlined spin={isFetching || refreshMutation.isPending} />}
             disabled={!agentId || isFetching || refreshMutation.isPending}
             onClick={() => refreshMutation.mutate()}
             title="请求 Agent 刷新快照列表"
-          />
+          />}
           </>
         }
       />
@@ -553,7 +560,7 @@ export function SnapshotsPage() {
             <Button
               block
               icon={<CheckCircleOutlined />}
-              disabled={!restoreReady || preflightMutation.isPending}
+              disabled={!canRunRestore || !restoreReady || preflightMutation.isPending}
               loading={preflightMutation.isPending}
               onClick={handlePreflight}
             >
@@ -610,7 +617,7 @@ export function SnapshotsPage() {
               block
               size="large"
               style={{ marginTop: 16 }}
-              disabled={!restoreConfirmed || restoreMutation.isPending}
+              disabled={!canRunRestore || !restoreConfirmed || restoreMutation.isPending}
               onClick={handleRestore}
               loading={restoreMutation.isPending}
             >

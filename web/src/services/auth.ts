@@ -4,7 +4,10 @@ import { apiGet, apiPost } from "./http";
 export const checkAuth = async (): Promise<AuthCheck> => {
   const data = await apiGet<AuthCheck>("/api/auth/check");
   if (!data.user && data.username) {
-    return { ...data, user: { username: data.username } };
+    return {
+      ...data,
+      user: { username: data.username, role: data.role, permissions: data.permissions },
+    };
   }
   return data;
 };

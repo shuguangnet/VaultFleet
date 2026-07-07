@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   App,
@@ -10,8 +10,10 @@ import {
   Input,
   Result,
   Row,
+  Select,
   Space,
   Spin,
+  Table,
   Tag,
   Typography,
 } from "antd";
@@ -40,14 +42,50 @@ import {
 import { checkHealth, checkReady } from "@/services/health";
 import { listAgents } from "@/services/agents";
 import { downloadDiagnosticBundle } from "@/services/diagnostic";
+import {
+  createApiToken,
+  createUser,
+  deleteApiToken,
+  disableUser,
+  enableUser,
+  listApiTokens,
+  listAuditEvents,
+  listUsers,
+  permissions,
+  revokeApiToken,
+} from "@/services/identity";
+import { useAuth } from "@/contexts/auth-context";
 import { StatusBadge } from "@/components/status-badge";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ErrorPanel } from "@/components/error-panel";
 import { PageHeader } from "@/components/page-header";
 import type { Agent } from "@/types/agent";
 
+const roleOptions = [
+  { label: "管理员", value: "admin" },
+  { label: "运维", value: "operator" },
+  { label: "只读", value: "viewer" },
+];
+
+const scopeOptions = [
+  { label: "读取运维数据", value: permissions.readOperational },
+  { label: "节点写入", value: permissions.writeNodes },
+  { label: "存储写入", value: permissions.writeStorage },
+  { label: "策略写入", value: permissions.writePolicies },
+  { label: "运行备份/验证", value: permissions.runBackup },
+  { label: "运行恢复", value: permissions.runRestore },
+  { label: "通知写入", value: permissions.writeNotifications },
+  { label: "读取系统", value: permissions.readSystem },
+  { label: "系统管理", value: permissions.adminSystem },
+  { label: "用户管理", value: permissions.adminUsers },
+  { label: "Token 管理", value: permissions.adminTokens },
+  { label: "读取审计", value: permissions.readAudit },
+];
+
 export function SystemPage() {
   const { message } = App.useApp();
+  const queryClient = useQueryClient();
+  const auth = useAuth();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -55,7 +93,13 @@ export function SystemPage() {
     useState<ImportValidationResult | null>(null);
   const [showImportConfirm, setShowImportConfirm] = useState(false);
   const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
+  const [createdToken, setCreatedToken] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const canAdminSystem = auth.hasPermission(permissions.adminSystem);
+  const canRunBackup = auth.hasPermission(permissions.runBackup);
+  const canAdminUsers = auth.hasPermission(permissions.adminUsers);
+  const canAdminTokens = auth.hasPermission(permissions.adminTokens);
+  const canReadAudit = auth.hasPermission(permissions.readAudit);
 
   const {
     data: healthStatus,
@@ -82,6 +126,21 @@ export function SystemPage() {
   const { data: agents = [] } = useQuery({
     queryKey: ["agents"],
     queryFn: listAgents,
+  });
+  const { data: users = [] } = useQuery({
+    queryKey: ["users"],
+    queryFn: listUsers,
+    enabled: canAdminUsers,
+  });
+  const { data: apiTokens = [] } = useQuery({
+    queryKey: ["api-tokens"],
+    queryFn: listApiTokens,
+    enabled: canAdminTokens,
+  });
+  const { data: auditEvents = [] } = useQuery({
+    queryKey: ["audit-events", { limit: 100 }],
+    queryFn: () => listAuditEvents({ limit: 100 }),
+    enabled: canReadAudit,
   });
 
   const passwordMutation = useMutation({
@@ -166,6 +225,48 @@ export function SystemPage() {
     },
     onError: (error: any) =>
       message.error("生成诊断包失败: " + error.message),
+  });
+  const createUserMutation = useMutation({
+    mutationFn: createUser,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      message.success("用户已创建");
+    },
+    onError: (error: any) => message.error("创建用户失败: " + error.message),
+  });
+  const toggleUserMutation = useMutation({
+    mutationFn: (data: { id: string; disabled: boolean }) =>
+      data.disabled ? enableUser(data.id) : disableUser(data.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      message.success("用户状态已更新");
+    },
+    onError: (error: any) => message.error("更新用户失败: " + error.message),
+  });
+  const createTokenMutation = useMutation({
+    mutationFn: createApiToken,
+    onSuccess: (token) => {
+      setCreatedToken(token.token ?? "");
+      queryClient.invalidateQueries({ queryKey: ["api-tokens"] });
+      message.success("API Token 已创建");
+    },
+    onError: (error: any) => message.error("创建 Token 失败: " + error.message),
+  });
+  const revokeTokenMutation = useMutation({
+    mutationFn: revokeApiToken,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["api-tokens"] });
+      message.success("API Token 已吊销");
+    },
+    onError: (error: any) => message.error("吊销 Token 失败: " + error.message),
+  });
+  const deleteTokenMutation = useMutation({
+    mutationFn: deleteApiToken,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["api-tokens"] });
+      message.success("API Token 已删除");
+    },
+    onError: (error: any) => message.error("删除 Token 失败: " + error.message),
   });
 
   const handleImportClick = () => fileInputRef.current?.click();
@@ -385,6 +486,7 @@ export function SystemPage() {
                 icon={<DownloadOutlined />}
                 onClick={() => exportMutation.mutate()}
                 loading={exportMutation.isPending}
+                disabled={!canAdminSystem}
               >
                 {exportMutation.isPending ? "正在导出..." : "导出数据"}
               </Button>
@@ -399,6 +501,7 @@ export function SystemPage() {
                 icon={<UploadOutlined />}
                 onClick={handleImportClick}
                 loading={importMutation.isPending}
+                disabled={!canAdminSystem}
               >
                 {importMutation.isPending ? "正在验证..." : "导入数据"}
               </Button>
@@ -421,7 +524,7 @@ export function SystemPage() {
                     checked={selectedAgents.includes(agent.id)}
                     onChange={() => toggleAgent(agent.id)}
                     disabled={
-                      agent.status !== "online" || diagnosticMutation.isPending
+                      !canRunBackup || agent.status !== "online" || diagnosticMutation.isPending
                     }
                   />
                   <Typography.Text
@@ -446,10 +549,127 @@ export function SystemPage() {
           style={{ marginTop: 12 }}
           onClick={() => diagnosticMutation.mutate(selectedAgents)}
           loading={diagnosticMutation.isPending}
+          disabled={!canRunBackup}
         >
           {diagnosticMutation.isPending ? "正在生成..." : "生成诊断包"}
         </Button>
       </Card>
+
+      {canAdminUsers && (
+        <Card title="用户管理">
+          <Form
+            layout="inline"
+            onFinish={(values) =>
+              createUserMutation.mutate({
+                username: values.username,
+                password: values.password,
+                role: values.role,
+              })
+            }
+            style={{ marginBottom: 16, rowGap: 8 }}
+          >
+            <Form.Item name="username" rules={[{ required: true }]}><Input placeholder="用户名" /></Form.Item>
+            <Form.Item name="password" rules={[{ required: true, min: 6 }]}><Input.Password placeholder="初始密码" /></Form.Item>
+            <Form.Item name="role" initialValue="viewer"><Select style={{ width: 120 }} options={roleOptions} /></Form.Item>
+            <Form.Item>
+              <Button type="primary" htmlType="submit" loading={createUserMutation.isPending}>创建用户</Button>
+            </Form.Item>
+          </Form>
+          <Table
+            rowKey="id"
+            size="small"
+            pagination={false}
+            dataSource={users}
+            columns={[
+              { title: "用户名", dataIndex: "username" },
+              { title: "角色", dataIndex: "role", render: (role) => <Tag>{role}</Tag> },
+              { title: "状态", render: (_, record) => record.disabled_at ? <Tag color="red">禁用</Tag> : <Tag color="green">启用</Tag> },
+              { title: "最近登录", dataIndex: "last_login_at", render: (v) => v ? new Date(v).toLocaleString() : "-" },
+              {
+                title: "操作",
+                render: (_, record) => (
+                  <Button size="small" onClick={() => toggleUserMutation.mutate({ id: record.id, disabled: !!record.disabled_at })}>
+                    {record.disabled_at ? "启用" : "禁用"}
+                  </Button>
+                ),
+              },
+            ]}
+          />
+        </Card>
+      )}
+
+      {canAdminTokens && (
+        <Card title="API Token">
+          {createdToken && (
+            <Alert
+              type="success"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="Token 只显示一次"
+              description={<Input.TextArea readOnly autoSize value={createdToken} />}
+              closable
+              onClose={() => setCreatedToken("")}
+            />
+          )}
+          <Form
+            layout="inline"
+            onFinish={(values) =>
+              createTokenMutation.mutate({
+                name: values.name,
+                role: values.role,
+                scopes: values.scopes,
+              })
+            }
+            style={{ marginBottom: 16, rowGap: 8 }}
+          >
+            <Form.Item name="name" rules={[{ required: true }]}><Input placeholder="Token 名称" /></Form.Item>
+            <Form.Item name="role" initialValue="operator"><Select style={{ width: 120 }} options={roleOptions} /></Form.Item>
+            <Form.Item name="scopes" initialValue={[permissions.readOperational]}><Select mode="multiple" style={{ width: 280 }} options={scopeOptions} /></Form.Item>
+            <Form.Item>
+              <Button type="primary" htmlType="submit" loading={createTokenMutation.isPending}>创建 Token</Button>
+            </Form.Item>
+          </Form>
+          <Table
+            rowKey="id"
+            size="small"
+            pagination={false}
+            dataSource={apiTokens}
+            columns={[
+              { title: "名称", dataIndex: "name" },
+              { title: "角色", dataIndex: "role", render: (role) => <Tag>{role}</Tag> },
+              { title: "Scope", dataIndex: "scopes", render: (scopes) => (scopes ?? []).join(", ") },
+              { title: "状态", render: (_, record) => record.revoked_at ? <Tag color="red">已吊销</Tag> : <Tag color="green">有效</Tag> },
+              {
+                title: "操作",
+                render: (_, record) => (
+                  <Space>
+                    <Button size="small" disabled={!!record.revoked_at} onClick={() => revokeTokenMutation.mutate(record.id)}>吊销</Button>
+                    <Button size="small" danger onClick={() => deleteTokenMutation.mutate(record.id)}>删除</Button>
+                  </Space>
+                ),
+              },
+            ]}
+          />
+        </Card>
+      )}
+
+      {canReadAudit && (
+        <Card title="审计日志">
+          <Table
+            rowKey="id"
+            size="small"
+            dataSource={auditEvents}
+            pagination={{ pageSize: 10 }}
+            columns={[
+              { title: "时间", dataIndex: "created_at", render: (v) => new Date(v).toLocaleString() },
+              { title: "动作", dataIndex: "action" },
+              { title: "结果", dataIndex: "result", render: (v) => <Tag>{v}</Tag> },
+              { title: "操作者", dataIndex: "actor_name", render: (v) => v || "-" },
+              { title: "目标", render: (_, r) => [r.target_type, r.target_id].filter(Boolean).join(" / ") || "-" },
+            ]}
+          />
+        </Card>
+      )}
 
       <ConfirmDialog
         open={showImportConfirm}

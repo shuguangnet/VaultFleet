@@ -5,19 +5,68 @@ export interface ApiResponse<T> {
 }
 
 export interface AuthUser {
+  id?: string;
   username: string;
+  role?: UserRole;
+  permissions?: string[];
 }
 
 export interface AuthCheck {
   authenticated: boolean;
   initialized: boolean;
   username?: string;
+  role?: UserRole;
+  permissions?: string[];
   user?: AuthUser;
 }
 
 export interface AuthCredentials {
   username: string;
   password?: string;
+}
+
+export type UserRole = "admin" | "operator" | "viewer";
+
+export interface UserAccount {
+  id: string;
+  username: string;
+  role: UserRole;
+  disabled_at?: string | null;
+  last_login_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApiToken {
+  id: string;
+  name: string;
+  token_prefix: string;
+  owner_user_id: string;
+  role: UserRole;
+  scopes: string[];
+  expires_at?: string | null;
+  revoked_at?: string | null;
+  last_used_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  token?: string;
+}
+
+export interface AuditEvent {
+  id: string;
+  actor_type: string;
+  actor_id?: string;
+  actor_name?: string;
+  actor_role?: string;
+  token_id?: string;
+  action: string;
+  target_type?: string;
+  target_id?: string;
+  result: string;
+  message?: string;
+  ip_address?: string;
+  user_agent?: string;
+  created_at: string;
 }
 
 export interface BrowseRequest {

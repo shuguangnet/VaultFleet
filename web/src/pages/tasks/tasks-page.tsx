@@ -30,6 +30,8 @@ import { safeFormatDate } from "@/lib/date";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
+import { useAuth } from "@/contexts/auth-context";
+import { permissions } from "@/services/identity";
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -60,6 +62,9 @@ export function formatDuration(ms: number): string {
 
 export function TasksPage() {
   const { message } = App.useApp();
+  const auth = useAuth();
+  const canRunBackup = auth.hasPermission(permissions.runBackup);
+  const canRunRestore = auth.hasPermission(permissions.runRestore);
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -147,7 +152,7 @@ export function TasksPage() {
       title: "耗时 / 大小",
       key: "metric",
       render: (_: unknown, record: TaskHistory) =>
-        renderTaskMetricContent(record, (id) => setCancelTaskId(id)),
+        renderTaskMetricContent(record, canRunBackup ? (id) => setCancelTaskId(id) : undefined),
     },
     {
       title: "完成时间",
@@ -356,11 +361,11 @@ export function TasksPage() {
                   {formatBytes(task.artifact_size)}
                 </Typography.Text>
               ) : null}
-              <a href={taskArtifactDownloadUrl(task.id)}>
+              {canRunRestore && <a href={taskArtifactDownloadUrl(task.id)}>
                 <Button size="small" icon={<DownloadOutlined />}>
                   下载压缩包
                 </Button>
-              </a>
+              </a>}
             </div>
           )}
         </div>
@@ -376,7 +381,7 @@ export function TasksPage() {
         icon={<HistoryOutlined />}
         actions={
           <>
-          <Dropdown
+          {canRunBackup && <Dropdown
             menu={{
               items:
                 agents?.length === 0
@@ -389,7 +394,7 @@ export function TasksPage() {
             }}
           >
             <Button icon={<PlayCircleOutlined />}>手动备份</Button>
-          </Dropdown>
+          </Dropdown>}
           <Button
             icon={<ReloadOutlined spin={isFetching} />}
             onClick={() => refetch()}

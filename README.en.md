@@ -18,6 +18,7 @@ Backup data does not pass through the Master. The Master manages the control pla
 - **Centralized backup policies** for paths, excludes, cron schedules, retention, task timeout, and storage settings.
 - **Web console** for dashboard, nodes, storage, policies, tasks, snapshots, notifications, and system management.
 - **One-time enrollment tokens** exchanged for long-lived Agent tokens after enrollment.
+- **Multi-user access and API tokens** with admin, operator, viewer roles, scoped automation tokens, and audit logs for sensitive actions.
 - **restic encrypted repositories** with per-Agent repository passwords; Master-side secrets are encrypted with `/data/master.key`.
 - **Direct storage writes** through rclone to S3 / R2 / MinIO, WebDAV, SFTP, local paths, or other backends.
 - **Docker workload friendly** with support for mounted container data, `docker-compose.yml`, `.env`, and optional pre/post backup hooks for export or service control steps.
@@ -300,6 +301,7 @@ npm run test
 
 - [中文 README](README.md)
 - [Protocol reference](docs/protocol.md)
+- [Multi-user, RBAC, and API Token guide](docs/identity-access-control.md)
 - [Release guide](docs/release.md)
 - [Support and log collection guide](docs/support.md)
 - [Contributing guide](CONTRIBUTING.md)

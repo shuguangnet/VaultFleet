@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NodesPage } from "./nodes-page";
+import { AuthProvider } from "@/contexts/auth-context";
 
 vi.mock("@tanstack/react-query", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tanstack/react-query")>();
@@ -22,6 +23,7 @@ const onlineAgent = {
 };
 
 afterEach(() => {
+  cleanup();
   vi.restoreAllMocks();
 });
 
@@ -46,7 +48,36 @@ describe("NodesPage", () => {
     });
     expect(agentsQuery?.[0]).toMatchObject({ refetchInterval: 10000 });
   });
+
+  it("hides mutation controls for viewer users", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(apiResponse([onlineAgent])));
+
+    renderNodesWithUser({ username: "viewer", role: "viewer", permissions: ["read:operational"] });
+
+    await screen.findByRole("row", { name: /ARM64-Node/ });
+    expect(screen.queryByRole("button", { name: /添加节点/ })).not.toBeInTheDocument();
+  });
+
+  it("shows mutation controls for admin users", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(apiResponse([onlineAgent])));
+
+    renderNodesWithUser({ username: "admin", role: "admin", permissions: ["write:nodes"] });
+
+    expect(await screen.findByRole("button", { name: /添加节点/ })).toBeInTheDocument();
+  });
 });
+
+function renderNodesWithUser(user: { username: string; role: "admin" | "operator" | "viewer"; permissions: string[] }) {
+  return render(
+    <QueryClientProvider client={newTestQueryClient()}>
+      <MemoryRouter>
+        <AuthProvider user={user}>
+          <NodesPage />
+        </AuthProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
 
 function newTestQueryClient() {
   return new QueryClient({

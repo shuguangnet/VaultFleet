@@ -11,7 +11,13 @@ describe("auth service", () => {
         new Response(
           JSON.stringify({
             ok: true,
-            data: { initialized: true, authenticated: true, username: "admin" },
+            data: {
+              initialized: true,
+              authenticated: true,
+              username: "admin",
+              role: "operator",
+              permissions: ["read:operational"],
+            },
           }),
           { status: 200 },
         ),
@@ -21,7 +27,7 @@ describe("auth service", () => {
     await expect(checkAuth()).resolves.toMatchObject({
       initialized: true,
       authenticated: true,
-      user: { username: "admin" },
+      user: { username: "admin", role: "operator", permissions: ["read:operational"] },
     });
   });
 });
