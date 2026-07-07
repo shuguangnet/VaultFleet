@@ -29,13 +29,12 @@ export function LoginPage({ onComplete }: LoginPageProps) {
 
   return (
     <div
+      className="vf-login-backdrop"
       style={{
         minHeight: "100vh",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background:
-          "radial-gradient(circle at 30% 20%, #1b3a6b 0%, #0f1f3d 60%, #0a1530 100%)",
         padding: 16,
       }}
     >

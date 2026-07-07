@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App as AntdApp, Select } from "antd";
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, it, vi, beforeAll } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -10,8 +10,13 @@ beforeAll(() => {
   }
 });
 
+afterEach(() => {
+  cleanup();
+  document.body.innerHTML = "";
+});
+
 describe("debug select 4", () => {
-  it("print option html", async () => {
+  it("opens select dropdown", async () => {
     const user = userEvent.setup();
     render(
       <QueryClientProvider client={new QueryClient()}>
@@ -25,6 +30,6 @@ describe("debug select 4", () => {
     );
     await user.click(screen.getByRole("combobox"));
     const dropdown = document.querySelector(".ant-select-dropdown");
-    console.log("DROPDOWN HTML:", dropdown?.outerHTML);
+    expect(dropdown).toBeTruthy();
   });
 });

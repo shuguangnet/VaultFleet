@@ -136,31 +136,26 @@ export function AppLayout({ user }: AppLayoutProps) {
     if (!isMobile) setMobileNavOpen(false);
   }, [isMobile]);
 
+  const brandClassName = [
+    "vf-app-brand",
+    collapsed && !isMobile ? "vf-app-brand-collapsed" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   const brand = (
     <div
-      className="vf-app-brand"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: collapsed && !isMobile ? "center" : "flex-start",
-        gap: 10,
-        height: 56,
-        padding: isMobile ? "0 40px" : collapsed ? "0" : "0 18px",
-        color: "#fff",
-        fontWeight: 700,
-        fontSize: 18,
-        letterSpacing: 0,
-        borderBottom: "1px solid rgba(255,255,255,0.06)",
-      }}
+      className={brandClassName}
     >
-      <SafetyCertificateOutlined
-        style={{
-          flexShrink: 0,
-          fontSize: 22,
-          color: antdTheme.token?.colorPrimary,
-        }}
-      />
-      {(!collapsed || isMobile) && <span>云备份</span>}
+      <span className="vf-app-brand-icon">
+        <SafetyCertificateOutlined />
+      </span>
+      {(!collapsed || isMobile) && (
+        <span className="vf-app-brand-copy">
+          <span className="vf-app-brand-name">VaultFleet</span>
+          <span className="vf-app-brand-subtitle">云备份控制台</span>
+        </span>
+      )}
     </div>
   );
 
@@ -231,8 +226,9 @@ export function AppLayout({ user }: AppLayoutProps) {
             alignItems: "center",
             justifyContent: "space-between",
             padding: "0 20px",
-            background: "#fff",
-            borderBottom: "1px solid #edf1f7",
+            background: "rgba(255, 255, 255, 0.88)",
+            borderBottom: "1px solid rgba(237, 241, 247, 0.92)",
+            backdropFilter: "blur(14px)",
             position: "sticky",
             top: 0,
             zIndex: 10,
