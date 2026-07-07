@@ -197,16 +197,13 @@ export function SnapshotsPage() {
   const currentPreflightPlanKey = targetAgentId && currentRestoreRequest
     ? JSON.stringify({ targetAgentId, request: currentRestoreRequest })
     : "";
-  const preflightPassed = !!preflightReport &&
-    preflightReport.status === "passed" &&
-    preflightPlanKey === currentPreflightPlanKey;
   const preflightStale = !!preflightReport && preflightPlanKey !== currentPreflightPlanKey;
   const restoreReady = !!targetAgentId && (
     restoreMode === "docker_container"
       ? canRestoreSelectedDocker && !!selectedDockerSourceId
       : !!targetPath
   );
-  const restoreConfirmed = confirmed && restoreReady && preflightPassed;
+  const restoreConfirmed = confirmed && restoreReady;
 
   const handleOpenRestore = (s: Snapshot, mode: "files" | "docker_container" = "files") => {
     const sources = s.docker?.sources ?? [];
@@ -574,7 +571,7 @@ export function SnapshotsPage() {
                 style={{ marginTop: 16 }}
                 message={
                   preflightStale
-                    ? "恢复计划已变更，请重新执行预检"
+                    ? "恢复计划已变更，预检结果仅供参考"
                     : preflightReport?.status === "passed"
                     ? "预检通过"
                     : "预检未通过"

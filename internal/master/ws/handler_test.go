@@ -726,6 +726,34 @@ func TestHandler_SnapshotBrowseRespDispatchesToWaiter(t *testing.T) {
 	}
 }
 
+func TestHandler_RestorePreflightRespDispatchesToWaiter(t *testing.T) {
+	setup := setupHandlerTest(t, validTestAuth, noPolicy)
+	clientConn := addTestWebSocketAgent(t, setup.hub, "agent-1")
+	respCh, err := setup.hub.SendAndWait("agent-1", protocol.Message{
+		Type:    protocol.TypeRestorePreflightReq,
+		ID:      "restore-preflight-1",
+		Payload: json.RawMessage(`{"agent_id":"agent-1","snapshot_id":"snap-1","target":"/restore"}`),
+	}, time.Second)
+	require.NoError(t, err)
+	var sent protocol.Message
+	require.NoError(t, clientConn.ReadJSON(&sent))
+	handler := NewHandler(setup.hub, setup.bus, validTestAuth, noPolicy, nil)
+	response := protocol.Message{
+		Type:    protocol.TypeRestorePreflightResp,
+		ID:      "restore-preflight-1",
+		Payload: json.RawMessage(`{"agent_id":"agent-1","snapshot_id":"snap-1","status":"passed","checks":[]}`),
+	}
+
+	handler.dispatch("agent-1", response)
+
+	select {
+	case got := <-respCh:
+		assert.Equal(t, response, got)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for restore preflight response")
+	}
+}
+
 func TestHandler_SnapshotListRespWithoutWaiterCompletesDurableCommand(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database := setupHandlerTestDB(t)

@@ -254,7 +254,7 @@ func (h *Handler) dispatch(agentID string, msg protocol.Message) {
 				h.TaskLogBuffer.Add(agentID, messageID, *payload)
 			}
 		}
-	case protocol.TypeDirBrowseResp, protocol.TypeDirSizeResp, protocol.TypeDockerDiscoveryResp, protocol.TypeSnapshotListResp, protocol.TypeSnapshotBrowseResp, protocol.TypeCollectLogsResp, protocol.TypeUpdateAgentResp:
+	case protocol.TypeDirBrowseResp, protocol.TypeDirSizeResp, protocol.TypeDockerDiscoveryResp, protocol.TypeSnapshotListResp, protocol.TypeSnapshotBrowseResp, protocol.TypeRestorePreflightResp, protocol.TypeCollectLogsResp, protocol.TypeUpdateAgentResp:
 		handled := h.hub.HandleResponse(agentID, msg)
 		if !handled && msg.Type == protocol.TypeSnapshotListResp && h.SnapshotListResponseProcessor != nil {
 			if err := h.SnapshotListResponseProcessor(agentID, msg); err != nil {
