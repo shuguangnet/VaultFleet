@@ -27,6 +27,7 @@ type RestoreHub interface {
 
 type restoreRequest struct {
 	SnapshotID     string                         `json:"snapshot_id" binding:"required"`
+	SourceAgentID  string                         `json:"source_agent_id"`
 	TargetPath     string                         `json:"target_path"`
 	Target         string                         `json:"target"`
 	IncludePaths   []string                       `json:"include_paths"`
@@ -67,7 +68,14 @@ func (h *RestoreHandler) Restore(c *gin.Context) {
 		writeErrorResponse(c, http.StatusBadRequest, "invalid request")
 		return
 	}
-	snapshotID, ok := h.resolveSnapshotID(c, agentID, request.SnapshotID)
+	sourceAgentID := strings.TrimSpace(request.SourceAgentID)
+	if sourceAgentID == "" {
+		sourceAgentID = agentID
+	}
+	if sourceAgentID != agentID && !agentExistsByID(c, h.DB, sourceAgentID) {
+		return
+	}
+	snapshotID, ok := h.resolveSnapshotID(c, sourceAgentID, request.SnapshotID)
 	if !ok {
 		return
 	}
@@ -84,7 +92,7 @@ func (h *RestoreHandler) Restore(c *gin.Context) {
 			writeErrorResponse(c, http.StatusBadRequest, "agent does not support Docker container restore")
 			return
 		}
-		resolvedDocker, err := h.resolveDockerRestoreRequest(c, agentID, snapshotID, request)
+		resolvedDocker, err := h.resolveDockerRestoreRequest(c, sourceAgentID, snapshotID, request)
 		if err != nil {
 			writeErrorResponse(c, http.StatusBadRequest, err.Error())
 			return

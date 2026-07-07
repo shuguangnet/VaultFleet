@@ -197,6 +197,42 @@ func TestRestoreResolvesDatabaseSnapshotIDToResticSnapshotID(t *testing.T) {
 	assert.Equal(t, "restic-snap-1", history.SnapshotID)
 }
 
+func TestRestoreToDifferentAgentUsesSourceSnapshotAndTargetsDestination(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	sourceAgent := createRestoreTestAgent(t, setup.database, "online")
+	targetAgent := createRestoreTestAgent(t, setup.database, "online")
+	setup.hub.online[targetAgent.ID] = true
+	snapshot := db.Snapshot{
+		AgentID:    sourceAgent.ID,
+		SnapshotID: "restic-source-snap",
+		Timestamp:  time.Date(2026, 6, 10, 8, 0, 0, 0, time.UTC),
+		Paths:      `["/srv/app"]`,
+		Size:       1024,
+	}
+	require.NoError(t, setup.database.DB.Create(&snapshot).Error)
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+targetAgent.ID+"/restore", map[string]any{
+		"source_agent_id": sourceAgent.ID,
+		"snapshot_id":     snapshot.ID,
+		"target_path":     "/restore/from-source",
+	})
+
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	require.Len(t, setup.hub.sent, 1)
+	assert.Equal(t, targetAgent.ID, setup.hub.sent[0].agentID)
+	payload, err := protocol.ParsePayload[protocol.RestoreReqPayload](&setup.hub.sent[0].message)
+	require.NoError(t, err)
+	assert.Equal(t, "restic-source-snap", payload.SnapshotID)
+	assert.Equal(t, "/restore/from-source", payload.Target)
+
+	body := parseJSON(t, w)
+	data := requireMap(t, body["data"])
+	var history db.TaskHistory
+	require.NoError(t, setup.database.DB.First(&history, "command_id = ?", data["command_id"]).Error)
+	assert.Equal(t, targetAgent.ID, history.AgentID)
+	assert.Equal(t, "restic-source-snap", history.SnapshotID)
+}
+
 func TestRestoreAcceptsAcceptanceTargetAlias(t *testing.T) {
 	setup := setupRestoreAPI(t)
 	agent := createRestoreTestAgent(t, setup.database, "online")
@@ -284,6 +320,58 @@ func TestRestoreDockerContainerUsesBackupDockerMetadata(t *testing.T) {
 	require.Len(t, payload.Docker.Sources, 1)
 	assert.Equal(t, "container-1", payload.Docker.Sources[0].ContainerID)
 	assert.Equal(t, "postgres:16", payload.Docker.Sources[0].Image)
+}
+
+func TestRestoreDockerContainerToDifferentAgentUsesSourceMetadata(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	sourceAgent := createRestoreTestAgent(t, setup.database, "online")
+	targetAgent := createRestoreTestAgent(t, setup.database, "online")
+	setup.hub.online[targetAgent.ID] = true
+	markAgentCapabilities(t, setup.database, targetAgent.ID, []string{
+		protocol.CapabilityRestoreIncludePaths,
+		protocol.CapabilityDockerContainerRestore,
+	})
+	metadata := protocol.DockerBackupMetadata{
+		Sources: []protocol.DockerResolvedSource{
+			{
+				ContainerID:   "container-1",
+				Name:          "db",
+				Image:         "postgres:16",
+				ResolvedPaths: []string{"/var/lib/docker/volumes/db/_data"},
+				Mounts:        []protocol.DockerMount{{Type: "volume", Name: "db-data", Source: "/var/lib/docker/volumes/db/_data", Destination: "/var/lib/postgresql/data", RW: true}},
+			},
+		},
+	}
+	rawDocker, err := json.Marshal(metadata)
+	require.NoError(t, err)
+	finishedAt := time.Date(2026, 6, 10, 8, 0, 0, 0, time.UTC)
+	require.NoError(t, setup.database.DB.Create(&db.TaskHistory{
+		AgentID:    sourceAgent.ID,
+		Type:       "backup",
+		Status:     commands.TaskStatusSuccess,
+		SnapshotID: "snap-1",
+		Docker:     string(rawDocker),
+		FinishedAt: &finishedAt,
+	}).Error)
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+targetAgent.ID+"/restore", map[string]any{
+		"source_agent_id":  sourceAgent.ID,
+		"snapshot_id":      "snap-1",
+		"restore_mode":     protocol.RestoreModeDockerContainer,
+		"docker_source_id": "container-1",
+	})
+
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	require.Len(t, setup.hub.sent, 1)
+	assert.Equal(t, targetAgent.ID, setup.hub.sent[0].agentID)
+	assert.Equal(t, protocol.TypeSelectiveRestoreReq, setup.hub.sent[0].message.Type)
+	payload, err := protocol.ParsePayload[protocol.RestoreReqPayload](&setup.hub.sent[0].message)
+	require.NoError(t, err)
+	assert.Equal(t, protocol.RestoreModeDockerContainer, payload.RestoreMode)
+	assert.Equal(t, []string{"/var/lib/docker/volumes/db/_data"}, payload.IncludePaths)
+	require.NotNil(t, payload.Docker)
+	require.Len(t, payload.Docker.Sources, 1)
+	assert.Equal(t, "container-1", payload.Docker.Sources[0].ContainerID)
 }
 
 func TestRestoreDockerContainerRejectsMissingMetadata(t *testing.T) {

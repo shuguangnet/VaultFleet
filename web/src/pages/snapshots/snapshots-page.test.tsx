@@ -92,6 +92,7 @@ describe("SnapshotsPage", () => {
 
     await waitFor(() => expect(restoreSnapshot).toHaveBeenCalledWith("agent-1", {
       snapshot_id: "snap-1",
+      source_agent_id: "agent-1",
       restore_mode: "files",
       target_path: "/data",
       include_paths: ["/data/docs", "/data/docs/readme.md"],
@@ -145,13 +146,70 @@ describe("SnapshotsPage", () => {
 
     await waitFor(() => expect(restoreSnapshot).toHaveBeenCalledWith("agent-1", {
       snapshot_id: "snap-1",
+      source_agent_id: "agent-1",
       restore_mode: "docker_container",
       docker_source_id: "container-1",
     }));
   }, 10000);
+
+  it("submits restore requests to the selected target agent", async () => {
+    vi.mocked(listAgents).mockResolvedValue([
+      {
+        id: "source-agent",
+        name: "source-node",
+        status: "online",
+        last_seen: "2026-05-22T00:00:00Z",
+        version: "0.5.23",
+        hostname: "source-node",
+        os: "linux",
+        arch: "amd64",
+        capabilities: ["snapshot_browse", "restore_include_paths"],
+        created_at: "2026-05-22T00:00:00Z",
+      },
+      {
+        id: "target-agent",
+        name: "target-node",
+        status: "online",
+        last_seen: "2026-05-22T00:00:00Z",
+        version: "0.5.23",
+        hostname: "target-node",
+        os: "linux",
+        arch: "amd64",
+        capabilities: ["restore_include_paths"],
+        created_at: "2026-05-22T00:00:00Z",
+      },
+    ]);
+    vi.mocked(listPolicies).mockResolvedValue([]);
+    vi.mocked(listStorage).mockResolvedValue([]);
+    vi.mocked(listSnapshots).mockResolvedValue([{
+      id: "snap-1",
+      time: "2026-05-22T00:00:00Z",
+      paths: ["/data"],
+      hostname: "source-node",
+      username: "root",
+    }]);
+    vi.mocked(restoreSnapshot).mockResolvedValue({ message_id: "msg-1" });
+
+    renderPage("/snapshots?agent_id=source-agent");
+
+    fireEvent.click(await screen.findByRole("button", { name: /恢复/ }));
+    const targetSelect = screen.getAllByRole("combobox")[1];
+    fireEvent.mouseDown(targetSelect);
+    fireEvent.click(await screen.findByText("target-node"));
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /确认恢复/ }));
+    fireEvent.click(screen.getByRole("button", { name: "恢复全部" }));
+
+    await waitFor(() => expect(restoreSnapshot).toHaveBeenCalledWith("target-agent", {
+      snapshot_id: "snap-1",
+      source_agent_id: "source-agent",
+      restore_mode: "files",
+      target_path: "/data",
+    }));
+  }, 10000);
 });
 
-function renderPage() {
+function renderPage(initialEntry = "/snapshots?agent_id=agent-1") {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -162,7 +220,7 @@ function renderPage() {
   return render(
     <QueryClientProvider client={queryClient}>
       <AntdApp>
-        <MemoryRouter initialEntries={["/snapshots?agent_id=agent-1"]}>
+        <MemoryRouter initialEntries={[initialEntry]}>
           <SnapshotsPage />
         </MemoryRouter>
       </AntdApp>

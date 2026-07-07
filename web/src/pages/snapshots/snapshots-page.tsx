@@ -85,6 +85,7 @@ export function SnapshotsPage() {
   const [includePaths, setIncludePaths] = useState<string[]>([]);
   const [restoreMode, setRestoreMode] = useState<"files" | "docker_container">("files");
   const [selectedDockerSourceId, setSelectedDockerSourceId] = useState("");
+  const [targetAgentId, setTargetAgentId] = useState("");
 
   const { data: agents } = useQuery({
     queryKey: ["agents"],
@@ -118,7 +119,8 @@ export function SnapshotsPage() {
   });
 
   const restoreMutation = useMutation({
-    mutationFn: (data: RestoreRequest) => restoreSnapshot(agentId, data),
+    mutationFn: (data: { targetAgentId: string; request: RestoreRequest }) =>
+      restoreSnapshot(data.targetAgentId, data.request),
     onSuccess: (data) => {
       setRestoreSuccessId(data.message_id);
       const msg =
@@ -136,10 +138,13 @@ export function SnapshotsPage() {
   };
 
   const currentAgent = agents?.find((a) => a.id === agentId);
+  const selectedTargetAgent = agents?.find((a) => a.id === targetAgentId);
   const selectedDockerSources = selectedSnapshot?.docker?.sources ?? [];
-  const agentSupportsDockerRestore = !!currentAgent?.capabilities?.includes("docker_container_restore");
-  const canRestoreSelectedDocker = agentSupportsDockerRestore && selectedDockerSources.length > 0;
-  const restoreConfirmed = confirmed && (
+  const targetSupportsDockerRestore = !!selectedTargetAgent?.capabilities?.some((capability) =>
+    capability === "docker_container_restore" || capability === "docker_workload_backups"
+  );
+  const canRestoreSelectedDocker = selectedDockerSources.length > 0 && !!targetAgentId;
+  const restoreConfirmed = confirmed && !!targetAgentId && (
     restoreMode === "docker_container"
       ? canRestoreSelectedDocker && !!selectedDockerSourceId
       : !!targetPath
@@ -149,6 +154,7 @@ export function SnapshotsPage() {
     const sources = s.docker?.sources ?? [];
     setSelectedSnapshot(s);
     setRestoreMode(mode);
+    setTargetAgentId(agentId);
     setTargetPath(mode === "files" ? s.paths[0] || "" : "");
     setSelectedDockerSourceId(mode === "docker_container" && sources[0] ? dockerSourceKey(sources[0]) : "");
     setConfirmed(false);
@@ -161,17 +167,25 @@ export function SnapshotsPage() {
     if (!restoreConfirmed || !selectedSnapshot) return;
     if (restoreMode === "docker_container") {
       restoreMutation.mutate({
-        snapshot_id: selectedSnapshot.id,
-        restore_mode: "docker_container",
-        docker_source_id: selectedDockerSourceId,
+        targetAgentId,
+        request: {
+          snapshot_id: selectedSnapshot.id,
+          source_agent_id: agentId,
+          restore_mode: "docker_container",
+          docker_source_id: selectedDockerSourceId,
+        },
       });
       return;
     }
     restoreMutation.mutate({
-      snapshot_id: selectedSnapshot.id,
-      restore_mode: "files",
-      target_path: targetPath,
-      ...(includePaths.length > 0 ? { include_paths: includePaths } : {}),
+      targetAgentId,
+      request: {
+        snapshot_id: selectedSnapshot.id,
+        source_agent_id: agentId,
+        restore_mode: "files",
+        target_path: targetPath,
+        ...(includePaths.length > 0 ? { include_paths: includePaths } : {}),
+      },
     });
   };
 
@@ -220,7 +234,7 @@ export function SnapshotsPage() {
       key: "action",
       align: "right",
       render: (_, record) => {
-        const hasDocker = agentSupportsDockerRestore && (record.docker?.sources?.length ?? 0) > 0;
+        const hasDocker = (record.docker?.sources?.length ?? 0) > 0;
         return (
           <Space size={4}>
             <Button
@@ -382,7 +396,7 @@ export function SnapshotsPage() {
               <Button
                 type="primary"
                 key="tasks"
-                onClick={() => navigate(`/tasks?agent_id=${agentId}`)}
+                onClick={() => navigate(`/tasks?agent_id=${targetAgentId || agentId}`)}
               >
                 查看任务进度
               </Button>,
@@ -409,6 +423,18 @@ export function SnapshotsPage() {
               </Typography.Text>
             </Form.Item>
 
+            <Form.Item label="目标节点">
+              <Select
+                value={targetAgentId || undefined}
+                onChange={setTargetAgentId}
+                placeholder="选择执行恢复的节点"
+                options={agents?.map((agent) => ({
+                  value: agent.id,
+                  label: `${agent.name}${agent.status === "offline" ? "（离线，可排队）" : ""}`,
+                }))}
+              />
+            </Form.Item>
+
             <Form.Item label="恢复模式">
               <Segmented
                 value={restoreMode}
@@ -429,23 +455,33 @@ export function SnapshotsPage() {
                   {
                     label: "容器",
                     value: "docker_container",
-                    disabled: !canRestoreSelectedDocker,
+                    disabled: selectedDockerSources.length === 0,
                   },
                 ]}
               />
             </Form.Item>
 
             {restoreMode === "docker_container" ? (
-              <Form.Item label="Docker 容器">
-                <Select
-                  value={selectedDockerSourceId}
-                  onChange={setSelectedDockerSourceId}
-                  options={selectedDockerSources.map((source) => ({
-                    value: dockerSourceKey(source),
-                    label: dockerSourceLabel(source),
-                  }))}
-                />
-              </Form.Item>
+              <>
+                {!targetSupportsDockerRestore && targetAgentId && (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                    message="目标节点未上报容器恢复能力，提交后可能被后端拒绝。请确认 Agent 已升级并重新连接。"
+                  />
+                )}
+                <Form.Item label="Docker 容器">
+                  <Select
+                    value={selectedDockerSourceId}
+                    onChange={setSelectedDockerSourceId}
+                    options={selectedDockerSources.map((source) => ({
+                      value: dockerSourceKey(source),
+                      label: dockerSourceLabel(source),
+                    }))}
+                  />
+                </Form.Item>
+              </>
             ) : (
               <>
                 <SnapshotTreeBrowser

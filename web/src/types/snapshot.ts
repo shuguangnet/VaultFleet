@@ -18,6 +18,7 @@ export interface SnapshotRefreshResponse {
 
 export interface RestoreRequest {
   snapshot_id: string;
+  source_agent_id?: string;
   target_path?: string;
   include_paths?: string[];
   restore_mode?: "files" | "docker_container";
