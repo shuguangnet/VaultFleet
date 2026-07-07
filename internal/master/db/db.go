@@ -49,6 +49,9 @@ func New(dataDir string) (*Database, error) {
 	if err := ensureDockerBackupColumns(gormDB); err != nil {
 		return nil, fmt.Errorf("ensure docker backup columns: %w", err)
 	}
+	if err := ensureBackupVerificationColumns(gormDB); err != nil {
+		return nil, fmt.Errorf("ensure backup verification columns: %w", err)
+	}
 	if err := migrateTaskHistoryArtifacts(gormDB); err != nil {
 		return nil, fmt.Errorf("migrate task history artifacts: %w", err)
 	}
@@ -66,6 +69,20 @@ func New(dataDir string) (*Database, error) {
 		DataDir:   dataDir,
 		MasterKey: masterKey,
 	}, nil
+}
+
+func ensureBackupVerificationColumns(gormDB *gorm.DB) error {
+	if gormDB.Migrator().HasTable(&BackupPolicy{}) && !gormDB.Migrator().HasColumn(&BackupPolicy{}, "Verification") {
+		if err := gormDB.Migrator().AddColumn(&BackupPolicy{}, "Verification"); err != nil {
+			return err
+		}
+	}
+	if gormDB.Migrator().HasTable(&TaskHistory{}) && !gormDB.Migrator().HasColumn(&TaskHistory{}, "Verification") {
+		if err := gormDB.Migrator().AddColumn(&TaskHistory{}, "Verification"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ensureDockerBackupColumns(gormDB *gorm.DB) error {

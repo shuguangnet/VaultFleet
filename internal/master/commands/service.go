@@ -70,7 +70,7 @@ func DeadlineForType(commandType string, now time.Time) time.Time {
 		return now.Add(5 * time.Minute)
 	case protocol.TypeSnapshotListReq:
 		return now.Add(2 * time.Minute)
-	case protocol.TypeBackupNow, protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq:
+	case protocol.TypeBackupNow, protocol.TypeBackupVerifyReq, protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq:
 		return now.Add(6 * time.Hour)
 	default:
 		return now.Add(30 * time.Minute)
@@ -284,7 +284,7 @@ func (s *Service) CompleteTaskResultWith(ctx context.Context, agentID string, me
 				"agent_id = ? AND message_id = ? AND type IN ? AND status NOT IN ?",
 				agentID,
 				messageID,
-				[]string{protocol.TypeBackupNow, protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq},
+				[]string{protocol.TypeBackupNow, protocol.TypeBackupVerifyReq, protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq},
 				terminalStatuses(),
 			).
 			First(&command).Error
@@ -343,6 +343,13 @@ func (s *Service) CompleteTaskResultWith(ctx context.Context, agentID string, me
 				return fmt.Errorf("marshal docker metadata: %w", err)
 			}
 			taskUpdates["docker"] = string(rawDocker)
+		}
+		if result.Verification != nil {
+			rawVerification, err := json.Marshal(result.Verification)
+			if err != nil {
+				return fmt.Errorf("marshal verification result: %w", err)
+			}
+			taskUpdates["verification"] = string(rawVerification)
 		}
 		if startedAt != nil {
 			taskUpdates["started_at"] = startedAt
@@ -907,12 +914,12 @@ func (s *Service) now() time.Time {
 }
 
 func isLongRunning(commandType string) bool {
-	return commandType == protocol.TypeBackupNow || commandType == protocol.TypeRestoreReq || commandType == protocol.TypeSelectiveRestoreReq
+	return commandType == protocol.TypeBackupNow || commandType == protocol.TypeBackupVerifyReq || commandType == protocol.TypeRestoreReq || commandType == protocol.TypeSelectiveRestoreReq
 }
 
 func isCancelableOnTimeout(commandType string) bool {
 	switch commandType {
-	case protocol.TypeBackupNow, protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq, protocol.TypeSnapshotListReq, protocol.TypeSnapshotBrowseReq:
+	case protocol.TypeBackupNow, protocol.TypeBackupVerifyReq, protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq, protocol.TypeSnapshotListReq, protocol.TypeSnapshotBrowseReq:
 		return true
 	default:
 		return false
@@ -923,6 +930,8 @@ func taskTypeForCommand(commandType string) (string, bool) {
 	switch commandType {
 	case protocol.TypeBackupNow:
 		return "backup", true
+	case protocol.TypeBackupVerifyReq:
+		return "verify", true
 	case protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq:
 		return "restore", true
 	default:

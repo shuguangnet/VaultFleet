@@ -63,6 +63,7 @@ func TestDefaultAgentCapabilitiesIncludesCurrentFeatureSet(t *testing.T) {
 	assert.Contains(t, capabilities, CapabilityRestorePreflight)
 	assert.Contains(t, capabilities, CapabilityPolicyPlaintextRclonePass)
 	assert.Contains(t, capabilities, CapabilityArchiveBackup)
+	assert.Contains(t, capabilities, CapabilityBackupVerification)
 }
 
 func TestPolicyPushPayload(t *testing.T) {
@@ -107,6 +108,13 @@ func TestPolicyPushPayload(t *testing.T) {
 			KeepWeekly:  4,
 			KeepMonthly: 6,
 		},
+		Verification: &BackupVerificationSettings{
+			Enabled:              true,
+			Schedule:             "0 4 * * *",
+			SampleCount:          5,
+			SampleRestoreEnabled: true,
+			TimeoutMinutes:       30,
+		},
 	}
 
 	_, parsed := roundTripPayload[PolicyPushPayload](t, TypePolicyPush, policy)
@@ -128,6 +136,10 @@ func TestPolicyPushPayload(t *testing.T) {
 	assert.Equal(t, "container-1", parsed.BackupSources[1].DockerContainer.ContainerID)
 	assert.Equal(t, "app", parsed.BackupSources[1].DockerContainer.ComposeProject)
 	assert.Equal(t, []string{"*.log", "*.tmp", "node_modules"}, parsed.ExcludePatterns)
+	require.NotNil(t, parsed.Verification)
+	assert.True(t, parsed.Verification.Enabled)
+	assert.Equal(t, "0 4 * * *", parsed.Verification.Schedule)
+	assert.Equal(t, 5, parsed.Verification.SampleCount)
 	if assert.NotNil(t, parsed.PreBackupHook) {
 		assert.Equal(t, "docker exec db pg_dumpall >/backup/db.sql", parsed.PreBackupHook.Command)
 		assert.Equal(t, 120, parsed.PreBackupHook.TimeoutSeconds)
@@ -141,6 +153,55 @@ func TestPolicyPushPayload(t *testing.T) {
 	assert.Equal(t, 7, parsed.Retention.KeepDaily)
 	assert.Equal(t, 4, parsed.Retention.KeepWeekly)
 	assert.Equal(t, 6, parsed.Retention.KeepMonthly)
+}
+
+func TestBackupVerifyRoundTrip(t *testing.T) {
+	req := BackupVerifyReqPayload{
+		AgentID: "agent-1",
+		Policy: &PolicyPushPayload{
+			AgentID:        "agent-1",
+			ResticPassword: "secret",
+			BackupMode:     BackupModeSnapshot,
+		},
+		Verification: &BackupVerificationSettings{
+			Enabled:              true,
+			SampleCount:          3,
+			SampleRestoreEnabled: true,
+			TimeoutMinutes:       15,
+		},
+	}
+
+	_, parsedReq := roundTripPayload[BackupVerifyReqPayload](t, TypeBackupVerifyReq, req)
+	assert.Equal(t, "agent-1", parsedReq.AgentID)
+	require.NotNil(t, parsedReq.Policy)
+	assert.Equal(t, BackupModeSnapshot, parsedReq.Policy.BackupMode)
+	require.NotNil(t, parsedReq.Verification)
+	assert.Equal(t, 3, parsedReq.Verification.SampleCount)
+
+	result := TaskResultPayload{
+		AgentID:    "agent-1",
+		TaskType:   "verify",
+		Status:     "success",
+		SnapshotID: "snap-1",
+		Verification: &BackupVerificationResult{
+			Status:     VerificationStatusPassed,
+			SnapshotID: "snap-1",
+			Checks: []BackupVerificationCheck{{
+				Code:       "restic_check",
+				Status:     VerificationCheckStatusPassed,
+				Severity:   VerificationSeverityInfo,
+				Message:    "repository check passed",
+				DurationMs: 12,
+			}},
+		},
+	}
+
+	_, parsedResult := roundTripPayload[TaskResultPayload](t, TypeTaskResult, result)
+	assert.Equal(t, "verify", parsedResult.TaskType)
+	require.NotNil(t, parsedResult.Verification)
+	assert.Equal(t, VerificationStatusPassed, parsedResult.Verification.Status)
+	require.Len(t, parsedResult.Verification.Checks, 1)
+	assert.Equal(t, "restic_check", parsedResult.Verification.Checks[0].Code)
 }
 
 func TestStorageConfigRcloneArgsOmitsWhenNil(t *testing.T) {

@@ -525,6 +525,10 @@ func createTaskHistory(gormDB *gorm.DB, agentID string, messageID string, result
 	if err != nil {
 		return err
 	}
+	rawVerification, err := marshalBackupVerificationResult(result.Verification)
+	if err != nil {
+		return err
+	}
 	history := db.TaskHistory{
 		AgentID:             agentID,
 		Type:                result.TaskType,
@@ -538,6 +542,7 @@ func createTaskHistory(gormDB *gorm.DB, agentID string, messageID string, result
 		ArchiveFormat:       result.ArchiveFormat,
 		MessageID:           messageID,
 		Docker:              rawDocker,
+		Verification:        rawVerification,
 		StartedAt:           &startedAt,
 		FinishedAt:          &finishedAt,
 		DurationMs:          result.DurationMs,
@@ -551,6 +556,17 @@ func createTaskHistory(gormDB *gorm.DB, agentID string, messageID string, result
 		history.FinishedAt = nil
 	}
 	return gormDB.Create(&history).Error
+}
+
+func marshalBackupVerificationResult(result *protocol.BackupVerificationResult) (string, error) {
+	if result == nil {
+		return "", nil
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return "", fmt.Errorf("marshal verification result: %w", err)
+	}
+	return string(raw), nil
 }
 
 func marshalDockerBackupMetadata(metadata *protocol.DockerBackupMetadata) (string, error) {

@@ -187,6 +187,10 @@ func (r ResticRunner) buildStatsCmd() *exec.Cmd {
 	return r.buildStatsCmdContext(context.Background())
 }
 
+func (r ResticRunner) buildCheckCmd() *exec.Cmd {
+	return r.buildCheckCmdContext(context.Background())
+}
+
 func (r ResticRunner) buildRestoreCmdWithIncludes(snapshotID, targetPath string, includePaths []string) *exec.Cmd {
 	cmd, _ := r.buildRestoreCmdWithIncludesChecked(context.Background(), snapshotID, targetPath, includePaths)
 	return cmd
@@ -260,6 +264,12 @@ func (r ResticRunner) buildLsSnapshotCmdContext(ctx context.Context, snapshotID 
 func (r ResticRunner) buildStatsCmdContext(ctx context.Context) *exec.Cmd {
 	args := []string{"stats", "--mode", "raw-data", "--json"}
 	args = append(args, r.baseReadOnlyArgs()...)
+	return r.command(ctx, args...)
+}
+
+func (r ResticRunner) buildCheckCmdContext(ctx context.Context) *exec.Cmd {
+	args := []string{"check"}
+	args = append(args, r.baseArgs()...)
 	return r.command(ctx, args...)
 }
 
@@ -484,6 +494,17 @@ func (r ResticRunner) RunForget(ctx context.Context, retention RetentionPolicy) 
 
 	if err := cmd.Run(); err != nil {
 		return commandError("run restic forget", stderr.String(), err)
+	}
+	return nil
+}
+
+func (r ResticRunner) CheckRepository(ctx context.Context) error {
+	cmd := r.buildCheckCmdContext(ctx)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return commandError("run restic check", stderr.String(), err)
 	}
 	return nil
 }

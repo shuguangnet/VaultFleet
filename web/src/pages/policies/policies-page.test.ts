@@ -54,6 +54,16 @@ describe("policy rclone args helpers", () => {
     expect(defaultPolicyInput().timeout_hours).toBe(6);
   });
 
+  it("defaults recoverability verification to disabled safe settings", () => {
+    expect(defaultPolicyInput().verification).toEqual({
+      enabled: false,
+      schedule: "0 4 * * *",
+      sample_count: 10,
+      sample_restore_enabled: false,
+      timeout_minutes: 60,
+    });
+  });
+
   it("normalizes empty hooks to undefined", () => {
     expect(
       normalizePolicyHook({ command: "   ", timeout_seconds: 120 }),

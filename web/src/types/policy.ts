@@ -26,6 +26,8 @@ export interface BackupPolicy {
   rclone_args?: Record<string, string>;
   timeout_hours?: number;
   backup_sources?: BackupSource[];
+  verification?: BackupVerificationSettings;
+  latest_verification?: BackupVerificationSummary;
 }
 
 export interface RetentionConfig {
@@ -52,6 +54,23 @@ export interface PolicyInput {
   rclone_args?: Record<string, string>;
   timeout_hours?: number;
   backup_sources?: BackupSource[];
+  verification?: BackupVerificationSettings;
+}
+
+export interface BackupVerificationSettings {
+  enabled: boolean;
+  schedule?: string;
+  sample_count?: number;
+  sample_restore_enabled?: boolean;
+  timeout_minutes?: number;
+}
+
+export interface BackupVerificationSummary {
+  status: "pending" | "running" | "success" | "failed" | "timeout" | "cancelled";
+  snapshot_id?: string;
+  checked_at?: string;
+  task_id?: string;
+  error?: string;
 }
 
 export type BackupSourceType = "path" | "docker_container";

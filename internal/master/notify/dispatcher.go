@@ -174,7 +174,7 @@ func (d *Dispatcher) backupFailedMessage(payload any) (NotifyMessage, string, bo
 	if !ok {
 		return NotifyMessage{}, "", false
 	}
-	if result.TaskType != "backup" || !isFailureStatus(result.Status) {
+	if (result.TaskType != "backup" && result.TaskType != "verify") || !isFailureStatus(result.Status) {
 		return NotifyMessage{}, "", false
 	}
 
@@ -184,7 +184,7 @@ func (d *Dispatcher) backupFailedMessage(payload any) (NotifyMessage, string, bo
 	}
 	body := result.ErrorLog
 	if body == "" {
-		body = fmt.Sprintf("Backup task failed with status %q.", result.Status)
+		body = fmt.Sprintf("%s task failed with status %q.", taskResultDisplayName(result.TaskType), result.Status)
 	}
 	timestamp := result.FinishedAt
 	if timestamp.IsZero() {
@@ -192,12 +192,19 @@ func (d *Dispatcher) backupFailedMessage(payload any) (NotifyMessage, string, bo
 	}
 
 	return NotifyMessage{
-		Title:     "Backup Failed",
+		Title:     taskResultDisplayName(result.TaskType) + " Failed",
 		Body:      body,
 		Level:     LevelError,
 		AgentName: agentName,
 		Timestamp: timestamp.UTC(),
 	}, EventBackupFailed, true
+}
+
+func taskResultDisplayName(taskType string) string {
+	if taskType == "verify" {
+		return "Backup Verification"
+	}
+	return "Backup"
 }
 
 func (d *Dispatcher) displayAgentName(agentIDOrName string) string {

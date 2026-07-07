@@ -170,7 +170,9 @@ func TestDatabaseInit_AddsDockerBackupColumnsToLegacySchema(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, database.DB.Migrator().HasColumn(&BackupPolicy{}, "BackupSources"))
+	assert.True(t, database.DB.Migrator().HasColumn(&BackupPolicy{}, "Verification"))
 	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "Docker"))
+	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "Verification"))
 
 	policy := BackupPolicy{
 		AgentID:         "agent-001",

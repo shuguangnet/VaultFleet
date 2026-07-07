@@ -337,6 +337,28 @@ func TestBuildStatsCmdRequestsRawRepositorySizeAsJSON(t *testing.T) {
 	})
 }
 
+func TestBuildCheckCmdUsesRepositoryAndPassword(t *testing.T) {
+	pwFile := writeTempPasswordFile(t, "secret")
+	runner := ResticRunner{
+		RcloneConfPath: "/tmp/rclone.conf",
+		PasswordFile:   pwFile,
+		RepoPath:       "repo",
+	}
+
+	cmd := runner.buildCheckCmd()
+
+	assertArgsEqual(t, cmd.Args, []string{
+		"restic",
+		"check",
+		"-r",
+		"rclone:vaultfleet:repo",
+		"--password-file",
+		pwFile,
+		"-o",
+		"rclone.args=serve restic --stdio --config /tmp/rclone.conf",
+	})
+}
+
 func TestBuildRestoreCmdIncludesSnapshotAndTarget(t *testing.T) {
 	pwFile := writeTempPasswordFile(t, "secret")
 	runner := ResticRunner{

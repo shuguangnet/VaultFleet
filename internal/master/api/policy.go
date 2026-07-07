@@ -37,57 +37,69 @@ func NewPolicyHandler(database *db.Database, eventBus *events.Bus) *PolicyHandle
 }
 
 type createPolicyRequest struct {
-	AgentID         string                  `json:"agent_id" binding:"required"`
-	StorageID       string                  `json:"storage_id" binding:"required"`
-	BackupMode      string                  `json:"backup_mode"`
-	ArchiveFormat   string                  `json:"archive_format"`
-	RepoPath        string                  `json:"repo_path"`
-	ResticPassword  string                  `json:"restic_password"`
-	BackupDirs      []string                `json:"backup_dirs"`
-	BackupSources   []protocol.BackupSource `json:"backup_sources"`
-	ExcludePatterns []string                `json:"exclude_patterns"`
-	PreBackupHook   *policyHookInput        `json:"pre_backup_hook"`
-	PostBackupHook  *policyHookInput        `json:"post_backup_hook"`
-	Schedule        string                  `json:"schedule" binding:"required"`
-	Retention       map[string]any          `json:"retention" binding:"required"`
-	RcloneArgs      map[string]string       `json:"rclone_args"`
-	TimeoutHours    *int                    `json:"timeout_hours"`
+	AgentID         string                               `json:"agent_id" binding:"required"`
+	StorageID       string                               `json:"storage_id" binding:"required"`
+	BackupMode      string                               `json:"backup_mode"`
+	ArchiveFormat   string                               `json:"archive_format"`
+	RepoPath        string                               `json:"repo_path"`
+	ResticPassword  string                               `json:"restic_password"`
+	BackupDirs      []string                             `json:"backup_dirs"`
+	BackupSources   []protocol.BackupSource              `json:"backup_sources"`
+	ExcludePatterns []string                             `json:"exclude_patterns"`
+	PreBackupHook   *policyHookInput                     `json:"pre_backup_hook"`
+	PostBackupHook  *policyHookInput                     `json:"post_backup_hook"`
+	Schedule        string                               `json:"schedule" binding:"required"`
+	Retention       map[string]any                       `json:"retention" binding:"required"`
+	RcloneArgs      map[string]string                    `json:"rclone_args"`
+	TimeoutHours    *int                                 `json:"timeout_hours"`
+	Verification    *protocol.BackupVerificationSettings `json:"verification"`
 }
 
 type updatePolicyRequest struct {
-	StorageID       string                  `json:"storage_id"`
-	BackupMode      string                  `json:"backup_mode"`
-	ArchiveFormat   string                  `json:"archive_format"`
-	BackupDirs      []string                `json:"backup_dirs"`
-	BackupSources   []protocol.BackupSource `json:"backup_sources"`
-	ExcludePatterns []string                `json:"exclude_patterns"`
-	PreBackupHook   *policyHookInput        `json:"pre_backup_hook"`
-	PostBackupHook  *policyHookInput        `json:"post_backup_hook"`
-	Schedule        string                  `json:"schedule"`
-	Retention       map[string]any          `json:"retention"`
-	RcloneArgs      map[string]string       `json:"rclone_args"`
-	TimeoutHours    *int                    `json:"timeout_hours"`
+	StorageID       string                               `json:"storage_id"`
+	BackupMode      string                               `json:"backup_mode"`
+	ArchiveFormat   string                               `json:"archive_format"`
+	BackupDirs      []string                             `json:"backup_dirs"`
+	BackupSources   []protocol.BackupSource              `json:"backup_sources"`
+	ExcludePatterns []string                             `json:"exclude_patterns"`
+	PreBackupHook   *policyHookInput                     `json:"pre_backup_hook"`
+	PostBackupHook  *policyHookInput                     `json:"post_backup_hook"`
+	Schedule        string                               `json:"schedule"`
+	Retention       map[string]any                       `json:"retention"`
+	RcloneArgs      map[string]string                    `json:"rclone_args"`
+	TimeoutHours    *int                                 `json:"timeout_hours"`
+	Verification    *protocol.BackupVerificationSettings `json:"verification"`
 }
 
 type policyResponse struct {
-	ID              string                  `json:"id"`
-	AgentID         string                  `json:"agent_id"`
-	StorageID       string                  `json:"storage_id"`
-	BackupMode      string                  `json:"backup_mode"`
-	ArchiveFormat   string                  `json:"archive_format,omitempty"`
-	RepoPath        string                  `json:"repo_path"`
-	BackupDirs      []string                `json:"backup_dirs"`
-	BackupSources   []protocol.BackupSource `json:"backup_sources"`
-	ExcludePatterns []string                `json:"exclude_patterns"`
-	PreBackupHook   *policyHookInput        `json:"pre_backup_hook,omitempty"`
-	PostBackupHook  *policyHookInput        `json:"post_backup_hook,omitempty"`
-	Schedule        string                  `json:"schedule"`
-	Retention       map[string]any          `json:"retention"`
-	RcloneArgs      map[string]string       `json:"rclone_args"`
-	TimeoutHours    int                     `json:"timeout_hours"`
-	Synced          bool                    `json:"synced"`
-	CreatedAt       time.Time               `json:"created_at"`
-	UpdatedAt       time.Time               `json:"updated_at"`
+	ID                 string                               `json:"id"`
+	AgentID            string                               `json:"agent_id"`
+	StorageID          string                               `json:"storage_id"`
+	BackupMode         string                               `json:"backup_mode"`
+	ArchiveFormat      string                               `json:"archive_format,omitempty"`
+	RepoPath           string                               `json:"repo_path"`
+	BackupDirs         []string                             `json:"backup_dirs"`
+	BackupSources      []protocol.BackupSource              `json:"backup_sources"`
+	ExcludePatterns    []string                             `json:"exclude_patterns"`
+	PreBackupHook      *policyHookInput                     `json:"pre_backup_hook,omitempty"`
+	PostBackupHook     *policyHookInput                     `json:"post_backup_hook,omitempty"`
+	Schedule           string                               `json:"schedule"`
+	Retention          map[string]any                       `json:"retention"`
+	RcloneArgs         map[string]string                    `json:"rclone_args"`
+	TimeoutHours       int                                  `json:"timeout_hours"`
+	Verification       *protocol.BackupVerificationSettings `json:"verification,omitempty"`
+	LatestVerification *policyVerificationSummary           `json:"latest_verification,omitempty"`
+	Synced             bool                                 `json:"synced"`
+	CreatedAt          time.Time                            `json:"created_at"`
+	UpdatedAt          time.Time                            `json:"updated_at"`
+}
+
+type policyVerificationSummary struct {
+	Status     string     `json:"status"`
+	SnapshotID string     `json:"snapshot_id,omitempty"`
+	CheckedAt  *time.Time `json:"checked_at,omitempty"`
+	TaskID     string     `json:"task_id,omitempty"`
+	Error      string     `json:"error,omitempty"`
 }
 
 type policyHookInput struct {
@@ -162,6 +174,15 @@ func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
 	if !ok {
 		return
 	}
+	backupMode := normalizeBackupMode(request.BackupMode)
+	verification, ok := validatePolicyVerification(c, backupMode, request.Verification)
+	if !ok {
+		return
+	}
+	verificationRaw, ok := marshalOptionalPolicyVerification(c, verification)
+	if !ok {
+		return
+	}
 	preBackupHook, ok := validatePolicyHook(c, request.PreBackupHook)
 	if !ok {
 		return
@@ -182,7 +203,7 @@ func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
 	policy := db.BackupPolicy{
 		AgentID:         request.AgentID,
 		StorageID:       request.StorageID,
-		BackupMode:      normalizeBackupMode(request.BackupMode),
+		BackupMode:      backupMode,
 		ArchiveFormat:   normalizeArchiveFormat(request.ArchiveFormat),
 		RepoPath:        repoPath,
 		ResticPassword:  encryptedPassword,
@@ -195,6 +216,7 @@ func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
 		Retention:       retention,
 		RcloneArgs:      rcloneArgs,
 		TimeoutHours:    timeoutHours,
+		Verification:    verificationRaw,
 		Synced:          false,
 	}
 
@@ -221,7 +243,7 @@ func (h *PolicyHandler) ListPolicies(c *gin.Context) {
 
 	responses := make([]policyResponse, 0, len(policies))
 	for _, policy := range policies {
-		response, err := newPolicyResponse(policy)
+		response, err := h.newPolicyResponse(policy)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "decode policy"})
 			return
@@ -346,6 +368,28 @@ func (h *PolicyHandler) UpdatePolicy(c *gin.Context) {
 		}
 		policy.TimeoutHours = timeoutHours
 	}
+	if request.Verification != nil {
+		verification, ok := validatePolicyVerification(c, normalizeBackupMode(policy.BackupMode), request.Verification)
+		if !ok {
+			return
+		}
+		verificationRaw, ok := marshalOptionalPolicyVerification(c, verification)
+		if !ok {
+			return
+		}
+		policy.Verification = verificationRaw
+	}
+	if request.Verification == nil && normalizeBackupMode(policy.BackupMode) == protocol.BackupModeArchive {
+		existingVerification, err := unmarshalPolicyVerification(policy.Verification)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "decode verification settings"})
+			return
+		}
+		if existingVerification != nil && existingVerification.Enabled {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "archive backup verification is unsupported"})
+			return
+		}
+	}
 
 	policy.Synced = false
 	if err := h.DB.DB.Save(&policy).Error; err != nil {
@@ -417,13 +461,46 @@ func (h *PolicyHandler) storageExists(c *gin.Context, id string) bool {
 }
 
 func (h *PolicyHandler) writePolicyResponse(c *gin.Context, status int, policy db.BackupPolicy) {
-	response, err := newPolicyResponse(policy)
+	response, err := h.newPolicyResponse(policy)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "decode policy"})
 		return
 	}
 
 	writeDataResponse(c, status, response)
+}
+
+func (h *PolicyHandler) newPolicyResponse(policy db.BackupPolicy) (policyResponse, error) {
+	response, err := newPolicyResponse(policy)
+	if err != nil {
+		return policyResponse{}, err
+	}
+	response.LatestVerification = h.latestPolicyVerification(policy.ID)
+	return response, nil
+}
+
+func (h *PolicyHandler) latestPolicyVerification(policyID string) *policyVerificationSummary {
+	if h == nil || h.DB == nil || h.DB.DB == nil || policyID == "" {
+		return nil
+	}
+	var history db.TaskHistory
+	if err := h.DB.DB.
+		Where("policy_id = ? AND type = ?", policyID, "verify").
+		Order("created_at DESC").
+		First(&history).Error; err != nil {
+		return nil
+	}
+	checkedAt := history.FinishedAt
+	if checkedAt == nil {
+		checkedAt = history.StartedAt
+	}
+	return &policyVerificationSummary{
+		Status:     history.Status,
+		SnapshotID: history.SnapshotID,
+		CheckedAt:  checkedAt,
+		TaskID:     history.ID,
+		Error:      history.ErrorLog,
+	}
 }
 
 func (h *PolicyHandler) publishPolicyChanged(agentID string, action string) {
@@ -474,6 +551,10 @@ func newPolicyResponse(policy db.BackupPolicy) (policyResponse, error) {
 	if err != nil {
 		return policyResponse{}, err
 	}
+	verification, err := unmarshalPolicyVerification(policy.Verification)
+	if err != nil {
+		return policyResponse{}, err
+	}
 
 	return policyResponse{
 		ID:              policy.ID,
@@ -491,6 +572,7 @@ func newPolicyResponse(policy db.BackupPolicy) (policyResponse, error) {
 		Retention:       retention,
 		RcloneArgs:      rcloneArgs,
 		TimeoutHours:    normalizedPolicyTimeoutHours(policy.TimeoutHours),
+		Verification:    verification,
 		Synced:          policy.Synced,
 		CreatedAt:       policy.CreatedAt,
 		UpdatedAt:       policy.UpdatedAt,
@@ -529,6 +611,53 @@ func unmarshalPolicyHook(raw string) (*policyHookInput, error) {
 		return nil, err
 	}
 	return &hook, nil
+}
+
+func validatePolicyVerification(c *gin.Context, backupMode string, settings *protocol.BackupVerificationSettings) (*protocol.BackupVerificationSettings, bool) {
+	if settings == nil {
+		return nil, true
+	}
+	normalized := *settings
+	if !normalized.Enabled {
+		return &normalized, true
+	}
+	if normalizeBackupMode(backupMode) == protocol.BackupModeArchive {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "archive backup verification is unsupported"})
+		return nil, false
+	}
+	if normalized.SampleCount < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "verification sample_count must be greater than or equal to 0"})
+		return nil, false
+	}
+	if normalized.SampleCount == 0 {
+		normalized.SampleCount = 10
+	}
+	if normalized.TimeoutMinutes < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "verification timeout_minutes must be greater than or equal to 0"})
+		return nil, false
+	}
+	if normalized.TimeoutMinutes == 0 {
+		normalized.TimeoutMinutes = 60
+	}
+	return &normalized, true
+}
+
+func marshalOptionalPolicyVerification(c *gin.Context, settings *protocol.BackupVerificationSettings) (string, bool) {
+	if settings == nil {
+		return "", true
+	}
+	return marshalPolicyJSON(c, settings)
+}
+
+func unmarshalPolicyVerification(raw string) (*protocol.BackupVerificationSettings, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var settings protocol.BackupVerificationSettings
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		return nil, err
+	}
+	return &settings, nil
 }
 
 func (h *PolicyHandler) normalizePolicySources(c *gin.Context, agentID string, backupDirs []string, backupSources []protocol.BackupSource) ([]string, []protocol.BackupSource, bool) {

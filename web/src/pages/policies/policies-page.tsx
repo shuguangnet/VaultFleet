@@ -46,6 +46,7 @@ import {
   deletePolicy,
   listPolicies,
   updatePolicy,
+  verifyPolicyNow,
 } from "@/services/policies";
 import {
   describeCron,
@@ -124,6 +125,13 @@ export function defaultPolicyInput(): PolicyInput {
     rclone_args: {},
     timeout_hours: 6,
     backup_sources: [],
+    verification: {
+      enabled: false,
+      schedule: "0 4 * * *",
+      sample_count: 10,
+      sample_restore_enabled: false,
+      timeout_minutes: 60,
+    },
   };
 }
 
@@ -169,6 +177,15 @@ function dockerSourcesFromPolicy(policy: BackupPolicy): BackupSource[] {
   return (policy.backup_sources ?? []).filter(
     (s) => s.type === "docker_container"
   );
+}
+
+function verificationLabel(policy: BackupPolicy) {
+  const latest = policy.latest_verification;
+  if (!policy.verification?.enabled) return { text: "未启用", status: "default" as const };
+  if (!latest) return { text: "从未验证", status: "warning" as const };
+  if (latest.status === "success") return { text: "通过", status: "success" as const };
+  if (latest.status === "running" || latest.status === "pending") return { text: "运行中", status: "processing" as const };
+  return { text: "失败", status: "error" as const };
 }
 
 function buildBackupSources(input: PolicyInput): BackupSource[] {
@@ -320,6 +337,16 @@ export function PoliciesPage() {
     onError: (error: any) => message.error(error.message),
   });
 
+  const verifyMutation = useMutation({
+    mutationFn: (policyId: string) => verifyPolicyNow(policyId),
+    onSuccess: (data) => {
+      message.success(`验证任务已创建 (Message ID: ${data.message_id})`);
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["policies"] });
+    },
+    onError: (error: any) => message.error(error.message),
+  });
+
   const handleEdit = (policy: BackupPolicy) => {
     setEditingId(policy.id);
     const repoSuffix = policy.repo_path.startsWith("vaultfleet/")
@@ -346,6 +373,13 @@ export function PoliciesPage() {
       rclone_args: policy.rclone_args || {},
       timeout_hours: policy.timeout_hours || 6,
       backup_sources: dockerSourcesFromPolicy(policy),
+      verification: policy.verification ?? {
+        enabled: false,
+        schedule: "0 4 * * *",
+        sample_count: 10,
+        sample_restore_enabled: false,
+        timeout_minutes: 60,
+      },
     });
     setRetentionPreset(detectRetentionPreset(policy.retention));
     setAdvancedOpen(!!cleanRcloneArgs(policy.rclone_args));
@@ -362,6 +396,10 @@ export function PoliciesPage() {
       pre_backup_hook: normalizePolicyHook(formData.pre_backup_hook),
       post_backup_hook: normalizePolicyHook(formData.post_backup_hook),
       timeout_hours: formData.timeout_hours || 6,
+      verification:
+        formData.backup_mode === "snapshot"
+          ? formData.verification
+          : { ...(formData.verification ?? { enabled: false }), enabled: false },
     };
     if (editingId) updateMutation.mutate(submitData);
     else createMutation.mutate(submitData);
@@ -420,6 +458,35 @@ export function PoliciesPage() {
       render: (v: boolean) => <StatusBadge status={v ? "success" : "unsynced"} />,
     },
     {
+      title: "验证状态",
+      key: "verification",
+      render: (_, record) => {
+        const state = verificationLabel(record);
+        const color =
+          state.status === "success"
+            ? "green"
+            : state.status === "error"
+              ? "red"
+              : state.status === "processing"
+                ? "blue"
+                : state.status === "warning"
+                  ? "gold"
+                  : "default";
+        return (
+          <div>
+            <Tag color={color}>{state.text}</Tag>
+            {record.latest_verification?.checked_at && (
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                  {safeFormatDate(record.latest_verification.checked_at, "yyyy-MM-dd HH:mm")}
+                </Typography.Text>
+              </div>
+            )}
+          </div>
+        );
+      },
+    },
+    {
       title: "创建时间",
       dataIndex: "created_at",
       key: "created_at",
@@ -449,6 +516,17 @@ export function PoliciesPage() {
                 icon: <PlayCircleOutlined />,
                 label: "立即备份",
                 onClick: () => setConfirmBackupAgentId(record.agent_id),
+              },
+              {
+                key: "verify",
+                icon: <SafetyCertificateOutlined />,
+                label: "立即验证",
+                disabled:
+                  record.backup_mode === "archive" ||
+                  !agents
+                    ?.find((a) => a.id === record.agent_id)
+                    ?.capabilities?.includes("backup_verification"),
+                onClick: () => verifyMutation.mutate(record.id),
               },
               { type: "divider" },
               {
@@ -736,6 +814,108 @@ export function PoliciesPage() {
                   生成后的压缩包会出现在备份历史中，可直接下载。
                 </Typography.Text>
               </div>
+            )}
+	          </div>
+
+          <div
+            style={{
+              borderTop: "1px solid #f0f0f0",
+              paddingTop: 12,
+            }}
+          >
+            <Checkbox
+              checked={!!formData.verification?.enabled}
+              disabled={formData.backup_mode === "archive"}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  verification: {
+                    ...(formData.verification ?? {}),
+                    enabled: e.target.checked,
+                    schedule: formData.verification?.schedule || "0 4 * * *",
+                    sample_count: formData.verification?.sample_count ?? 10,
+                    timeout_minutes: formData.verification?.timeout_minutes ?? 60,
+                  },
+                })
+              }
+            >
+              <Typography.Text strong>启用可恢复性验证</Typography.Text>
+            </Checkbox>
+            <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: "4px 0 8px" }}>
+              定期对最新 restic 快照执行 check、ls 和抽样检查。
+            </Typography.Paragraph>
+            {formData.verification?.enabled && formData.backup_mode === "snapshot" && (
+              <Row gutter={[8, 8]}>
+                <Col xs={24} sm={12}>
+                  <label htmlFor="policy-verification-schedule" style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>验证调度</label>
+                  <Input
+                    id="policy-verification-schedule"
+                    value={formData.verification.schedule}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        verification: {
+                          ...(formData.verification ?? { enabled: true }),
+                          schedule: e.target.value,
+                        },
+                      })
+                    }
+                    placeholder="0 4 * * *"
+                  />
+                </Col>
+                <Col xs={12} sm={6}>
+                  <label htmlFor="policy-verification-samples" style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>抽样数量</label>
+                  <InputNumber
+                    id="policy-verification-samples"
+                    style={{ width: "100%" }}
+                    min={0}
+                    value={formData.verification.sample_count ?? 10}
+                    onChange={(v) =>
+                      setFormData({
+                        ...formData,
+                        verification: {
+                          ...(formData.verification ?? { enabled: true }),
+                          sample_count: (v as number) ?? 0,
+                        },
+                      })
+                    }
+                  />
+                </Col>
+                <Col xs={12} sm={6}>
+                  <label htmlFor="policy-verification-timeout" style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>超时分钟</label>
+                  <InputNumber
+                    id="policy-verification-timeout"
+                    style={{ width: "100%" }}
+                    min={1}
+                    value={formData.verification.timeout_minutes ?? 60}
+                    onChange={(v) =>
+                      setFormData({
+                        ...formData,
+                        verification: {
+                          ...(formData.verification ?? { enabled: true }),
+                          timeout_minutes: (v as number) ?? 60,
+                        },
+                      })
+                    }
+                  />
+                </Col>
+                <Col span={24}>
+                  <Checkbox
+                    checked={!!formData.verification.sample_restore_enabled}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        verification: {
+                          ...(formData.verification ?? { enabled: true }),
+                          sample_restore_enabled: e.target.checked,
+                        },
+                      })
+                    }
+                  >
+                    执行小文件临时恢复测试
+                  </Checkbox>
+                </Col>
+              </Row>
             )}
           </div>
 

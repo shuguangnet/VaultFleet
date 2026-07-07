@@ -14,7 +14,7 @@ export interface TaskHistory {
   id: string;
   message_id: string;
   agent_id: string;
-  type: "backup" | "restore";
+  type: "backup" | "restore" | "verify";
   status: "pending" | "running" | "success" | "failed" | "timeout" | "cancelled";
   snapshot_id?: string;
   command_id?: string;
@@ -33,8 +33,25 @@ export interface TaskHistory {
   error_log?: string;
   progress?: BackupProgress;
   docker?: DockerBackupMetadata;
+  verification?: BackupVerificationResult;
   created_at: string;
   updated_at?: string;
+}
+
+export interface BackupVerificationResult {
+  status: "passed" | "failed";
+  snapshot_id?: string;
+  checks: BackupVerificationCheck[];
+  error?: string;
+}
+
+export interface BackupVerificationCheck {
+  code: string;
+  status: "passed" | "failed" | "skipped";
+  severity: "info" | "warning" | "error";
+  message: string;
+  detail?: string;
+  duration_ms?: number;
 }
 
 export interface DockerBackupMetadata {

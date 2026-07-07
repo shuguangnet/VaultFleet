@@ -40,32 +40,33 @@ type CommandHub interface {
 }
 
 type taskResponse struct {
-	ID                  string                          `json:"id"`
-	AgentID             string                          `json:"agent_id"`
-	Type                string                          `json:"type"`
-	Status              string                          `json:"status"`
-	SnapshotID          string                          `json:"snapshot_id"`
-	ArtifactPath        string                          `json:"artifact_path,omitempty"`
-	ArtifactName        string                          `json:"artifact_name,omitempty"`
-	ArtifactSize        int64                           `json:"artifact_size,omitempty"`
-	ArtifactContentType string                          `json:"artifact_content_type,omitempty"`
-	BackupMode          string                          `json:"backup_mode,omitempty"`
-	ArchiveFormat       string                          `json:"archive_format,omitempty"`
-	MessageID           string                          `json:"message_id,omitempty"`
-	CommandID           string                          `json:"command_id,omitempty"`
-	PolicyID            string                          `json:"policy_id,omitempty"`
-	StorageID           string                          `json:"storage_id,omitempty"`
-	StartedAt           *time.Time                      `json:"started_at"`
-	FinishedAt          *time.Time                      `json:"finished_at"`
-	DurationMs          int64                           `json:"duration_ms"`
-	RepoSize            int64                           `json:"repo_size"`
-	RepoSizeBytes       int64                           `json:"repository_size_bytes"`
-	ErrorLog            string                          `json:"error_log,omitempty"`
-	Error               string                          `json:"error,omitempty"`
-	Progress            *protocol.BackupProgressPayload `json:"progress,omitempty"`
-	Docker              *protocol.DockerBackupMetadata  `json:"docker,omitempty"`
-	CreatedAt           time.Time                       `json:"created_at"`
-	UpdatedAt           time.Time                       `json:"updated_at"`
+	ID                  string                             `json:"id"`
+	AgentID             string                             `json:"agent_id"`
+	Type                string                             `json:"type"`
+	Status              string                             `json:"status"`
+	SnapshotID          string                             `json:"snapshot_id"`
+	ArtifactPath        string                             `json:"artifact_path,omitempty"`
+	ArtifactName        string                             `json:"artifact_name,omitempty"`
+	ArtifactSize        int64                              `json:"artifact_size,omitempty"`
+	ArtifactContentType string                             `json:"artifact_content_type,omitempty"`
+	BackupMode          string                             `json:"backup_mode,omitempty"`
+	ArchiveFormat       string                             `json:"archive_format,omitempty"`
+	MessageID           string                             `json:"message_id,omitempty"`
+	CommandID           string                             `json:"command_id,omitempty"`
+	PolicyID            string                             `json:"policy_id,omitempty"`
+	StorageID           string                             `json:"storage_id,omitempty"`
+	StartedAt           *time.Time                         `json:"started_at"`
+	FinishedAt          *time.Time                         `json:"finished_at"`
+	DurationMs          int64                              `json:"duration_ms"`
+	RepoSize            int64                              `json:"repo_size"`
+	RepoSizeBytes       int64                              `json:"repository_size_bytes"`
+	ErrorLog            string                             `json:"error_log,omitempty"`
+	Error               string                             `json:"error,omitempty"`
+	Progress            *protocol.BackupProgressPayload    `json:"progress,omitempty"`
+	Docker              *protocol.DockerBackupMetadata     `json:"docker,omitempty"`
+	Verification        *protocol.BackupVerificationResult `json:"verification,omitempty"`
+	CreatedAt           time.Time                          `json:"created_at"`
+	UpdatedAt           time.Time                          `json:"updated_at"`
 }
 
 func NewTaskHandler(database *db.Database, hub CommandHub) *TaskHandler {
@@ -77,6 +78,83 @@ func RegisterTaskRoutes(rg *gin.RouterGroup, h *TaskHandler) {
 	rg.GET("/tasks/:id/download", h.DownloadArtifact)
 	rg.POST("/tasks/:id/cancel", h.CancelTask)
 	rg.POST("/agents/:id/backup-now", h.BackupNow)
+	rg.POST("/policies/:id/verify-now", h.VerifyPolicyNow)
+}
+
+func (h *TaskHandler) VerifyPolicyNow(c *gin.Context) {
+	policyID := c.Param("id")
+	var policy db.BackupPolicy
+	if err := h.DB.DB.First(&policy, "id = ?", policyID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "policy not found"})
+		return
+	}
+	if normalizeBackupMode(policy.BackupMode) == protocol.BackupModeArchive {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "archive backup verification is unsupported"})
+		return
+	}
+	supportsVerification, err := agentHasCapability(h.DB, policy.AgentID, protocol.CapabilityBackupVerification)
+	if err != nil || !supportsVerification {
+		c.JSON(http.StatusConflict, gin.H{"ok": false, "error": "agent must be upgraded to support backup verification"})
+		return
+	}
+
+	var storage db.StorageConfig
+	if err := h.DB.DB.First(&storage, "id = ?", policy.StorageID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "load backup storage"})
+		return
+	}
+	payload, err := policyPushPayload(h.DB, policy, storage)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "build backup policy payload"})
+		return
+	}
+	settings, err := unmarshalPolicyVerification(policy.Verification)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "decode verification settings"})
+		return
+	}
+	if settings == nil {
+		settings = &protocol.BackupVerificationSettings{Enabled: true, SampleCount: 10, TimeoutMinutes: 60}
+	}
+	verifyMsg, err := protocol.NewMessage(protocol.TypeBackupVerifyReq, protocol.BackupVerifyReqPayload{
+		AgentID:      policy.AgentID,
+		Policy:       &payload,
+		Verification: settings,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "encode verification request"})
+		return
+	}
+
+	commandService := h.commandService()
+	command, err := commandService.CreateCommand(contextFromGin(c), commands.CreateCommandInput{
+		AgentID:      policy.AgentID,
+		Type:         protocol.TypeBackupVerifyReq,
+		Message:      *verifyMsg,
+		TaskType:     "verify",
+		TaskState:    commands.TaskStatusPending,
+		PolicyID:     policy.ID,
+		StorageID:    policy.StorageID,
+		TimeoutHours: verificationTimeoutHours(settings.TimeoutMinutes),
+	})
+	if err != nil {
+		log.Printf("create backup verification command failed for policy %s: %v", policy.ID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "database error"})
+		return
+	}
+
+	if h.Hub != nil && h.Hub.IsOnline(policy.AgentID) {
+		if err := commandService.DispatchNewPendingForAgent(contextFromGin(c), policy.AgentID, 100); err != nil {
+			log.Printf("dispatch backup verification command failed for policy %s: %v", policy.ID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "database error"})
+			return
+		}
+	}
+
+	writeDataResponse(c, http.StatusAccepted, gin.H{
+		"command_id": command.ID,
+		"message_id": verifyMsg.ID,
+	})
 }
 
 func (h *TaskHandler) BackupNow(c *gin.Context) {
@@ -518,6 +596,20 @@ func parseTaskLimit(raw string) int {
 	return limit
 }
 
+func verificationTimeoutHours(timeoutMinutes int) int {
+	if timeoutMinutes <= 0 {
+		return 1
+	}
+	hours := timeoutMinutes / 60
+	if timeoutMinutes%60 != 0 {
+		hours++
+	}
+	if hours < 1 {
+		return 1
+	}
+	return hours
+}
+
 func newTaskResponse(history db.TaskHistory) taskResponse {
 	response := taskResponse{
 		ID:                  history.ID,
@@ -549,6 +641,12 @@ func newTaskResponse(history db.TaskHistory) taskResponse {
 		var metadata protocol.DockerBackupMetadata
 		if err := json.Unmarshal([]byte(history.Docker), &metadata); err == nil {
 			response.Docker = &metadata
+		}
+	}
+	if history.Verification != "" {
+		var verification protocol.BackupVerificationResult
+		if err := json.Unmarshal([]byte(history.Verification), &verification); err == nil {
+			response.Verification = &verification
 		}
 	}
 	return response

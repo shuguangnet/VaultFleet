@@ -137,6 +137,82 @@ func TestBackupNowQueuesOfflineAgentCommand(t *testing.T) {
 	assert.Equal(t, data["message_id"], history.MessageID)
 }
 
+func TestVerifyPolicyNowCreatesAndDispatchesCommand(t *testing.T) {
+	setup := setupTasksAPI(t)
+	agent := createTasksTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+	markTasksAgentCapabilities(t, setup.database, agent.ID, []string{protocol.CapabilityBackupVerification})
+	storage := db.StorageConfig{Name: "Verify Storage", RcloneType: "s3"}
+	require.NoError(t, setup.database.DB.Create(&storage).Error)
+	verificationRaw, err := json.Marshal(protocol.BackupVerificationSettings{
+		Enabled:        true,
+		SampleCount:    4,
+		TimeoutMinutes: 30,
+	})
+	require.NoError(t, err)
+	policy := db.BackupPolicy{
+		AgentID:         agent.ID,
+		StorageID:       storage.ID,
+		BackupMode:      protocol.BackupModeSnapshot,
+		RepoPath:        "vaultfleet/" + agent.ID,
+		BackupDirs:      `["/etc"]`,
+		ExcludePatterns: `[]`,
+		Schedule:        "0 3 * * *",
+		Retention:       `{"keep_last":3}`,
+		Verification:    string(verificationRaw),
+	}
+	require.NoError(t, setup.database.DB.Create(&policy).Error)
+
+	w := postAnyJSON(t, setup.router, "/api/policies/"+policy.ID+"/verify-now", map[string]any{})
+
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	data := requireMap(t, body["data"])
+	require.Len(t, setup.hub.sent, 1)
+	assert.Equal(t, protocol.TypeBackupVerifyReq, setup.hub.sent[0].message.Type)
+	payload, err := protocol.ParsePayload[protocol.BackupVerifyReqPayload](&setup.hub.sent[0].message)
+	require.NoError(t, err)
+	assert.Equal(t, agent.ID, payload.AgentID)
+	require.NotNil(t, payload.Verification)
+	assert.Equal(t, 4, payload.Verification.SampleCount)
+
+	var command db.AgentCommand
+	require.NoError(t, setup.database.DB.First(&command, "id = ?", data["command_id"]).Error)
+	assert.Equal(t, protocol.TypeBackupVerifyReq, command.Type)
+	assert.Equal(t, commands.CommandStatusRunning, command.Status)
+	assert.Equal(t, policy.ID, command.PolicyID)
+	assert.Equal(t, storage.ID, command.StorageID)
+
+	var history db.TaskHistory
+	require.NoError(t, setup.database.DB.First(&history, "command_id = ?", command.ID).Error)
+	assert.Equal(t, "verify", history.Type)
+	assert.Equal(t, commands.TaskStatusRunning, history.Status)
+}
+
+func TestVerifyPolicyNowRejectsArchivePolicy(t *testing.T) {
+	setup := setupTasksAPI(t)
+	agent := createTasksTestAgent(t, setup.database, "online")
+	markTasksAgentCapabilities(t, setup.database, agent.ID, []string{protocol.CapabilityBackupVerification})
+	storage := db.StorageConfig{Name: "Archive Storage", RcloneType: "s3"}
+	require.NoError(t, setup.database.DB.Create(&storage).Error)
+	policy := db.BackupPolicy{
+		AgentID:         agent.ID,
+		StorageID:       storage.ID,
+		BackupMode:      protocol.BackupModeArchive,
+		ArchiveFormat:   protocol.ArchiveFormatZip,
+		BackupDirs:      `["/etc"]`,
+		ExcludePatterns: `[]`,
+		Schedule:        "0 3 * * *",
+		Retention:       `{"keep_last":3}`,
+	}
+	require.NoError(t, setup.database.DB.Create(&policy).Error)
+
+	w := postAnyJSON(t, setup.router, "/api/policies/"+policy.ID+"/verify-now", map[string]any{})
+
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Empty(t, setup.hub.sent)
+}
+
 func TestBackupNowUsesPolicyTimeoutHours(t *testing.T) {
 	setup := setupTasksAPI(t)
 	agent := createTasksTestAgent(t, setup.database, "offline")

@@ -140,6 +140,35 @@ describe("task progress helpers", () => {
 
     expect(screen.getByText("1:05")).toBeInTheDocument();
   });
+
+  it("renders completed verification task metrics", () => {
+    render(
+      <>
+        {renderTaskMetricContent(
+          task({
+            type: "verify",
+            status: "success",
+            duration_ms: 12_000,
+            verification: {
+              status: "passed",
+              snapshot_id: "snap-1",
+              checks: [
+                {
+                  code: "restic_check",
+                  status: "passed",
+                  severity: "info",
+                  message: "repository check passed",
+                  duration_ms: 10,
+                },
+              ],
+            },
+          }),
+        )}
+      </>,
+    );
+
+    expect(screen.getByText("12s")).toBeInTheDocument();
+  });
 });
 
 function task(overrides: Partial<TaskHistory> = {}): TaskHistory {

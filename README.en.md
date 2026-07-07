@@ -23,6 +23,7 @@ Backup data does not pass through the Master. The Master manages the control pla
 - **Docker workload friendly** with support for mounted container data, `docker-compose.yml`, `.env`, and optional pre/post backup hooks for export or service control steps.
 - **Backup progress and cancellation** for long-running jobs, with policy-level timeout settings.
 - **Snapshot browsing, preflight, and selective restore** for cross-node restore, whole snapshots, or selected paths, with a Web UI preflight gate before execution.
+- **Backup recoverability verification** can periodically run restic check, snapshot listing, sampled listing, and optional temporary small-file restore tests. See [Backup Recoverability Verification](docs/recoverability-verification.md).
 - **Diagnostics and notifications** through Telegram, Webhook, health checks, diagnostic bundles, and Agent log collection.
 - **Agent version reporting and self-update** through GitHub Release assets.
 

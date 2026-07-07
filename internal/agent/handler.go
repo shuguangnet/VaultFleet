@@ -41,6 +41,7 @@ type RestoreRunnerFunc func(context.Context, executor.ExecutorConfig, string, st
 type DockerRestoreRunnerFunc func(context.Context, protocol.DockerRestoreRequest) error
 type SnapshotListRunnerFunc func(context.Context, executor.ExecutorConfig) ([]executor.SnapshotInfo, error)
 type SnapshotBrowseRunnerFunc func(context.Context, executor.ExecutorConfig, string, string) ([]executor.SnapshotFileEntry, error)
+type BackupVerificationRunnerFunc func(context.Context, executor.ExecutorConfig, protocol.BackupVerificationSettings) executor.TaskResult
 
 type policyScheduler interface {
 	Validate(schedule string) error
@@ -62,6 +63,7 @@ type HandlerConfig struct {
 	DockerRestoreRunner      DockerRestoreRunnerFunc
 	SnapshotListRunner       SnapshotListRunnerFunc
 	SnapshotBrowseRunner     SnapshotBrowseRunnerFunc
+	BackupVerificationRunner BackupVerificationRunnerFunc
 	DirSizeFunc              DirSizeFunc
 	AgentVersion             string
 	Updater                  AgentUpdater
@@ -82,6 +84,7 @@ type Handler struct {
 	dockerRestoreRunner      DockerRestoreRunnerFunc
 	snapshotListRunner       SnapshotListRunnerFunc
 	snapshotBrowseRunner     SnapshotBrowseRunnerFunc
+	backupVerificationRunner BackupVerificationRunnerFunc
 	snapshotCache            *snapshotCache
 	dirSizeFunc              DirSizeFunc
 	agentVersion             string
@@ -130,6 +133,10 @@ func NewHandler(config HandlerConfig) *Handler {
 	if snapshotBrowseRunner == nil {
 		snapshotBrowseRunner = runSnapshotBrowse
 	}
+	backupVerificationRunner := config.BackupVerificationRunner
+	if backupVerificationRunner == nil {
+		backupVerificationRunner = runBackupVerification
+	}
 	dirSizeFunc := config.DirSizeFunc
 	if dirSizeFunc == nil {
 		dirSizeFunc = filebrowse.CalculateDirSize
@@ -156,6 +163,7 @@ func NewHandler(config HandlerConfig) *Handler {
 		dockerRestoreRunner:      dockerRestoreRunner,
 		snapshotListRunner:       snapshotListRunner,
 		snapshotBrowseRunner:     snapshotBrowseRunner,
+		backupVerificationRunner: backupVerificationRunner,
 		snapshotCache:            newSnapshotCache(configDir),
 		dirSizeFunc:              dirSizeFunc,
 		agentVersion:             config.AgentVersion,
@@ -173,6 +181,8 @@ func (h *Handler) Handle(msg protocol.Message) {
 		h.handlePolicyPush(msg)
 	case protocol.TypeBackupNow:
 		h.handleBackupNow(msg)
+	case protocol.TypeBackupVerifyReq:
+		h.handleBackupVerifyReq(msg)
 	case protocol.TypeDirBrowseReq:
 		h.handleDirBrowseReq(msg)
 	case protocol.TypeDockerDiscoveryReq:
@@ -211,9 +221,7 @@ func (h *Handler) restoreSavedPolicySchedule() {
 	}
 	if savedPolicy.Schedule == "" {
 		h.scheduler.RemoveJob(savedPolicy.AgentID)
-		return
-	}
-	if err := h.scheduler.UpdateSchedule(savedPolicy.AgentID, savedPolicy.Schedule, func() {
+	} else if err := h.scheduler.UpdateSchedule(savedPolicy.AgentID, savedPolicy.Schedule, func() {
 		startErr := h.tasks.Start("", taskTypeBackup, func(ctx context.Context) {
 			h.runBackupForPolicy(ctx, "", savedPolicy.AgentID, savedPolicy)
 		})
@@ -223,6 +231,31 @@ func (h *Handler) restoreSavedPolicySchedule() {
 	}); err != nil {
 		log.Printf("restore saved policy schedule failed: %v", err)
 	}
+	h.updateVerificationSchedule(savedPolicy)
+}
+
+func (h *Handler) updateVerificationSchedule(policyPayload *protocol.PolicyPushPayload) error {
+	if h.scheduler == nil || policyPayload == nil {
+		return nil
+	}
+	jobID := verificationScheduleJobID(policyPayload.AgentID)
+	if policyPayload.Verification == nil || !policyPayload.Verification.Enabled || strings.TrimSpace(policyPayload.Verification.Schedule) == "" {
+		h.scheduler.RemoveJob(jobID)
+		return nil
+	}
+	settings := *policyPayload.Verification
+	return h.scheduler.UpdateSchedule(jobID, settings.Schedule, func() {
+		startErr := h.tasks.Start("", taskTypeVerify, func(ctx context.Context) {
+			h.runBackupVerificationForPolicy(ctx, "", policyPayload.AgentID, policyPayload, settings)
+		})
+		if startErr != nil {
+			log.Printf("scheduled backup verification skipped: %v", startErr)
+		}
+	})
+}
+
+func verificationScheduleJobID(agentID string) string {
+	return agentID + ":verify"
 }
 
 func (h *Handler) handlePolicyPush(msg protocol.Message) {
@@ -240,6 +273,13 @@ func (h *Handler) handlePolicyPush(msg protocol.Message) {
 	if h.scheduler != nil && pushedPolicy.Schedule != "" {
 		if err := h.scheduler.Validate(pushedPolicy.Schedule); err != nil {
 			log.Printf("validate backup schedule failed: %v", err)
+			h.sendPolicyAck(msg.ID, pushedPolicy.AgentID, false, err.Error())
+			return
+		}
+	}
+	if h.scheduler != nil && pushedPolicy.Verification != nil && pushedPolicy.Verification.Enabled && pushedPolicy.Verification.Schedule != "" {
+		if err := h.scheduler.Validate(pushedPolicy.Verification.Schedule); err != nil {
+			log.Printf("validate backup verification schedule failed: %v", err)
 			h.sendPolicyAck(msg.ID, pushedPolicy.AgentID, false, err.Error())
 			return
 		}
@@ -288,6 +328,12 @@ func (h *Handler) handlePolicyPush(msg protocol.Message) {
 			}
 		}); err != nil {
 			log.Printf("update backup schedule failed: %v", err)
+			rollbackState.restore()
+			h.sendPolicyAck(msg.ID, pushedPolicy.AgentID, false, err.Error())
+			return
+		}
+		if err := h.updateVerificationSchedule(pushedPolicy); err != nil {
+			log.Printf("update backup verification schedule failed: %v", err)
 			rollbackState.restore()
 			h.sendPolicyAck(msg.ID, pushedPolicy.AgentID, false, err.Error())
 			return
@@ -589,6 +635,92 @@ func (h *Handler) handleBackupNow(msg protocol.Message) {
 	if startErr != nil {
 		h.sendTaskResultWithID(msg.ID, h.failedTaskResult(agentID, startErr.Error(), time.Now()))
 	}
+}
+
+func (h *Handler) handleBackupVerifyReq(msg protocol.Message) {
+	verifyReq, err := protocol.ParsePayload[protocol.BackupVerifyReqPayload](&msg)
+	if err != nil {
+		log.Printf("parse backup_verify_req failed: %v", err)
+		h.sendTaskResultWithID(msg.ID, h.failedTypedTaskResult(h.agentID, "verify", "", "parse backup_verify_req: "+err.Error(), time.Now()))
+		return
+	}
+
+	agentID := verifyReq.AgentID
+	if agentID == "" {
+		agentID = h.agentID
+	}
+	if h.policyStore == nil {
+		h.sendTaskResultWithID(msg.ID, h.failedTypedTaskResult(agentID, "verify", "", "policy store not configured", time.Now()))
+		return
+	}
+
+	policyPayload := verifyReq.Policy
+	if policyPayload == nil {
+		policyPayload, err = h.policyStore.LoadPolicy()
+		if err != nil {
+			log.Printf("load policy failed: %v", err)
+			h.sendTaskResultWithID(msg.ID, h.failedTypedTaskResult(agentID, "verify", "", "load policy: "+err.Error(), time.Now()))
+			return
+		}
+	}
+	settings := protocol.BackupVerificationSettings{}
+	if verifyReq.Verification != nil {
+		settings = *verifyReq.Verification
+	} else if policyPayload.Verification != nil {
+		settings = *policyPayload.Verification
+	}
+	if agentID == "" {
+		agentID = policyPayload.AgentID
+	}
+	startErr := h.tasks.Start(msg.ID, taskTypeVerify, func(ctx context.Context) {
+		h.runBackupVerificationForPolicy(ctx, msg.ID, agentID, policyPayload, settings)
+	})
+	if startErr != nil {
+		h.sendTaskResultWithID(msg.ID, h.failedTypedTaskResult(agentID, "verify", "", startErr.Error(), time.Now()))
+	}
+}
+
+func (h *Handler) runBackupVerificationForPolicy(ctx context.Context, messageID string, agentID string, policyPayload *protocol.PolicyPushPayload, settings protocol.BackupVerificationSettings) {
+	if policyPayload == nil {
+		return
+	}
+	if agentID == "" {
+		agentID = policyPayload.AgentID
+	}
+
+	startedAt := time.Now()
+	if strings.TrimSpace(policyPayload.BackupMode) == protocol.BackupModeArchive {
+		h.sendTaskResultWithID(messageID, h.failedTypedTaskResult(agentID, "verify", "", "archive backup verification is unsupported", startedAt))
+		return
+	}
+	if err := h.ensureRcloneConf(policyPayload); err != nil {
+		h.sendTaskResultWithID(messageID, h.failedTypedTaskResult(agentID, "verify", "", "prepare rclone config: "+err.Error(), startedAt))
+		return
+	}
+
+	runCtx := ctx
+	cancel := func() {}
+	if settings.TimeoutMinutes > 0 {
+		runCtx, cancel = context.WithTimeout(ctx, time.Duration(settings.TimeoutMinutes)*time.Minute)
+	}
+	defer cancel()
+
+	result := h.backupVerificationRunner(runCtx, executorConfigForPolicy(h.configDir, policyPayload), settings)
+	if runCtx.Err() == context.DeadlineExceeded {
+		result.Status = "failed"
+		result.ErrorLog = "backup verification timed out"
+		if result.Verification == nil {
+			result.Verification = &protocol.BackupVerificationResult{}
+		}
+		result.Verification.Status = protocol.VerificationStatusFailed
+		result.Verification.Error = result.ErrorLog
+	} else if runCtx.Err() == context.Canceled {
+		result.Status = "cancelled"
+		if result.ErrorLog == "" {
+			result.ErrorLog = runCtx.Err().Error()
+		}
+	}
+	h.sendTaskResultWithID(messageID, result.ToProtocol(agentID, startedAt))
 }
 
 func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agentID string, policyPayload *protocol.PolicyPushPayload) {
@@ -1077,6 +1209,40 @@ func runSnapshotBrowse(ctx context.Context, cfg executor.ExecutorConfig, snapsho
 		return runner.LsSnapshot(ctx, snapshotID, path)
 	}
 	return runner.LsSnapshot(ctx, snapshotID)
+}
+
+func runBackupVerification(ctx context.Context, cfg executor.ExecutorConfig, settings protocol.BackupVerificationSettings) executor.TaskResult {
+	start := time.Now()
+	passwordFile := filepath.Join(cfg.ConfigDir, ".restic-password")
+	if cfg.PlainBackup || !executor.HasPasswordFile(passwordFile) {
+		return executor.TaskResult{
+			Type:       "verify",
+			Status:     "failed",
+			DurationMs: time.Since(start).Milliseconds(),
+			ErrorLog:   "restic backup verification requires an encrypted restic repository",
+			Verification: &protocol.BackupVerificationResult{
+				Status: protocol.VerificationStatusFailed,
+				Error:  "restic backup verification requires an encrypted restic repository",
+				Checks: []protocol.BackupVerificationCheck{{
+					Code:     "repository_type",
+					Status:   protocol.VerificationCheckStatusFailed,
+					Severity: protocol.VerificationSeverityError,
+					Message:  "repository is not a restic snapshot repository",
+				}},
+			},
+		}
+	}
+	runner := executor.ResticRunner{
+		RcloneConfPath:  filepath.Join(cfg.ConfigDir, "rclone.conf"),
+		PasswordFile:    passwordFile,
+		RepoPath:        cfg.RepoPath,
+		RcloneExtraArgs: copyStringMap(cfg.RcloneArgs),
+	}
+	return executor.RunVerificationJob(ctx, runner, executor.VerificationConfig{
+		SampleCount:          settings.SampleCount,
+		SampleRestoreEnabled: settings.SampleRestoreEnabled,
+		TempDir:              filepath.Join(cfg.ConfigDir, "verify-tmp"),
+	})
 }
 
 func (h *Handler) handleRestoreReq(msg protocol.Message) {

@@ -16,20 +16,21 @@ import (
 )
 
 type TaskResult struct {
-	Type                string                         `json:"type"`
-	Status              string                         `json:"status"`
-	DurationMs          int64                          `json:"duration_ms"`
-	SnapshotID          string                         `json:"snapshot_id,omitempty"`
-	BackupMode          string                         `json:"backup_mode,omitempty"`
-	ArchiveFormat       string                         `json:"archive_format,omitempty"`
-	ArtifactPath        string                         `json:"artifact_path,omitempty"`
-	ArtifactName        string                         `json:"artifact_name,omitempty"`
-	ArtifactSize        int64                          `json:"artifact_size,omitempty"`
-	ArtifactContentType string                         `json:"artifact_content_type,omitempty"`
-	RepoSize            int64                          `json:"repo_size,omitempty"`
-	Snapshots           []SnapshotInfo                 `json:"snapshots,omitempty"`
-	ErrorLog            string                         `json:"error_log,omitempty"`
-	Docker              *protocol.DockerBackupMetadata `json:"docker,omitempty"`
+	Type                string                             `json:"type"`
+	Status              string                             `json:"status"`
+	DurationMs          int64                              `json:"duration_ms"`
+	SnapshotID          string                             `json:"snapshot_id,omitempty"`
+	BackupMode          string                             `json:"backup_mode,omitempty"`
+	ArchiveFormat       string                             `json:"archive_format,omitempty"`
+	ArtifactPath        string                             `json:"artifact_path,omitempty"`
+	ArtifactName        string                             `json:"artifact_name,omitempty"`
+	ArtifactSize        int64                              `json:"artifact_size,omitempty"`
+	ArtifactContentType string                             `json:"artifact_content_type,omitempty"`
+	RepoSize            int64                              `json:"repo_size,omitempty"`
+	Snapshots           []SnapshotInfo                     `json:"snapshots,omitempty"`
+	ErrorLog            string                             `json:"error_log,omitempty"`
+	Docker              *protocol.DockerBackupMetadata     `json:"docker,omitempty"`
+	Verification        *protocol.BackupVerificationResult `json:"verification,omitempty"`
 }
 
 func (r TaskResult) ToProtocol(agentID string, startedAt time.Time) protocol.TaskResultPayload {
@@ -61,6 +62,7 @@ func (r TaskResult) ToProtocol(agentID string, startedAt time.Time) protocol.Tas
 		FinishedAt:          startedAt.Add(time.Duration(r.DurationMs) * time.Millisecond),
 		Snapshots:           snapshots,
 		Docker:              r.Docker,
+		Verification:        r.Verification,
 	}
 }
 

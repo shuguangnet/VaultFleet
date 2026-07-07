@@ -18,6 +18,7 @@ const (
 	TypePolicyPush           = "policy_push"
 	TypePolicyAck            = "policy_ack"
 	TypeBackupNow            = "backup_now"
+	TypeBackupVerifyReq      = "backup_verify_req"
 	TypeTaskResult           = "task_result"
 	TypeRestoreReq           = "restore_req"
 	TypeSelectiveRestoreReq  = "selective_restore_req"
@@ -48,6 +49,7 @@ const (
 	CapabilityDockerWorkloadBackups     = "docker_workload_backups"
 	CapabilityDockerContainerRestore    = "docker_container_restore"
 	CapabilityTypedBackupSources        = "typed_backup_sources"
+	CapabilityBackupVerification        = "backup_verification"
 )
 
 // DefaultAgentCapabilities returns the feature set reported by current agents.
@@ -59,6 +61,7 @@ func DefaultAgentCapabilities() []string {
 		CapabilityPolicyPlaintextRclonePass,
 		CapabilityArchiveBackup,
 		CapabilityTypedBackupSources,
+		CapabilityBackupVerification,
 	}
 }
 
@@ -149,23 +152,71 @@ type PolicyAckPayload struct {
 
 // TaskResultPayload reports completion metadata for backup, restore, or maintenance work.
 type TaskResultPayload struct {
-	AgentID             string                `json:"agent_id"`
-	TaskType            string                `json:"task_type"`
-	Status              string                `json:"status"`
-	SnapshotID          string                `json:"snapshot_id,omitempty"`
-	BackupMode          string                `json:"backup_mode,omitempty"`
-	ArchiveFormat       string                `json:"archive_format,omitempty"`
-	ArtifactPath        string                `json:"artifact_path,omitempty"`
-	ArtifactName        string                `json:"artifact_name,omitempty"`
-	ArtifactSize        int64                 `json:"artifact_size,omitempty"`
-	ArtifactContentType string                `json:"artifact_content_type,omitempty"`
-	DurationMs          int64                 `json:"duration_ms"`
-	RepoSize            int64                 `json:"repo_size"`
-	ErrorLog            string                `json:"error_log,omitempty"`
-	StartedAt           time.Time             `json:"started_at"`
-	FinishedAt          time.Time             `json:"finished_at"`
-	Snapshots           []SnapshotInfo        `json:"snapshots,omitempty"`
-	Docker              *DockerBackupMetadata `json:"docker,omitempty"`
+	AgentID             string                    `json:"agent_id"`
+	TaskType            string                    `json:"task_type"`
+	Status              string                    `json:"status"`
+	SnapshotID          string                    `json:"snapshot_id,omitempty"`
+	BackupMode          string                    `json:"backup_mode,omitempty"`
+	ArchiveFormat       string                    `json:"archive_format,omitempty"`
+	ArtifactPath        string                    `json:"artifact_path,omitempty"`
+	ArtifactName        string                    `json:"artifact_name,omitempty"`
+	ArtifactSize        int64                     `json:"artifact_size,omitempty"`
+	ArtifactContentType string                    `json:"artifact_content_type,omitempty"`
+	DurationMs          int64                     `json:"duration_ms"`
+	RepoSize            int64                     `json:"repo_size"`
+	ErrorLog            string                    `json:"error_log,omitempty"`
+	StartedAt           time.Time                 `json:"started_at"`
+	FinishedAt          time.Time                 `json:"finished_at"`
+	Snapshots           []SnapshotInfo            `json:"snapshots,omitempty"`
+	Docker              *DockerBackupMetadata     `json:"docker,omitempty"`
+	Verification        *BackupVerificationResult `json:"verification,omitempty"`
+}
+
+const (
+	VerificationStatusPassed = "passed"
+	VerificationStatusFailed = "failed"
+
+	VerificationCheckStatusPassed  = "passed"
+	VerificationCheckStatusFailed  = "failed"
+	VerificationCheckStatusSkipped = "skipped"
+
+	VerificationSeverityInfo    = "info"
+	VerificationSeverityWarning = "warning"
+	VerificationSeverityError   = "error"
+)
+
+// BackupVerificationSettings controls scheduled and manual recoverability checks.
+type BackupVerificationSettings struct {
+	Enabled              bool   `json:"enabled"`
+	Schedule             string `json:"schedule,omitempty"`
+	SampleCount          int    `json:"sample_count,omitempty"`
+	SampleRestoreEnabled bool   `json:"sample_restore_enabled,omitempty"`
+	TimeoutMinutes       int    `json:"timeout_minutes,omitempty"`
+}
+
+// BackupVerifyReqPayload requests a recoverability verification for a policy repository.
+type BackupVerifyReqPayload struct {
+	AgentID      string                      `json:"agent_id"`
+	Policy       *PolicyPushPayload          `json:"policy,omitempty"`
+	Verification *BackupVerificationSettings `json:"verification,omitempty"`
+}
+
+// BackupVerificationResult reports structured recoverability check results.
+type BackupVerificationResult struct {
+	Status     string                    `json:"status"`
+	SnapshotID string                    `json:"snapshot_id,omitempty"`
+	Checks     []BackupVerificationCheck `json:"checks"`
+	Error      string                    `json:"error,omitempty"`
+}
+
+// BackupVerificationCheck is one recoverability verification finding.
+type BackupVerificationCheck struct {
+	Code       string `json:"code"`
+	Status     string `json:"status"`
+	Severity   string `json:"severity"`
+	Message    string `json:"message"`
+	Detail     string `json:"detail,omitempty"`
+	DurationMs int64  `json:"duration_ms,omitempty"`
 }
 
 // PolicyHook defines an optional host-side command executed before or after backup.
@@ -323,19 +374,20 @@ type DirSizeRespPayload struct {
 
 // PolicyPushPayload contains the full backup policy sent from master to agent.
 type PolicyPushPayload struct {
-	AgentID         string          `json:"agent_id"`
-	Storage         StorageConfig   `json:"storage"`
-	ResticPassword  string          `json:"restic_password"`
-	PlainBackup     bool            `json:"plain_backup,omitempty"`
-	BackupMode      string          `json:"backup_mode,omitempty"`
-	ArchiveFormat   string          `json:"archive_format,omitempty"`
-	BackupDirs      []string        `json:"backup_dirs"`
-	BackupSources   []BackupSource  `json:"backup_sources,omitempty"`
-	ExcludePatterns []string        `json:"exclude_patterns"`
-	PreBackupHook   *PolicyHook     `json:"pre_backup_hook,omitempty"`
-	PostBackupHook  *PolicyHook     `json:"post_backup_hook,omitempty"`
-	Schedule        string          `json:"schedule"`
-	Retention       RetentionPolicy `json:"retention"`
+	AgentID         string                      `json:"agent_id"`
+	Storage         StorageConfig               `json:"storage"`
+	ResticPassword  string                      `json:"restic_password"`
+	PlainBackup     bool                        `json:"plain_backup,omitempty"`
+	BackupMode      string                      `json:"backup_mode,omitempty"`
+	ArchiveFormat   string                      `json:"archive_format,omitempty"`
+	BackupDirs      []string                    `json:"backup_dirs"`
+	BackupSources   []BackupSource              `json:"backup_sources,omitempty"`
+	ExcludePatterns []string                    `json:"exclude_patterns"`
+	PreBackupHook   *PolicyHook                 `json:"pre_backup_hook,omitempty"`
+	PostBackupHook  *PolicyHook                 `json:"post_backup_hook,omitempty"`
+	Schedule        string                      `json:"schedule"`
+	Retention       RetentionPolicy             `json:"retention"`
+	Verification    *BackupVerificationSettings `json:"verification,omitempty"`
 }
 
 // StorageConfig contains rclone and repository settings for a backup policy.

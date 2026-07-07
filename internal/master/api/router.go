@@ -399,6 +399,10 @@ func policyPushPayload(database *db.Database, policy db.BackupPolicy, storage db
 	if err != nil {
 		return protocol.PolicyPushPayload{}, err
 	}
+	verification, err := unmarshalPolicyVerification(policy.Verification)
+	if err != nil {
+		return protocol.PolicyPushPayload{}, err
+	}
 
 	return protocol.PolicyPushPayload{
 		AgentID: policy.AgentID,
@@ -420,6 +424,7 @@ func policyPushPayload(database *db.Database, policy db.BackupPolicy, storage db
 		PostBackupHook:  postBackupHook,
 		Schedule:        policy.Schedule,
 		Retention:       retention,
+		Verification:    verification,
 	}, nil
 }
 

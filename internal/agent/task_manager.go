@@ -9,12 +9,14 @@ import (
 const (
 	taskTypeBackup  = "backup"
 	taskTypeRestore = "restore"
+	taskTypeVerify  = "verify"
 	taskTypeQuery   = "query"
 )
 
 var (
 	errBackupAlreadyRunning  = errors.New("backup already running")
 	errRestoreAlreadyRunning = errors.New("restore already running")
+	errVerifyAlreadyRunning  = errors.New("backup verification already running")
 )
 
 type runningTask struct {
@@ -28,6 +30,7 @@ type taskManager struct {
 	tasks       map[string]*runningTask
 	backupSlot  bool
 	restoreSlot bool
+	verifySlot  bool
 }
 
 func newTaskManager() *taskManager {
@@ -40,7 +43,7 @@ func (tm *taskManager) Start(messageID string, taskType string, fn func(ctx cont
 	tm.mu.Lock()
 	switch taskType {
 	case taskTypeBackup:
-		if tm.backupSlot {
+		if tm.backupSlot || tm.verifySlot {
 			tm.mu.Unlock()
 			return errBackupAlreadyRunning
 		}
@@ -51,6 +54,12 @@ func (tm *taskManager) Start(messageID string, taskType string, fn func(ctx cont
 			return errRestoreAlreadyRunning
 		}
 		tm.restoreSlot = true
+	case taskTypeVerify:
+		if tm.backupSlot || tm.verifySlot {
+			tm.mu.Unlock()
+			return errVerifyAlreadyRunning
+		}
+		tm.verifySlot = true
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -70,6 +79,8 @@ func (tm *taskManager) Start(messageID string, taskType string, fn func(ctx cont
 				tm.backupSlot = false
 			case taskTypeRestore:
 				tm.restoreSlot = false
+			case taskTypeVerify:
+				tm.verifySlot = false
 			}
 			tm.mu.Unlock()
 		}()

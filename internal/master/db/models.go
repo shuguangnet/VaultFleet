@@ -73,6 +73,7 @@ type BackupPolicy struct {
 	Retention       string    `gorm:"type:text" json:"retention"`
 	RcloneArgs      string    `gorm:"type:text" json:"rclone_args"`
 	TimeoutHours    int       `gorm:"default:6" json:"timeout_hours"`
+	Verification    string    `gorm:"type:text" json:"verification"`
 	Synced          bool      `gorm:"default:false" json:"synced"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
@@ -129,6 +130,7 @@ type TaskHistory struct {
 	PolicyID            string     `gorm:"type:text;index" json:"policy_id,omitempty"`
 	StorageID           string     `gorm:"type:text;index" json:"storage_id,omitempty"`
 	Docker              string     `gorm:"type:text" json:"docker,omitempty"`
+	Verification        string     `gorm:"type:text" json:"verification,omitempty"`
 	StartedAt           *time.Time `json:"started_at"`
 	FinishedAt          *time.Time `json:"finished_at"`
 	DurationMs          int64      `json:"duration_ms"`

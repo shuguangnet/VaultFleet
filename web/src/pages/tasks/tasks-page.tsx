@@ -135,7 +135,7 @@ export function TasksPage() {
       title: "类型",
       dataIndex: "type",
       key: "type",
-      render: (t: string) => (t === "backup" ? "备份" : "恢复"),
+      render: (t: string) => (t === "backup" ? "备份" : t === "verify" ? "验证" : "恢复"),
     },
     {
       title: "状态",
@@ -273,6 +273,59 @@ export function TasksPage() {
         </Tooltip>
       )}
 
+      {task.verification?.checks?.length ? (
+        <div style={{ marginTop: 12 }}>
+          <Typography.Text strong style={{ fontSize: 12 }}>
+            验证检查
+          </Typography.Text>
+          <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+            {task.verification.checks.map((check) => (
+              <div
+                key={`${check.code}-${check.status}`}
+                style={{
+                  padding: "8px 10px",
+                  background: "#fff",
+                  border: "1px solid #f0f0f0",
+                  borderRadius: 6,
+                }}
+              >
+                <Space wrap>
+                  <Tag
+                    color={
+                      check.severity === "error"
+                        ? "red"
+                        : check.severity === "warning"
+                          ? "gold"
+                          : "green"
+                    }
+                  >
+                    {check.status}
+                  </Tag>
+                  <Typography.Text code style={{ fontSize: 12 }}>
+                    {check.code}
+                  </Typography.Text>
+                  <Typography.Text style={{ fontSize: 12 }}>
+                    {check.message}
+                  </Typography.Text>
+                  {check.duration_ms ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {formatDuration(check.duration_ms)}
+                    </Typography.Text>
+                  ) : null}
+                </Space>
+                {check.detail && (
+                  <div style={{ marginTop: 4 }}>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {check.detail}
+                    </Typography.Text>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {!task.error_log && task.status === "success" && (
         <div style={{ marginTop: 12 }}>
           <Typography.Text type="success" style={{ fontSize: 12 }}>
@@ -379,6 +432,7 @@ export function TasksPage() {
                 { value: "all", label: "全部类型" },
                 { value: "backup", label: "备份" },
                 { value: "restore", label: "恢复" },
+                { value: "verify", label: "验证" },
               ]}
             />
           </Col>
