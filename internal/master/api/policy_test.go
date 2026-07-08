@@ -232,6 +232,62 @@ func TestCreatePolicySupportsArchiveBackupMode(t *testing.T) {
 	assert.True(t, payload.PlainBackup)
 }
 
+func TestCreatePolicyPersistsArtifactNamingFieldsAndPushesPayload(t *testing.T) {
+	setup := setupTestPolicyAPI(t)
+	agent := createPolicyTestAgent(t, setup.database)
+	storage := createPolicyTestStorage(t, setup.database)
+
+	w := postAnyJSON(t, setup.router, "/api/policies", map[string]any{
+		"agent_id":                    agent.ID,
+		"storage_id":                  storage.ID,
+		"backup_mode":                 "archive",
+		"archive_format":              "zip",
+		"artifact_context_name":       "site-a",
+		"archive_remote_dir_template": "archives/{{agent_name}}/{{context_name}}/{{date}}",
+		"archive_name_template":       "{{context_name}}_{{datetime}}.{{ext}}",
+		"backup_dirs":                 []string{"/srv/site-a"},
+		"schedule":                    "0 3 * * *",
+		"retention":                   map[string]any{"keep_last": 3},
+	})
+
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assert.Equal(t, "site-a", body["artifact_context_name"])
+	assert.Equal(t, "archives/{{agent_name}}/{{context_name}}/{{date}}", body["archive_remote_dir_template"])
+	assert.Equal(t, "{{context_name}}_{{datetime}}.{{ext}}", body["archive_name_template"])
+
+	var stored db.BackupPolicy
+	require.NoError(t, setup.database.DB.First(&stored, "id = ?", body["id"]).Error)
+	assert.Equal(t, "site-a", stored.ArtifactContextName)
+	payload, err := policyPushPayload(setup.database, stored, storage)
+	require.NoError(t, err)
+	assert.Equal(t, stored.ID, payload.PolicyID)
+	assert.Equal(t, "site-a", payload.ArtifactContextName)
+	assert.Equal(t, "archives/{{agent_name}}/{{context_name}}/{{date}}", payload.ArchiveRemoteDirTemplate)
+	assert.Equal(t, "{{context_name}}_{{datetime}}.{{ext}}", payload.ArchiveNameTemplate)
+}
+
+func TestPreviewArtifactNaming(t *testing.T) {
+	setup := setupTestPolicyAPI(t)
+	agent := createNamedPolicyTestAgent(t, setup.database, "node hk")
+
+	w := postAnyJSON(t, setup.router, "/api/policies/artifact-naming/preview", map[string]any{
+		"agent_id":                 agent.ID,
+		"backup_mode":              "archive",
+		"archive_format":           "zip",
+		"artifact_context_name":    "site a",
+		"backup_dirs":              []string{"/srv/site-a"},
+		"use_recommended_defaults": true,
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assert.Equal(t, "site_a", body["context_name"])
+	assert.Equal(t, "path", body["source_type"])
+	assert.Contains(t, body["artifact_path"], "archives/node_hk/site_a/")
+	assert.Contains(t, body["artifact_path"], ".zip")
+}
+
 func TestCreatePolicyWithDockerBackupSources(t *testing.T) {
 	setup := setupTestPolicyAPI(t)
 	agent := createPolicyTestAgent(t, setup.database)

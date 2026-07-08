@@ -171,39 +171,49 @@ func TestDatabaseInit_AddsDockerBackupColumnsToLegacySchema(t *testing.T) {
 
 	assert.True(t, database.DB.Migrator().HasColumn(&BackupPolicy{}, "BackupSources"))
 	assert.True(t, database.DB.Migrator().HasColumn(&BackupPolicy{}, "Verification"))
+	assert.True(t, database.DB.Migrator().HasColumn(&BackupPolicy{}, "ArtifactContextName"))
+	assert.True(t, database.DB.Migrator().HasColumn(&BackupPolicy{}, "ArchiveRemoteDirTemplate"))
+	assert.True(t, database.DB.Migrator().HasColumn(&BackupPolicy{}, "ArchiveNameTemplate"))
 	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "Docker"))
 	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "Database"))
 	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "Verification"))
 	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "Manifest"))
+	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "ArtifactNaming"))
 
 	policy := BackupPolicy{
-		AgentID:         "agent-001",
-		StorageID:       "storage-001",
-		BackupDirs:      `["/etc"]`,
-		BackupSources:   `[{"type":"docker_container","docker_container":{"container_id":"container-1","include_volumes":true}}]`,
-		ExcludePatterns: `[]`,
-		Schedule:        "0 3 * * *",
-		Retention:       `{"keep_last":3}`,
+		AgentID:                  "agent-001",
+		StorageID:                "storage-001",
+		BackupDirs:               `["/etc"]`,
+		BackupSources:            `[{"type":"docker_container","docker_container":{"container_id":"container-1","include_volumes":true}}]`,
+		ExcludePatterns:          `[]`,
+		ArtifactContextName:      "site-a",
+		ArchiveRemoteDirTemplate: "archives/{{context_name}}",
+		ArchiveNameTemplate:      "{{context_name}}.tar.gz",
+		Schedule:                 "0 3 * * *",
+		Retention:                `{"keep_last":3}`,
 	}
 	require.NoError(t, database.DB.Create(&policy).Error)
 
 	history := TaskHistory{
-		AgentID:  "agent-001",
-		Type:     "backup",
-		Status:   "success",
-		Docker:   `{"warnings":["compose file missing"]}`,
-		Manifest: `{"version":1,"sources":{"paths":[{"path":"/etc","kind":"path"}]}}`,
+		AgentID:        "agent-001",
+		Type:           "backup",
+		Status:         "success",
+		Docker:         `{"warnings":["compose file missing"]}`,
+		Manifest:       `{"version":1,"sources":{"paths":[{"path":"/etc","kind":"path"}]}}`,
+		ArtifactNaming: `{"context_name":"site-a","artifact_path":"archives/site-a/site-a.tar.gz"}`,
 	}
 	require.NoError(t, database.DB.Create(&history).Error)
 
 	var storedPolicy BackupPolicy
 	require.NoError(t, database.DB.First(&storedPolicy, "id = ?", policy.ID).Error)
 	assert.JSONEq(t, policy.BackupSources, storedPolicy.BackupSources)
+	assert.Equal(t, "site-a", storedPolicy.ArtifactContextName)
 
 	var storedHistory TaskHistory
 	require.NoError(t, database.DB.First(&storedHistory, "id = ?", history.ID).Error)
 	assert.JSONEq(t, history.Docker, storedHistory.Docker)
 	assert.JSONEq(t, history.Manifest, storedHistory.Manifest)
+	assert.JSONEq(t, history.ArtifactNaming, storedHistory.ArtifactNaming)
 }
 
 func TestUserCRUD(t *testing.T) {

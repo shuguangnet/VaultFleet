@@ -12,6 +12,9 @@ export interface BackupPolicy {
   storage_id: string;
   backup_mode: BackupMode;
   archive_format?: ArchiveFormat;
+  artifact_context_name?: string;
+  archive_remote_dir_template?: string;
+  archive_name_template?: string;
   repo_path: string;
   backup_dirs: string[];
   exclude_patterns: string[];
@@ -67,6 +70,9 @@ export interface PolicyInput {
   storage_id: string;
   backup_mode: BackupMode;
   archive_format?: ArchiveFormat;
+  artifact_context_name?: string;
+  archive_remote_dir_template?: string;
+  archive_name_template?: string;
   repo_path: string;
   restic_password?: string;
   backup_dirs: string[];
@@ -79,6 +85,39 @@ export interface PolicyInput {
   timeout_hours?: number;
   backup_sources?: BackupSource[];
   verification?: BackupVerificationSettings;
+}
+
+export interface ArtifactNamingWarning {
+  code?: string;
+  message: string;
+  source?: string;
+}
+
+export interface ArtifactNamingMetadata {
+  context_name?: string;
+  site_name?: string;
+  source_type?: string;
+  remote_dir?: string;
+  artifact_name?: string;
+  artifact_path?: string;
+  remote_dir_template?: string;
+  name_template?: string;
+  variables?: Record<string, string>;
+  warnings?: ArtifactNamingWarning[];
+  legacy?: boolean;
+}
+
+export interface ArtifactNamingPreviewInput {
+  policy_id?: string;
+  agent_id: string;
+  backup_mode: BackupMode;
+  archive_format?: ArchiveFormat;
+  backup_dirs: string[];
+  backup_sources?: BackupSource[];
+  artifact_context_name?: string;
+  archive_remote_dir_template?: string;
+  archive_name_template?: string;
+  use_recommended_defaults?: boolean;
 }
 
 export interface BackupVerificationSettings {

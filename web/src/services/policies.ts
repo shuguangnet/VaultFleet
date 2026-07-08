@@ -1,4 +1,4 @@
-import { BackupPolicy, BulkAssignPolicyRequest, BulkAssignPolicyResponse, PolicyInput } from "@/types/policy";
+import { ArtifactNamingMetadata, ArtifactNamingPreviewInput, BackupPolicy, BulkAssignPolicyRequest, BulkAssignPolicyResponse, PolicyInput } from "@/types/policy";
 import { apiDelete, apiGet, apiPost, apiPut } from "./http";
 
 export const listPolicies = (agentId?: string) =>
@@ -10,3 +10,5 @@ export const deletePolicy = (id: string) => apiDelete(`/api/policies/${id}`);
 export const verifyPolicyNow = (id: string) => apiPost<{ command_id: string; message_id: string }>(`/api/policies/${id}/verify-now`, {});
 export const bulkAssignPolicy = (body: BulkAssignPolicyRequest) =>
   apiPost<BulkAssignPolicyResponse>("/api/policies/bulk-assign", body);
+export const previewArtifactNaming = (body: ArtifactNamingPreviewInput) =>
+  apiPost<ArtifactNamingMetadata>("/api/policies/artifact-naming/preview", body);

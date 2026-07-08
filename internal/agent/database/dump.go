@@ -166,7 +166,7 @@ func listDatabases(ctx context.Context, cfg Config, stageDir string, source prot
 		log(cfg.TaskLog, "error", "stderr", redactSecrets(string(stderr), source.Password))
 	}
 	if err != nil {
-		return nil, fmt.Errorf("list %s databases: %w", source.Engine, commandError(err, stderr, source.Password))
+		return nil, fmt.Errorf("list %s databases: %w", source.Engine, commandError(err, stderr, source))
 	}
 	return parseDatabaseList(stdout, source.Engine), nil
 }
@@ -185,7 +185,7 @@ func dumpSingleDatabase(ctx context.Context, cfg Config, stageDir string, source
 		log(cfg.TaskLog, "error", "stderr", redactSecrets(string(stderr), source.Password))
 	}
 	if err != nil {
-		return protocol.DatabaseDumpMetadata{}, fmt.Errorf("database dump %s: %w", dumpLabel(source), commandError(err, stderr, source.Password))
+		return protocol.DatabaseDumpMetadata{}, fmt.Errorf("database dump %s: %w", dumpLabel(source), commandError(err, stderr, source))
 	}
 	if err := writeDump(outputPath, stdout, source.Compress); err != nil {
 		return protocol.DatabaseDumpMetadata{}, fmt.Errorf("write database dump %s: %w", outputPath, err)
@@ -350,6 +350,7 @@ func buildMySQLListCommand(stageDir string, source protocol.DatabaseBackupSource
 func mysqlConnectionArgs(source protocol.DatabaseBackupSource) []string {
 	var args []string
 	if source.Host != "" {
+		args = append(args, "--protocol=tcp")
 		args = append(args, "-h", source.Host)
 	}
 	if source.Port > 0 {
@@ -537,15 +538,33 @@ func redactSecrets(text string, secrets ...string) string {
 	return text
 }
 
-func commandError(err error, stderr []byte, secrets ...string) error {
+func commandError(err error, stderr []byte, source protocol.DatabaseBackupSource) error {
 	if err == nil {
 		return nil
 	}
-	detail := strings.TrimSpace(redactSecrets(string(stderr), secrets...))
+	detail := strings.TrimSpace(redactSecrets(string(stderr), source.Password))
 	if detail == "" {
 		return err
 	}
+	if hint := databaseErrorHint(detail, source); hint != "" {
+		detail += "; " + hint
+	}
 	return fmt.Errorf("%w: %s", err, detail)
+}
+
+func databaseErrorHint(detail string, source protocol.DatabaseBackupSource) string {
+	if source.Engine != protocol.DatabaseEngineMySQL {
+		return ""
+	}
+	lower := strings.ToLower(detail)
+	if !strings.Contains(lower, "error 1045") && !strings.Contains(lower, "access denied for user") {
+		return ""
+	}
+	mode := "Agent host"
+	if source.ExecutionMode == protocol.DatabaseExecutionDocker {
+		mode = "selected Docker container"
+	}
+	return "MySQL refused the login; verify the username/password, host/port, execution mode (" + mode + "), and GRANT host allowed by MySQL for this user"
 }
 
 func log(logFn LogFunc, level string, stream string, line string) {

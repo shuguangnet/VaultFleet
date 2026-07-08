@@ -69,6 +69,7 @@ type taskResponse struct {
 	Database            *protocol.DatabaseBackupMetadata   `json:"database,omitempty"`
 	Verification        *protocol.BackupVerificationResult `json:"verification,omitempty"`
 	Manifest            *protocol.BackupContentManifest    `json:"manifest,omitempty"`
+	ArtifactNaming      *protocol.ArtifactNamingMetadata   `json:"artifact_naming,omitempty"`
 	CreatedAt           time.Time                          `json:"created_at"`
 	UpdatedAt           time.Time                          `json:"updated_at"`
 }
@@ -664,6 +665,12 @@ func newTaskResponse(history db.TaskHistory) taskResponse {
 		var manifest protocol.BackupContentManifest
 		if err := json.Unmarshal([]byte(history.Manifest), &manifest); err == nil {
 			response.Manifest = &manifest
+		}
+	}
+	if history.ArtifactNaming != "" {
+		var naming protocol.ArtifactNamingMetadata
+		if err := json.Unmarshal([]byte(history.ArtifactNaming), &naming); err == nil {
+			response.ArtifactNaming = &naming
 		}
 	}
 	return response

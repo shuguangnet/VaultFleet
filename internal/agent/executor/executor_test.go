@@ -313,6 +313,55 @@ func TestRunArchiveJobUploadsArtifactToRemote(t *testing.T) {
 	}
 }
 
+func TestRunArchiveJobUsesArtifactNamingTemplates(t *testing.T) {
+	configDir, backupDir := setupArchiveTestDirs(t)
+
+	logPath := filepath.Join(t.TempDir(), "rclone.log")
+	binDir := t.TempDir()
+	rclonePath := filepath.Join(binDir, "rclone")
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %s\nexit 0\n", shellQuoteForSh(logPath))
+	if err := os.WriteFile(rclonePath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake rclone: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	result := RunArchiveJob(context.Background(), ExecutorConfig{
+		ConfigDir:                configDir,
+		RepoPath:                 "tenant/agent-1",
+		BackupDirs:               []string{backupDir},
+		ArchiveFormat:            protocol.ArchiveFormatZip,
+		ArtifactContextName:      "site a",
+		ArchiveRemoteDirTemplate: "archives/{{agent_name}}/{{context_name}}/{{date}}",
+		ArchiveNameTemplate:      "{{context_name}}_{{datetime}}.{{ext}}",
+		ArtifactNamingContext: ArtifactNamingContext{
+			AgentName: "node hk",
+		},
+	})
+
+	if result.Status != "success" {
+		t.Fatalf("Status = %q, want success; error log: %q", result.Status, result.ErrorLog)
+	}
+	if result.ArtifactNaming == nil {
+		t.Fatal("ArtifactNaming is nil")
+	}
+	if result.ArtifactNaming.ContextName != "site_a" {
+		t.Fatalf("ContextName = %q, want site_a", result.ArtifactNaming.ContextName)
+	}
+	if !strings.HasPrefix(result.ArtifactPath, "archives/node_hk/site_a/") {
+		t.Fatalf("ArtifactPath = %q, want named archive path", result.ArtifactPath)
+	}
+	if !strings.HasSuffix(result.ArtifactName, ".zip") {
+		t.Fatalf("ArtifactName = %q, want zip", result.ArtifactName)
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read fake rclone log: %v", err)
+	}
+	if !strings.Contains(string(logged), result.ArtifactPath) {
+		t.Fatalf("rclone log = %q, want remote artifact path %q", string(logged), result.ArtifactPath)
+	}
+}
+
 func TestRunArchiveJobWritesManifestAtTarGzRoot(t *testing.T) {
 	configDir, backupDir := setupArchiveTestDirs(t)
 	setupFakeRclone(t)

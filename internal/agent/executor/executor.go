@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"vaultfleet/internal/artifactnaming"
 	"vaultfleet/pkg/protocol"
 )
 
@@ -33,6 +34,7 @@ type TaskResult struct {
 	Database            *protocol.DatabaseBackupMetadata   `json:"database,omitempty"`
 	Verification        *protocol.BackupVerificationResult `json:"verification,omitempty"`
 	Manifest            *protocol.BackupContentManifest    `json:"manifest,omitempty"`
+	ArtifactNaming      *protocol.ArtifactNamingMetadata   `json:"artifact_naming,omitempty"`
 }
 
 func (r TaskResult) ToProtocol(agentID string, startedAt time.Time) protocol.TaskResultPayload {
@@ -67,6 +69,7 @@ func (r TaskResult) ToProtocol(agentID string, startedAt time.Time) protocol.Tas
 		Database:            r.Database,
 		Verification:        r.Verification,
 		Manifest:            r.Manifest,
+		ArtifactNaming:      r.ArtifactNaming,
 	}
 }
 
@@ -76,19 +79,33 @@ type ArchiveExtraFile struct {
 }
 
 type ExecutorConfig struct {
-	ConfigDir         string
-	RepoPath          string
-	BackupDirs        []string
-	Excludes          []string
-	Retention         RetentionPolicy
-	RcloneArgs        map[string]string
-	PlainBackup       bool
-	BackupMode        string
-	ArchiveFormat     string
-	ExtraArchiveFiles []ArchiveExtraFile
-	PreBackupHook     *protocol.PolicyHook
-	PostBackupHook    *protocol.PolicyHook
-	TaskLog           TaskLogCallback
+	ConfigDir                string
+	RepoPath                 string
+	BackupDirs               []string
+	Excludes                 []string
+	Retention                RetentionPolicy
+	RcloneArgs               map[string]string
+	PlainBackup              bool
+	BackupMode               string
+	ArchiveFormat            string
+	ArtifactContextName      string
+	ArchiveRemoteDirTemplate string
+	ArchiveNameTemplate      string
+	ArtifactNamingContext    ArtifactNamingContext
+	ExtraArchiveFiles        []ArchiveExtraFile
+	PreBackupHook            *protocol.PolicyHook
+	PostBackupHook           *protocol.PolicyHook
+	TaskLog                  TaskLogCallback
+}
+
+type ArtifactNamingContext struct {
+	AgentID       string
+	AgentName     string
+	PolicyID      string
+	PolicyName    string
+	BackupSources []protocol.BackupSource
+	Docker        *protocol.DockerBackupMetadata
+	Database      *protocol.DatabaseBackupMetadata
 }
 
 type BackupProgress struct {
@@ -304,6 +321,28 @@ func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) 
 		ArchiveFormat: normalizeArchiveFormat(cfg.ArchiveFormat),
 	}
 	defer func() { result.DurationMs = time.Since(start).Milliseconds() }()
+	naming, err := artifactnaming.Render(artifactnaming.RenderInput{
+		Context: artifactnaming.Context{
+			AgentID:       cfg.ArtifactNamingContext.AgentID,
+			AgentName:     cfg.ArtifactNamingContext.AgentName,
+			PolicyID:      cfg.ArtifactNamingContext.PolicyID,
+			PolicyName:    cfg.ArtifactNamingContext.PolicyName,
+			ContextName:   cfg.ArtifactContextName,
+			ArchiveFormat: result.ArchiveFormat,
+			Now:           start.UTC(),
+			Sources:       cfg.ArtifactNamingContext.BackupSources,
+			Docker:        cfg.ArtifactNamingContext.Docker,
+			Database:      cfg.ArtifactNamingContext.Database,
+		},
+		RemoteDirTemplate: cfg.ArchiveRemoteDirTemplate,
+		NameTemplate:      cfg.ArchiveNameTemplate,
+	})
+	if err != nil {
+		emitTaskLog(cfg.TaskLog, "error", "archive", "stderr", err.Error())
+		result.ErrorLog = "archive naming: " + err.Error()
+		return result
+	}
+	result.ArtifactNaming = &naming
 
 	artifactDir := filepath.Join(cfg.ConfigDir, "artifacts")
 	emitTaskLog(cfg.TaskLog, "info", "archive", "system", "preparing archive directory")
@@ -313,7 +352,7 @@ func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) 
 		return result
 	}
 
-	artifactName := "backup-" + time.Now().UTC().Format("20060102-150405") + archiveFileSuffix(result.ArchiveFormat)
+	artifactName := naming.ArtifactName
 	artifactPath := filepath.Join(artifactDir, artifactName)
 	emitTaskLog(cfg.TaskLog, "info", "archive", "system", "writing local archive "+artifactName)
 	if err := writeArchive(artifactPath, result.ArchiveFormat, cfg.BackupDirs, cfg.Excludes, cfg.ExtraArchiveFiles); err != nil {
@@ -321,7 +360,7 @@ func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) 
 		result.ErrorLog = "archive: " + err.Error()
 		return result
 	}
-	remoteArtifactPath := filepath.ToSlash(filepath.Join("artifacts", artifactName))
+	remoteArtifactPath := naming.ArtifactPath
 	runner := PlainRunner{
 		RcloneConfPath:  filepath.Join(cfg.ConfigDir, "rclone.conf"),
 		RepoPath:        cfg.RepoPath,

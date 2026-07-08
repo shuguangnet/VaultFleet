@@ -19,6 +19,7 @@ import (
 	agentmanifest "vaultfleet/internal/agent/manifest"
 	"vaultfleet/internal/agent/policy"
 	"vaultfleet/internal/agent/scheduler"
+	"vaultfleet/internal/artifactnaming"
 	"vaultfleet/pkg/protocol"
 )
 
@@ -805,6 +806,15 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 		cfg.BackupDirs = appendUniqueStrings(cfg.BackupDirs, databaseResult.Paths...)
 		taskLogs.Info("database-dump", "prepared database dump files")
 	}
+	if strings.EqualFold(strings.TrimSpace(cfg.BackupMode), protocol.BackupModeArchive) {
+		cfg.ArtifactNamingContext = executor.ArtifactNamingContext{
+			AgentID:       resolvedPolicy.AgentID,
+			PolicyID:      resolvedPolicy.PolicyID,
+			BackupSources: append([]protocol.BackupSource(nil), resolvedPolicy.BackupSources...),
+			Docker:        dockerMetadata,
+			Database:      databaseResult.Metadata,
+		}
+	}
 	manifestDoc, manifestCleanup, err := h.prepareBackupManifest(startedAt, agentID, resolvedPolicy, cfg, dockerMetadata, databaseResult.Metadata)
 	if manifestCleanup != nil {
 		defer manifestCleanup()
@@ -829,6 +839,12 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 	}
 	if manifestDoc != nil {
 		attachArtifactToManifest(manifestDoc, result)
+		if result.ArtifactNaming != nil {
+			manifestDoc.ArtifactNaming = result.ArtifactNaming
+			manifestDoc.ContextName = result.ArtifactNaming.ContextName
+			manifestDoc.SiteName = result.ArtifactNaming.SiteName
+			manifestDoc.SourceType = result.ArtifactNaming.SourceType
+		}
 		result.Manifest = manifestDoc
 	}
 	if ctx.Err() == context.Canceled {
@@ -878,6 +894,8 @@ func (h *Handler) prepareBackupManifest(startedAt time.Time, agentID string, pol
 		Excludes:      cfg.Excludes,
 		Docker:        dockerMetadata,
 		Database:      databaseMetadata,
+		ContextName:   backupContextName(policyPayload, dockerMetadata, databaseMetadata),
+		SourceType:    artifactnaming.InferSourceType(policyPayload.BackupSources, dockerMetadata, databaseMetadata),
 	})
 	raw, err := json.MarshalIndent(manifestDoc, "", "  ")
 	if err != nil {
@@ -1199,18 +1217,39 @@ func toExecutorRetention(retention protocol.RetentionPolicy) executor.RetentionP
 
 func executorConfigForPolicy(configDir string, policyPayload *protocol.PolicyPushPayload) executor.ExecutorConfig {
 	return executor.ExecutorConfig{
-		ConfigDir:      configDir,
-		RepoPath:       policyPayload.Storage.RepoPath,
-		BackupDirs:     append([]string(nil), policyPayload.BackupDirs...),
-		Excludes:       append([]string(nil), policyPayload.ExcludePatterns...),
-		Retention:      toExecutorRetention(policyPayload.Retention),
-		RcloneArgs:     copyStringMap(policyPayload.Storage.RcloneArgs),
-		PlainBackup:    policyPayload.PlainBackup,
-		BackupMode:     policyPayload.BackupMode,
-		ArchiveFormat:  policyPayload.ArchiveFormat,
-		PreBackupHook:  clonePolicyHook(policyPayload.PreBackupHook),
-		PostBackupHook: clonePolicyHook(policyPayload.PostBackupHook),
+		ConfigDir:                configDir,
+		RepoPath:                 policyPayload.Storage.RepoPath,
+		BackupDirs:               append([]string(nil), policyPayload.BackupDirs...),
+		Excludes:                 append([]string(nil), policyPayload.ExcludePatterns...),
+		Retention:                toExecutorRetention(policyPayload.Retention),
+		RcloneArgs:               copyStringMap(policyPayload.Storage.RcloneArgs),
+		PlainBackup:              policyPayload.PlainBackup,
+		BackupMode:               policyPayload.BackupMode,
+		ArchiveFormat:            policyPayload.ArchiveFormat,
+		ArtifactContextName:      policyPayload.ArtifactContextName,
+		ArchiveRemoteDirTemplate: policyPayload.ArchiveRemoteDirTemplate,
+		ArchiveNameTemplate:      policyPayload.ArchiveNameTemplate,
+		PreBackupHook:            clonePolicyHook(policyPayload.PreBackupHook),
+		PostBackupHook:           clonePolicyHook(policyPayload.PostBackupHook),
 	}
+}
+
+func backupContextName(policyPayload *protocol.PolicyPushPayload, dockerMetadata *protocol.DockerBackupMetadata, databaseMetadata *protocol.DatabaseBackupMetadata) string {
+	if policyPayload == nil {
+		return ""
+	}
+	if strings.TrimSpace(policyPayload.ArtifactContextName) != "" {
+		return strings.TrimSpace(policyPayload.ArtifactContextName)
+	}
+	return artifactnaming.InferContextName(artifactnaming.Context{
+		AgentID:       policyPayload.AgentID,
+		PolicyID:      policyPayload.PolicyID,
+		ContextName:   policyPayload.ArtifactContextName,
+		ArchiveFormat: policyPayload.ArchiveFormat,
+		Sources:       policyPayload.BackupSources,
+		Docker:        dockerMetadata,
+		Database:      databaseMetadata,
+	})
 }
 
 func clonePolicyHook(hook *protocol.PolicyHook) *protocol.PolicyHook {

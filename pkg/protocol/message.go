@@ -188,6 +188,7 @@ type TaskResultPayload struct {
 	Database            *DatabaseBackupMetadata   `json:"database,omitempty"`
 	Verification        *BackupVerificationResult `json:"verification,omitempty"`
 	Manifest            *BackupContentManifest    `json:"manifest,omitempty"`
+	ArtifactNaming      *ArtifactNamingMetadata   `json:"artifact_naming,omitempty"`
 }
 
 const (
@@ -197,19 +198,21 @@ const (
 
 // BackupContentManifest describes the non-secret contents of one backup run.
 type BackupContentManifest struct {
-	Version         int                `json:"version"`
-	GeneratedAt     time.Time          `json:"generated_at"`
-	BackupMode      string             `json:"backup_mode,omitempty"`
-	ArchiveFormat   string             `json:"archive_format,omitempty"`
-	Agent           ManifestAgent      `json:"agent"`
-	Policy          ManifestPolicy     `json:"policy,omitempty"`
-	Sources         ManifestSources    `json:"sources"`
-	ExcludePatterns []string           `json:"exclude_patterns,omitempty"`
-	Artifact        *ManifestArtifact  `json:"artifact,omitempty"`
-	Warnings        []ManifestWarning  `json:"warnings,omitempty"`
-	ContextName     string             `json:"context_name,omitempty"`
-	SiteName        string             `json:"site_name,omitempty"`
-	Integrity       *ManifestIntegrity `json:"integrity,omitempty"`
+	Version         int                     `json:"version"`
+	GeneratedAt     time.Time               `json:"generated_at"`
+	BackupMode      string                  `json:"backup_mode,omitempty"`
+	ArchiveFormat   string                  `json:"archive_format,omitempty"`
+	Agent           ManifestAgent           `json:"agent"`
+	Policy          ManifestPolicy          `json:"policy,omitempty"`
+	Sources         ManifestSources         `json:"sources"`
+	ExcludePatterns []string                `json:"exclude_patterns,omitempty"`
+	Artifact        *ManifestArtifact       `json:"artifact,omitempty"`
+	Warnings        []ManifestWarning       `json:"warnings,omitempty"`
+	ContextName     string                  `json:"context_name,omitempty"`
+	SiteName        string                  `json:"site_name,omitempty"`
+	SourceType      string                  `json:"source_type,omitempty"`
+	ArtifactNaming  *ArtifactNamingMetadata `json:"artifact_naming,omitempty"`
+	Integrity       *ManifestIntegrity      `json:"integrity,omitempty"`
 }
 
 type ManifestAgent struct {
@@ -268,6 +271,26 @@ type ManifestArtifact struct {
 	Format      string `json:"format,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
 	Size        int64  `json:"size,omitempty"`
+}
+
+type ArtifactNamingMetadata struct {
+	ContextName       string                  `json:"context_name,omitempty"`
+	SiteName          string                  `json:"site_name,omitempty"`
+	SourceType        string                  `json:"source_type,omitempty"`
+	RemoteDir         string                  `json:"remote_dir,omitempty"`
+	ArtifactName      string                  `json:"artifact_name,omitempty"`
+	ArtifactPath      string                  `json:"artifact_path,omitempty"`
+	RemoteDirTemplate string                  `json:"remote_dir_template,omitempty"`
+	NameTemplate      string                  `json:"name_template,omitempty"`
+	Variables         map[string]string       `json:"variables,omitempty"`
+	Warnings          []ArtifactNamingWarning `json:"warnings,omitempty"`
+	Legacy            bool                    `json:"legacy,omitempty"`
+}
+
+type ArtifactNamingWarning struct {
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message"`
+	Source  string `json:"source,omitempty"`
 }
 
 type ManifestWarning struct {
@@ -546,20 +569,24 @@ type DirSizeRespPayload struct {
 
 // PolicyPushPayload contains the full backup policy sent from master to agent.
 type PolicyPushPayload struct {
-	AgentID         string                      `json:"agent_id"`
-	Storage         StorageConfig               `json:"storage"`
-	ResticPassword  string                      `json:"restic_password"`
-	PlainBackup     bool                        `json:"plain_backup,omitempty"`
-	BackupMode      string                      `json:"backup_mode,omitempty"`
-	ArchiveFormat   string                      `json:"archive_format,omitempty"`
-	BackupDirs      []string                    `json:"backup_dirs"`
-	BackupSources   []BackupSource              `json:"backup_sources,omitempty"`
-	ExcludePatterns []string                    `json:"exclude_patterns"`
-	PreBackupHook   *PolicyHook                 `json:"pre_backup_hook,omitempty"`
-	PostBackupHook  *PolicyHook                 `json:"post_backup_hook,omitempty"`
-	Schedule        string                      `json:"schedule"`
-	Retention       RetentionPolicy             `json:"retention"`
-	Verification    *BackupVerificationSettings `json:"verification,omitempty"`
+	PolicyID                 string                      `json:"policy_id,omitempty"`
+	AgentID                  string                      `json:"agent_id"`
+	Storage                  StorageConfig               `json:"storage"`
+	ResticPassword           string                      `json:"restic_password"`
+	PlainBackup              bool                        `json:"plain_backup,omitempty"`
+	BackupMode               string                      `json:"backup_mode,omitempty"`
+	ArchiveFormat            string                      `json:"archive_format,omitempty"`
+	ArtifactContextName      string                      `json:"artifact_context_name,omitempty"`
+	ArchiveRemoteDirTemplate string                      `json:"archive_remote_dir_template,omitempty"`
+	ArchiveNameTemplate      string                      `json:"archive_name_template,omitempty"`
+	BackupDirs               []string                    `json:"backup_dirs"`
+	BackupSources            []BackupSource              `json:"backup_sources,omitempty"`
+	ExcludePatterns          []string                    `json:"exclude_patterns"`
+	PreBackupHook            *PolicyHook                 `json:"pre_backup_hook,omitempty"`
+	PostBackupHook           *PolicyHook                 `json:"post_backup_hook,omitempty"`
+	Schedule                 string                      `json:"schedule"`
+	Retention                RetentionPolicy             `json:"retention"`
+	Verification             *BackupVerificationSettings `json:"verification,omitempty"`
 }
 
 // StorageConfig contains rclone and repository settings for a backup policy.

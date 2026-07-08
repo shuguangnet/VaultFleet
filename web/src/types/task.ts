@@ -36,6 +36,7 @@ export interface TaskHistory {
   database?: DatabaseBackupMetadata;
   verification?: BackupVerificationResult;
   manifest?: BackupContentManifest;
+  artifact_naming?: ArtifactNamingMetadata;
   created_at: string;
   updated_at?: string;
 }
@@ -53,7 +54,29 @@ export interface BackupContentManifest {
   warnings?: ManifestWarning[];
   context_name?: string;
   site_name?: string;
+  source_type?: string;
+  artifact_naming?: ArtifactNamingMetadata;
   integrity?: ManifestIntegrity;
+}
+
+export interface ArtifactNamingWarning {
+  code?: string;
+  message: string;
+  source?: string;
+}
+
+export interface ArtifactNamingMetadata {
+  context_name?: string;
+  site_name?: string;
+  source_type?: string;
+  remote_dir?: string;
+  artifact_name?: string;
+  artifact_path?: string;
+  remote_dir_template?: string;
+  name_template?: string;
+  variables?: Record<string, string>;
+  warnings?: ArtifactNamingWarning[];
+  legacy?: boolean;
 }
 
 export interface ManifestAgent {

@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"vaultfleet/internal/artifactnaming"
 	"vaultfleet/internal/master/db"
 	"vaultfleet/internal/master/events"
 	"vaultfleet/pkg/protocol"
@@ -38,38 +39,44 @@ func NewPolicyHandler(database *db.Database, eventBus *events.Bus) *PolicyHandle
 }
 
 type createPolicyRequest struct {
-	AgentID         string                               `json:"agent_id" binding:"required"`
-	StorageID       string                               `json:"storage_id" binding:"required"`
-	BackupMode      string                               `json:"backup_mode"`
-	ArchiveFormat   string                               `json:"archive_format"`
-	RepoPath        string                               `json:"repo_path"`
-	ResticPassword  string                               `json:"restic_password"`
-	BackupDirs      []string                             `json:"backup_dirs"`
-	BackupSources   []protocol.BackupSource              `json:"backup_sources"`
-	ExcludePatterns []string                             `json:"exclude_patterns"`
-	PreBackupHook   *policyHookInput                     `json:"pre_backup_hook"`
-	PostBackupHook  *policyHookInput                     `json:"post_backup_hook"`
-	Schedule        string                               `json:"schedule" binding:"required"`
-	Retention       map[string]any                       `json:"retention" binding:"required"`
-	RcloneArgs      map[string]string                    `json:"rclone_args"`
-	TimeoutHours    *int                                 `json:"timeout_hours"`
-	Verification    *protocol.BackupVerificationSettings `json:"verification"`
+	AgentID                  string                               `json:"agent_id" binding:"required"`
+	StorageID                string                               `json:"storage_id" binding:"required"`
+	BackupMode               string                               `json:"backup_mode"`
+	ArchiveFormat            string                               `json:"archive_format"`
+	ArtifactContextName      string                               `json:"artifact_context_name"`
+	ArchiveRemoteDirTemplate string                               `json:"archive_remote_dir_template"`
+	ArchiveNameTemplate      string                               `json:"archive_name_template"`
+	RepoPath                 string                               `json:"repo_path"`
+	ResticPassword           string                               `json:"restic_password"`
+	BackupDirs               []string                             `json:"backup_dirs"`
+	BackupSources            []protocol.BackupSource              `json:"backup_sources"`
+	ExcludePatterns          []string                             `json:"exclude_patterns"`
+	PreBackupHook            *policyHookInput                     `json:"pre_backup_hook"`
+	PostBackupHook           *policyHookInput                     `json:"post_backup_hook"`
+	Schedule                 string                               `json:"schedule" binding:"required"`
+	Retention                map[string]any                       `json:"retention" binding:"required"`
+	RcloneArgs               map[string]string                    `json:"rclone_args"`
+	TimeoutHours             *int                                 `json:"timeout_hours"`
+	Verification             *protocol.BackupVerificationSettings `json:"verification"`
 }
 
 type updatePolicyRequest struct {
-	StorageID       string                               `json:"storage_id"`
-	BackupMode      string                               `json:"backup_mode"`
-	ArchiveFormat   string                               `json:"archive_format"`
-	BackupDirs      []string                             `json:"backup_dirs"`
-	BackupSources   []protocol.BackupSource              `json:"backup_sources"`
-	ExcludePatterns []string                             `json:"exclude_patterns"`
-	PreBackupHook   *policyHookInput                     `json:"pre_backup_hook"`
-	PostBackupHook  *policyHookInput                     `json:"post_backup_hook"`
-	Schedule        string                               `json:"schedule"`
-	Retention       map[string]any                       `json:"retention"`
-	RcloneArgs      map[string]string                    `json:"rclone_args"`
-	TimeoutHours    *int                                 `json:"timeout_hours"`
-	Verification    *protocol.BackupVerificationSettings `json:"verification"`
+	StorageID                string                               `json:"storage_id"`
+	BackupMode               string                               `json:"backup_mode"`
+	ArchiveFormat            string                               `json:"archive_format"`
+	ArtifactContextName      *string                              `json:"artifact_context_name"`
+	ArchiveRemoteDirTemplate *string                              `json:"archive_remote_dir_template"`
+	ArchiveNameTemplate      *string                              `json:"archive_name_template"`
+	BackupDirs               []string                             `json:"backup_dirs"`
+	BackupSources            []protocol.BackupSource              `json:"backup_sources"`
+	ExcludePatterns          []string                             `json:"exclude_patterns"`
+	PreBackupHook            *policyHookInput                     `json:"pre_backup_hook"`
+	PostBackupHook           *policyHookInput                     `json:"post_backup_hook"`
+	Schedule                 string                               `json:"schedule"`
+	Retention                map[string]any                       `json:"retention"`
+	RcloneArgs               map[string]string                    `json:"rclone_args"`
+	TimeoutHours             *int                                 `json:"timeout_hours"`
+	Verification             *protocol.BackupVerificationSettings `json:"verification"`
 }
 
 type bulkAssignPolicyRequest struct {
@@ -78,27 +85,43 @@ type bulkAssignPolicyRequest struct {
 	TargetTags     []string `json:"target_tags"`
 }
 
+type artifactNamingPreviewRequest struct {
+	PolicyID                 string                  `json:"policy_id"`
+	AgentID                  string                  `json:"agent_id" binding:"required"`
+	BackupMode               string                  `json:"backup_mode"`
+	ArchiveFormat            string                  `json:"archive_format"`
+	BackupDirs               []string                `json:"backup_dirs"`
+	BackupSources            []protocol.BackupSource `json:"backup_sources"`
+	ArtifactContextName      string                  `json:"artifact_context_name"`
+	ArchiveRemoteDirTemplate string                  `json:"archive_remote_dir_template"`
+	ArchiveNameTemplate      string                  `json:"archive_name_template"`
+	UseRecommendedDefaults   bool                    `json:"use_recommended_defaults"`
+}
+
 type policyResponse struct {
-	ID                 string                               `json:"id"`
-	AgentID            string                               `json:"agent_id"`
-	StorageID          string                               `json:"storage_id"`
-	BackupMode         string                               `json:"backup_mode"`
-	ArchiveFormat      string                               `json:"archive_format,omitempty"`
-	RepoPath           string                               `json:"repo_path"`
-	BackupDirs         []string                             `json:"backup_dirs"`
-	BackupSources      []protocol.BackupSource              `json:"backup_sources"`
-	ExcludePatterns    []string                             `json:"exclude_patterns"`
-	PreBackupHook      *policyHookInput                     `json:"pre_backup_hook,omitempty"`
-	PostBackupHook     *policyHookInput                     `json:"post_backup_hook,omitempty"`
-	Schedule           string                               `json:"schedule"`
-	Retention          map[string]any                       `json:"retention"`
-	RcloneArgs         map[string]string                    `json:"rclone_args"`
-	TimeoutHours       int                                  `json:"timeout_hours"`
-	Verification       *protocol.BackupVerificationSettings `json:"verification,omitempty"`
-	LatestVerification *policyVerificationSummary           `json:"latest_verification,omitempty"`
-	Synced             bool                                 `json:"synced"`
-	CreatedAt          time.Time                            `json:"created_at"`
-	UpdatedAt          time.Time                            `json:"updated_at"`
+	ID                       string                               `json:"id"`
+	AgentID                  string                               `json:"agent_id"`
+	StorageID                string                               `json:"storage_id"`
+	BackupMode               string                               `json:"backup_mode"`
+	ArchiveFormat            string                               `json:"archive_format,omitempty"`
+	ArtifactContextName      string                               `json:"artifact_context_name,omitempty"`
+	ArchiveRemoteDirTemplate string                               `json:"archive_remote_dir_template,omitempty"`
+	ArchiveNameTemplate      string                               `json:"archive_name_template,omitempty"`
+	RepoPath                 string                               `json:"repo_path"`
+	BackupDirs               []string                             `json:"backup_dirs"`
+	BackupSources            []protocol.BackupSource              `json:"backup_sources"`
+	ExcludePatterns          []string                             `json:"exclude_patterns"`
+	PreBackupHook            *policyHookInput                     `json:"pre_backup_hook,omitempty"`
+	PostBackupHook           *policyHookInput                     `json:"post_backup_hook,omitempty"`
+	Schedule                 string                               `json:"schedule"`
+	Retention                map[string]any                       `json:"retention"`
+	RcloneArgs               map[string]string                    `json:"rclone_args"`
+	TimeoutHours             int                                  `json:"timeout_hours"`
+	Verification             *protocol.BackupVerificationSettings `json:"verification,omitempty"`
+	LatestVerification       *policyVerificationSummary           `json:"latest_verification,omitempty"`
+	Synced                   bool                                 `json:"synced"`
+	CreatedAt                time.Time                            `json:"created_at"`
+	UpdatedAt                time.Time                            `json:"updated_at"`
 }
 
 type policyVerificationSummary struct {
@@ -138,9 +161,58 @@ func RegisterPolicyRoutes(rg *gin.RouterGroup, h *PolicyHandler) {
 	rg.POST("/policies", h.CreatePolicy)
 	rg.GET("/policies", h.ListPolicies)
 	rg.POST("/policies/bulk-assign", h.BulkAssignPolicies)
+	rg.POST("/policies/artifact-naming/preview", h.PreviewArtifactNaming)
 	rg.GET("/policies/:id", h.GetPolicy)
 	rg.PUT("/policies/:id", h.UpdatePolicy)
 	rg.DELETE("/policies/:id", h.DeletePolicy)
+}
+
+func (h *PolicyHandler) PreviewArtifactNaming(c *gin.Context) {
+	var request artifactNamingPreviewRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	if !h.agentExists(c, request.AgentID) {
+		return
+	}
+	_, normalizedSources, ok := h.normalizePolicySources(c, request.AgentID, request.BackupDirs, request.BackupSources)
+	if !ok {
+		return
+	}
+	agentName := h.agentName(request.AgentID)
+	result, err := artifactnaming.Render(artifactnaming.RenderInput{
+		Context: artifactnaming.Context{
+			AgentID:       request.AgentID,
+			AgentName:     agentName,
+			PolicyID:      request.PolicyID,
+			PolicyName:    request.PolicyID,
+			ContextName:   strings.TrimSpace(request.ArtifactContextName),
+			ArchiveFormat: normalizeArchiveFormat(request.ArchiveFormat),
+			Now:           time.Now().UTC(),
+			Sources:       normalizedSources,
+		},
+		RemoteDirTemplate:      request.ArchiveRemoteDirTemplate,
+		NameTemplate:           request.ArchiveNameTemplate,
+		UseRecommendedDefaults: request.UseRecommendedDefaults,
+	})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if strings.Contains(request.ArchiveRemoteDirTemplate, "container_") ||
+		strings.Contains(request.ArchiveNameTemplate, "container_") ||
+		strings.Contains(request.ArchiveRemoteDirTemplate, "compose_") ||
+		strings.Contains(request.ArchiveNameTemplate, "compose_") ||
+		strings.Contains(request.ArchiveRemoteDirTemplate, "database_") ||
+		strings.Contains(request.ArchiveNameTemplate, "database_") {
+		result.Warnings = append(result.Warnings, protocol.ArtifactNamingWarning{
+			Code:    "runtime_values_may_change",
+			Message: "Some source-derived variables may be filled or changed by Agent runtime metadata.",
+			Source:  "artifact_naming",
+		})
+	}
+	writeDataResponse(c, http.StatusOK, result)
 }
 
 func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
@@ -201,6 +273,20 @@ func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
 		return
 	}
 	backupMode := normalizeBackupMode(request.BackupMode)
+	archiveFormat := normalizeArchiveFormat(request.ArchiveFormat)
+	artifactContextName, archiveRemoteDirTemplate, archiveNameTemplate, ok := h.validateArtifactNaming(c, artifactNamingValidationInput{
+		AgentID:           request.AgentID,
+		BackupMode:        backupMode,
+		ArchiveFormat:     archiveFormat,
+		BackupDirs:        normalizedDirs,
+		BackupSources:     normalizedSources,
+		ContextName:       request.ArtifactContextName,
+		RemoteDirTemplate: request.ArchiveRemoteDirTemplate,
+		NameTemplate:      request.ArchiveNameTemplate,
+	})
+	if !ok {
+		return
+	}
 	verification, ok := validatePolicyVerification(c, backupMode, request.Verification)
 	if !ok {
 		return
@@ -227,23 +313,26 @@ func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
 	}
 
 	policy := db.BackupPolicy{
-		AgentID:         request.AgentID,
-		StorageID:       request.StorageID,
-		BackupMode:      backupMode,
-		ArchiveFormat:   normalizeArchiveFormat(request.ArchiveFormat),
-		RepoPath:        repoPath,
-		ResticPassword:  encryptedPassword,
-		BackupDirs:      backupDirs,
-		BackupSources:   backupSources,
-		ExcludePatterns: excludePatterns,
-		PreBackupHook:   preBackupHookRaw,
-		PostBackupHook:  postBackupHookRaw,
-		Schedule:        request.Schedule,
-		Retention:       retention,
-		RcloneArgs:      rcloneArgs,
-		TimeoutHours:    timeoutHours,
-		Verification:    verificationRaw,
-		Synced:          false,
+		AgentID:                  request.AgentID,
+		StorageID:                request.StorageID,
+		BackupMode:               backupMode,
+		ArchiveFormat:            archiveFormat,
+		ArtifactContextName:      artifactContextName,
+		ArchiveRemoteDirTemplate: archiveRemoteDirTemplate,
+		ArchiveNameTemplate:      archiveNameTemplate,
+		RepoPath:                 repoPath,
+		ResticPassword:           encryptedPassword,
+		BackupDirs:               backupDirs,
+		BackupSources:            backupSources,
+		ExcludePatterns:          excludePatterns,
+		PreBackupHook:            preBackupHookRaw,
+		PostBackupHook:           postBackupHookRaw,
+		Schedule:                 request.Schedule,
+		Retention:                retention,
+		RcloneArgs:               rcloneArgs,
+		TimeoutHours:             timeoutHours,
+		Verification:             verificationRaw,
+		Synced:                   false,
 	}
 
 	if err := h.DB.DB.Create(&policy).Error; err != nil {
@@ -424,23 +513,26 @@ func (h *PolicyHandler) ListPolicies(c *gin.Context) {
 
 func clonePolicyForAgent(source db.BackupPolicy, agentID string) db.BackupPolicy {
 	return db.BackupPolicy{
-		AgentID:         agentID,
-		StorageID:       source.StorageID,
-		BackupMode:      normalizeBackupMode(source.BackupMode),
-		ArchiveFormat:   normalizeArchiveFormat(source.ArchiveFormat),
-		RepoPath:        "vaultfleet/" + agentID,
-		ResticPassword:  source.ResticPassword,
-		BackupDirs:      source.BackupDirs,
-		BackupSources:   source.BackupSources,
-		ExcludePatterns: source.ExcludePatterns,
-		PreBackupHook:   source.PreBackupHook,
-		PostBackupHook:  source.PostBackupHook,
-		Schedule:        source.Schedule,
-		Retention:       source.Retention,
-		RcloneArgs:      source.RcloneArgs,
-		TimeoutHours:    normalizedPolicyTimeoutHours(source.TimeoutHours),
-		Verification:    source.Verification,
-		Synced:          false,
+		AgentID:                  agentID,
+		StorageID:                source.StorageID,
+		BackupMode:               normalizeBackupMode(source.BackupMode),
+		ArchiveFormat:            normalizeArchiveFormat(source.ArchiveFormat),
+		ArtifactContextName:      source.ArtifactContextName,
+		ArchiveRemoteDirTemplate: source.ArchiveRemoteDirTemplate,
+		ArchiveNameTemplate:      source.ArchiveNameTemplate,
+		RepoPath:                 "vaultfleet/" + agentID,
+		ResticPassword:           source.ResticPassword,
+		BackupDirs:               source.BackupDirs,
+		BackupSources:            source.BackupSources,
+		ExcludePatterns:          source.ExcludePatterns,
+		PreBackupHook:            source.PreBackupHook,
+		PostBackupHook:           source.PostBackupHook,
+		Schedule:                 source.Schedule,
+		Retention:                source.Retention,
+		RcloneArgs:               source.RcloneArgs,
+		TimeoutHours:             normalizedPolicyTimeoutHours(source.TimeoutHours),
+		Verification:             source.Verification,
+		Synced:                   false,
 	}
 }
 
@@ -531,6 +623,15 @@ func (h *PolicyHandler) UpdatePolicy(c *gin.Context) {
 		policy.BackupDirs = backupDirs
 		policy.BackupSources = backupSources
 	}
+	if request.ArtifactContextName != nil {
+		policy.ArtifactContextName = strings.TrimSpace(*request.ArtifactContextName)
+	}
+	if request.ArchiveRemoteDirTemplate != nil {
+		policy.ArchiveRemoteDirTemplate = strings.TrimSpace(*request.ArchiveRemoteDirTemplate)
+	}
+	if request.ArchiveNameTemplate != nil {
+		policy.ArchiveNameTemplate = strings.TrimSpace(*request.ArchiveNameTemplate)
+	}
 	if request.ExcludePatterns != nil {
 		excludePatterns, ok := marshalPolicyJSON(c, request.ExcludePatterns)
 		if !ok {
@@ -610,6 +711,33 @@ func (h *PolicyHandler) UpdatePolicy(c *gin.Context) {
 			return
 		}
 	}
+	currentDirs, err := policyBackupDirs(policy)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "decode policy"})
+		return
+	}
+	currentSources, err := policyBackupSources(policy)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "decode policy"})
+		return
+	}
+	artifactContextName, archiveRemoteDirTemplate, archiveNameTemplate, ok := h.validateArtifactNaming(c, artifactNamingValidationInput{
+		AgentID:           policy.AgentID,
+		PolicyID:          policy.ID,
+		BackupMode:        normalizeBackupMode(policy.BackupMode),
+		ArchiveFormat:     normalizeArchiveFormat(policy.ArchiveFormat),
+		BackupDirs:        currentDirs,
+		BackupSources:     currentSources,
+		ContextName:       policy.ArtifactContextName,
+		RemoteDirTemplate: policy.ArchiveRemoteDirTemplate,
+		NameTemplate:      policy.ArchiveNameTemplate,
+	})
+	if !ok {
+		return
+	}
+	policy.ArtifactContextName = artifactContextName
+	policy.ArchiveRemoteDirTemplate = archiveRemoteDirTemplate
+	policy.ArchiveNameTemplate = archiveNameTemplate
 
 	policy.Synced = false
 	if err := h.DB.DB.Save(&policy).Error; err != nil {
@@ -723,6 +851,73 @@ func (h *PolicyHandler) latestPolicyVerification(policyID string) *policyVerific
 	}
 }
 
+type artifactNamingValidationInput struct {
+	AgentID           string
+	PolicyID          string
+	BackupMode        string
+	ArchiveFormat     string
+	BackupDirs        []string
+	BackupSources     []protocol.BackupSource
+	ContextName       string
+	RemoteDirTemplate string
+	NameTemplate      string
+}
+
+func (h *PolicyHandler) validateArtifactNaming(c *gin.Context, input artifactNamingValidationInput) (string, string, string, bool) {
+	contextName := strings.TrimSpace(input.ContextName)
+	remoteDirTemplate := strings.TrimSpace(input.RemoteDirTemplate)
+	nameTemplate := strings.TrimSpace(input.NameTemplate)
+	if contextName == "" && remoteDirTemplate == "" && nameTemplate == "" {
+		return "", "", "", true
+	}
+	sources := append([]protocol.BackupSource(nil), input.BackupSources...)
+	if len(sources) == 0 {
+		for _, dir := range input.BackupDirs {
+			sources = append(sources, protocol.BackupSource{Type: protocol.BackupSourceTypePath, Path: dir})
+		}
+	}
+	agentName := h.agentName(input.AgentID)
+	_, err := artifactnaming.Render(artifactnaming.RenderInput{
+		Context: artifactnaming.Context{
+			AgentID:       input.AgentID,
+			AgentName:     agentName,
+			PolicyID:      firstPolicyNamingValue(input.PolicyID, "policy"),
+			PolicyName:    firstPolicyNamingValue(input.PolicyID, "policy"),
+			ContextName:   firstPolicyNamingValue(contextName, "context"),
+			ArchiveFormat: input.ArchiveFormat,
+			Now:           time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+			Sources:       sources,
+		},
+		RemoteDirTemplate: remoteDirTemplate,
+		NameTemplate:      nameTemplate,
+	})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return "", "", "", false
+	}
+	return contextName, remoteDirTemplate, nameTemplate, true
+}
+
+func (h *PolicyHandler) agentName(agentID string) string {
+	if h == nil || h.DB == nil || h.DB.DB == nil || strings.TrimSpace(agentID) == "" {
+		return ""
+	}
+	var agent db.Agent
+	if err := h.DB.DB.Select("name").First(&agent, "id = ?", agentID).Error; err != nil {
+		return ""
+	}
+	return agent.Name
+}
+
+func firstPolicyNamingValue(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 func (h *PolicyHandler) publishPolicyChanged(agentID string, action string) {
 	if h.EventBus == nil {
 		return
@@ -777,25 +972,28 @@ func newPolicyResponse(policy db.BackupPolicy) (policyResponse, error) {
 	}
 
 	return policyResponse{
-		ID:              policy.ID,
-		AgentID:         policy.AgentID,
-		StorageID:       policy.StorageID,
-		BackupMode:      normalizeBackupMode(policy.BackupMode),
-		ArchiveFormat:   normalizeArchiveFormat(policy.ArchiveFormat),
-		RepoPath:        policy.RepoPath,
-		BackupDirs:      backupDirs,
-		BackupSources:   redactDatabaseBackupSourceSecrets(backupSources),
-		ExcludePatterns: excludePatterns,
-		PreBackupHook:   preBackupHook,
-		PostBackupHook:  postBackupHook,
-		Schedule:        policy.Schedule,
-		Retention:       retention,
-		RcloneArgs:      rcloneArgs,
-		TimeoutHours:    normalizedPolicyTimeoutHours(policy.TimeoutHours),
-		Verification:    verification,
-		Synced:          policy.Synced,
-		CreatedAt:       policy.CreatedAt,
-		UpdatedAt:       policy.UpdatedAt,
+		ID:                       policy.ID,
+		AgentID:                  policy.AgentID,
+		StorageID:                policy.StorageID,
+		BackupMode:               normalizeBackupMode(policy.BackupMode),
+		ArchiveFormat:            normalizeArchiveFormat(policy.ArchiveFormat),
+		ArtifactContextName:      policy.ArtifactContextName,
+		ArchiveRemoteDirTemplate: policy.ArchiveRemoteDirTemplate,
+		ArchiveNameTemplate:      policy.ArchiveNameTemplate,
+		RepoPath:                 policy.RepoPath,
+		BackupDirs:               backupDirs,
+		BackupSources:            redactDatabaseBackupSourceSecrets(backupSources),
+		ExcludePatterns:          excludePatterns,
+		PreBackupHook:            preBackupHook,
+		PostBackupHook:           postBackupHook,
+		Schedule:                 policy.Schedule,
+		Retention:                retention,
+		RcloneArgs:               rcloneArgs,
+		TimeoutHours:             normalizedPolicyTimeoutHours(policy.TimeoutHours),
+		Verification:             verification,
+		Synced:                   policy.Synced,
+		CreatedAt:                policy.CreatedAt,
+		UpdatedAt:                policy.UpdatedAt,
 	}, nil
 }
 

@@ -141,6 +141,33 @@ func TestPrepareMySQLDockerAllDatabasesSplitsDumpFiles(t *testing.T) {
 	assert.Equal(t, "mysql", result.Metadata.Dumps[0].ContainerName)
 }
 
+func TestPrepareMySQLHostUsesTCPWhenHostIsSet(t *testing.T) {
+	var command string
+	result, cleanup, err := Prepare(context.Background(), Config{
+		ConfigDir: t.TempDir(),
+		Sources: []protocol.BackupSource{{
+			Type: protocol.BackupSourceTypeDatabase,
+			Database: &protocol.DatabaseBackupSource{
+				Engine:        protocol.DatabaseEngineMySQL,
+				ExecutionMode: protocol.DatabaseExecutionHost,
+				Host:          "localhost",
+				Port:          3306,
+				Username:      "root",
+				Password:      "secret",
+				Database:      "app",
+			},
+		}},
+		Runner: func(_ context.Context, _ []string, name string, args ...string) ([]byte, []byte, error) {
+			command = name + " " + strings.Join(args, " ")
+			return []byte("SQL"), nil, nil
+		},
+	})
+	require.NoError(t, err)
+	defer cleanup()
+
+	assert.Equal(t, "mysqldump --defaults-extra-file="+result.Paths[0][:strings.LastIndex(result.Paths[0], "/")]+"/.mysql-root.cnf --protocol=tcp -h localhost -P 3306 -u root app", command)
+}
+
 func TestPrepareRedactsSecretFromStderr(t *testing.T) {
 	var lines []string
 	_, _, err := Prepare(context.Background(), Config{
@@ -184,6 +211,7 @@ func TestListMySQLDatabasesReturnsRedactedStderr(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "list mysql databases: exit status 1")
 	assert.Contains(t, err.Error(), "Access denied")
+	assert.Contains(t, err.Error(), "MySQL refused the login")
 	assert.NotContains(t, err.Error(), "plain-secret")
 	assert.Contains(t, err.Error(), redact.Placeholder)
 }

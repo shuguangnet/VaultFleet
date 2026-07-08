@@ -110,26 +110,29 @@ func (s *StorageConfig) BeforeCreate(tx *gorm.DB) error {
 }
 
 type BackupPolicy struct {
-	ID              string    `gorm:"type:text;primaryKey" json:"id"`
-	AgentID         string    `gorm:"type:text;index;not null" json:"agent_id"`
-	StorageID       string    `gorm:"type:text;not null" json:"storage_id"`
-	BackupMode      string    `gorm:"type:text;default:snapshot" json:"backup_mode"`
-	ArchiveFormat   string    `gorm:"type:text" json:"archive_format"`
-	RepoPath        string    `gorm:"type:text" json:"repo_path"`
-	ResticPassword  string    `gorm:"type:text" json:"-"`
-	BackupDirs      string    `gorm:"type:text" json:"backup_dirs"`
-	BackupSources   string    `gorm:"type:text" json:"backup_sources"`
-	ExcludePatterns string    `gorm:"type:text" json:"exclude_patterns"`
-	PreBackupHook   string    `gorm:"type:text" json:"pre_backup_hook"`
-	PostBackupHook  string    `gorm:"type:text" json:"post_backup_hook"`
-	Schedule        string    `gorm:"type:text" json:"schedule"`
-	Retention       string    `gorm:"type:text" json:"retention"`
-	RcloneArgs      string    `gorm:"type:text" json:"rclone_args"`
-	TimeoutHours    int       `gorm:"default:6" json:"timeout_hours"`
-	Verification    string    `gorm:"type:text" json:"verification"`
-	Synced          bool      `gorm:"default:false" json:"synced"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID                       string    `gorm:"type:text;primaryKey" json:"id"`
+	AgentID                  string    `gorm:"type:text;index;not null" json:"agent_id"`
+	StorageID                string    `gorm:"type:text;not null" json:"storage_id"`
+	BackupMode               string    `gorm:"type:text;default:snapshot" json:"backup_mode"`
+	ArchiveFormat            string    `gorm:"type:text" json:"archive_format"`
+	ArtifactContextName      string    `gorm:"type:text" json:"artifact_context_name"`
+	ArchiveRemoteDirTemplate string    `gorm:"type:text" json:"archive_remote_dir_template"`
+	ArchiveNameTemplate      string    `gorm:"type:text" json:"archive_name_template"`
+	RepoPath                 string    `gorm:"type:text" json:"repo_path"`
+	ResticPassword           string    `gorm:"type:text" json:"-"`
+	BackupDirs               string    `gorm:"type:text" json:"backup_dirs"`
+	BackupSources            string    `gorm:"type:text" json:"backup_sources"`
+	ExcludePatterns          string    `gorm:"type:text" json:"exclude_patterns"`
+	PreBackupHook            string    `gorm:"type:text" json:"pre_backup_hook"`
+	PostBackupHook           string    `gorm:"type:text" json:"post_backup_hook"`
+	Schedule                 string    `gorm:"type:text" json:"schedule"`
+	Retention                string    `gorm:"type:text" json:"retention"`
+	RcloneArgs               string    `gorm:"type:text" json:"rclone_args"`
+	TimeoutHours             int       `gorm:"default:6" json:"timeout_hours"`
+	Verification             string    `gorm:"type:text" json:"verification"`
+	Synced                   bool      `gorm:"default:false" json:"synced"`
+	CreatedAt                time.Time `json:"created_at"`
+	UpdatedAt                time.Time `json:"updated_at"`
 }
 
 func (b *BackupPolicy) BeforeCreate(tx *gorm.DB) error {
@@ -186,6 +189,7 @@ type TaskHistory struct {
 	Database            string     `gorm:"type:text" json:"database,omitempty"`
 	Verification        string     `gorm:"type:text" json:"verification,omitempty"`
 	Manifest            string     `gorm:"type:text" json:"manifest,omitempty"`
+	ArtifactNaming      string     `gorm:"type:text" json:"artifact_naming,omitempty"`
 	StartedAt           *time.Time `json:"started_at"`
 	FinishedAt          *time.Time `json:"finished_at"`
 	DurationMs          int64      `json:"duration_ms"`

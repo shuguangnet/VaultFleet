@@ -537,6 +537,10 @@ func createTaskHistory(gormDB *gorm.DB, agentID string, messageID string, result
 	if err != nil {
 		return err
 	}
+	rawArtifactNaming, err := marshalArtifactNamingMetadata(result.ArtifactNaming)
+	if err != nil {
+		return err
+	}
 	history := db.TaskHistory{
 		AgentID:             agentID,
 		Type:                result.TaskType,
@@ -553,6 +557,7 @@ func createTaskHistory(gormDB *gorm.DB, agentID string, messageID string, result
 		Database:            rawDatabase,
 		Verification:        rawVerification,
 		Manifest:            rawManifest,
+		ArtifactNaming:      rawArtifactNaming,
 		StartedAt:           &startedAt,
 		FinishedAt:          &finishedAt,
 		DurationMs:          result.DurationMs,
@@ -586,6 +591,17 @@ func marshalBackupContentManifest(manifest *protocol.BackupContentManifest) (str
 	raw, err := json.Marshal(manifest)
 	if err != nil {
 		return "", fmt.Errorf("marshal backup content manifest: %w", err)
+	}
+	return string(raw), nil
+}
+
+func marshalArtifactNamingMetadata(metadata *protocol.ArtifactNamingMetadata) (string, error) {
+	if metadata == nil {
+		return "", nil
+	}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		return "", fmt.Errorf("marshal artifact naming metadata: %w", err)
 	}
 	return string(raw), nil
 }

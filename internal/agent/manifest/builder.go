@@ -20,6 +20,8 @@ type BuildInput struct {
 	Excludes      []string
 	Docker        *protocol.DockerBackupMetadata
 	Database      *protocol.DatabaseBackupMetadata
+	ContextName   string
+	SourceType    string
 	Warnings      []protocol.ManifestWarning
 }
 
@@ -55,6 +57,9 @@ func Build(input BuildInput) *protocol.BackupContentManifest {
 		Sources:         protocol.ManifestSources{},
 		ExcludePatterns: cleanedStrings(input.Excludes),
 		Warnings:        append([]protocol.ManifestWarning(nil), input.Warnings...),
+		ContextName:     strings.TrimSpace(input.ContextName),
+		SiteName:        strings.TrimSpace(input.ContextName),
+		SourceType:      strings.TrimSpace(input.SourceType),
 	}
 
 	databasePaths := databaseOutputPaths(input.Database)

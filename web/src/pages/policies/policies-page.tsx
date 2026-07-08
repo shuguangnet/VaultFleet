@@ -50,6 +50,7 @@ import {
   deletePolicy,
   bulkAssignPolicy,
   listPolicies,
+  previewArtifactNaming,
   updatePolicy,
   verifyPolicyNow,
 } from "@/services/policies";
@@ -446,6 +447,9 @@ export function PoliciesPage() {
       storage_id: policy.storage_id,
       backup_mode: policy.backup_mode ?? "snapshot",
       archive_format: policy.archive_format ?? "tar.gz",
+      artifact_context_name: policy.artifact_context_name ?? "",
+      archive_remote_dir_template: policy.archive_remote_dir_template ?? "",
+      archive_name_template: policy.archive_name_template ?? "",
       repo_path: repoSuffix,
       backup_dirs: policy.backup_dirs,
       exclude_patterns: policy.exclude_patterns,
@@ -546,12 +550,46 @@ export function PoliciesPage() {
       .filter((s): s is DockerContainerBackupSource => !!s)
       .map(dockerSourceKey)
   );
-
   const dockerDiscoveryQuery = useQuery({
     queryKey: ["agent-docker", formData.agent_id],
     queryFn: () => discoverDockerAgent(formData.agent_id),
     enabled: drawerOpen && !!formData.agent_id && isAgentOnline && dockerCapable,
   });
+
+  const artifactNamingPreviewQuery = useQuery({
+    queryKey: [
+      "artifact-naming-preview",
+      editingId,
+      formData.agent_id,
+      formData.backup_mode,
+      formData.archive_format,
+      formData.artifact_context_name,
+      formData.archive_remote_dir_template,
+      formData.archive_name_template,
+      JSON.stringify(formData.backup_dirs),
+      JSON.stringify(formData.backup_sources ?? []),
+    ],
+    queryFn: () =>
+      previewArtifactNaming({
+        policy_id: editingId ?? undefined,
+        agent_id: formData.agent_id,
+        backup_mode: formData.backup_mode,
+        archive_format: formData.archive_format,
+        backup_dirs: formData.backup_dirs,
+        backup_sources: buildBackupSources(formData),
+        artifact_context_name: formData.artifact_context_name,
+        archive_remote_dir_template: formData.archive_remote_dir_template,
+        archive_name_template: formData.archive_name_template,
+        use_recommended_defaults:
+          formData.backup_mode === "archive" &&
+          !formData.archive_remote_dir_template &&
+          !formData.archive_name_template &&
+          !editingId,
+      }),
+    enabled: drawerOpen && !!formData.agent_id,
+    retry: false,
+  });
+  const artifactNamingPreview = artifactNamingPreviewQuery.data;
 
   const setDatabaseSources = (databaseSources: BackupSource[]) => {
     setFormData({
@@ -581,6 +619,10 @@ export function PoliciesPage() {
     }
     if (!source.username?.trim()) {
       message.warning("请先填写数据库用户");
+      return;
+    }
+    if (source.password_set && !source.password?.trim()) {
+      message.warning("加载数据库列表需要重新输入数据库密码；保存策略时留空才会沿用已保存密码");
       return;
     }
     if (source.execution_mode === "docker" && !source.docker_container) {
@@ -1022,6 +1064,113 @@ export function PoliciesPage() {
 
           <div
             style={{
+              border: "1px solid #f0f0f0",
+              borderRadius: 6,
+              padding: 12,
+            }}
+          >
+            <Typography.Text strong>备份产物命名</Typography.Text>
+            <Row gutter={[8, 8]} style={{ marginTop: 8 }}>
+              <Col xs={24}>
+                <label htmlFor="artifact-context-name" style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>业务 / 站点名称</label>
+                <Input
+                  id="artifact-context-name"
+                  value={formData.artifact_context_name}
+                  placeholder={artifactNamingPreview?.context_name || "自动推断"}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      artifact_context_name: e.target.value,
+                    })
+                  }
+                />
+              </Col>
+              {formData.backup_mode === "archive" && (
+                <>
+                  <Col xs={24}>
+                    <label htmlFor="archive-remote-dir-template" style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>远端目录模板</label>
+                    <Input
+                      id="archive-remote-dir-template"
+                      value={formData.archive_remote_dir_template}
+                      placeholder="archives/{{agent_name}}/{{context_name}}/{{date}}"
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          archive_remote_dir_template: e.target.value,
+                        })
+                      }
+                    />
+                  </Col>
+                  <Col xs={24}>
+                    <label htmlFor="archive-name-template" style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>压缩包文件名模板</label>
+                    <Input
+                      id="archive-name-template"
+                      value={formData.archive_name_template}
+                      placeholder="{{context_name}}_{{agent_name}}_{{datetime}}.{{ext}}"
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          archive_name_template: e.target.value,
+                        })
+                      }
+                    />
+                  </Col>
+                  <Col xs={24}>
+                    <Space wrap>
+                      <Button
+                        size="small"
+                        onClick={() =>
+                          setFormData({
+                            ...formData,
+                            archive_remote_dir_template: "archives/{{agent_name}}/{{context_name}}/{{date}}",
+                            archive_name_template: "{{context_name}}_{{agent_name}}_{{datetime}}.{{ext}}",
+                          })
+                        }
+                      >
+                        可读默认
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={() =>
+                          setFormData({
+                            ...formData,
+                            archive_remote_dir_template: "",
+                            archive_name_template: "",
+                          })
+                        }
+                      >
+                        旧版默认
+                      </Button>
+                    </Space>
+                  </Col>
+                </>
+              )}
+            </Row>
+            {artifactNamingPreviewQuery.isError ? (
+              <Typography.Text type="danger" style={{ fontSize: 12 }}>
+                {(artifactNamingPreviewQuery.error as Error).message}
+              </Typography.Text>
+            ) : artifactNamingPreview ? (
+              <div style={{ marginTop: 8 }}>
+                <Typography.Text type="secondary" style={{ fontSize: 12, display: "block" }}>
+                  预览：{artifactNamingPreview.artifact_path || artifactNamingPreview.context_name || "-"}
+                </Typography.Text>
+                <Space wrap size={[4, 4]} style={{ marginTop: 4 }}>
+                  {artifactNamingPreview.source_type && <Tag>{artifactNamingPreview.source_type}</Tag>}
+                  {artifactNamingPreview.context_name && <Tag color="blue">{artifactNamingPreview.context_name}</Tag>}
+                  {artifactNamingPreview.legacy && <Tag>legacy</Tag>}
+                  {(artifactNamingPreview.warnings ?? []).map((warning, index) => (
+                    <Tag color="gold" key={`${warning.code || "warning"}-${index}`}>
+                      {warning.message}
+                    </Tag>
+                  ))}
+                </Space>
+              </div>
+            ) : null}
+          </div>
+
+          <div
+            style={{
               borderTop: "1px solid #f0f0f0",
               paddingTop: 12,
             }}
@@ -1403,7 +1552,12 @@ export function PoliciesPage() {
                               updateDatabaseSource(index, (current) => ({
                                 ...current,
                                 engine: value,
-                                port: value === "mysql" ? 3306 : 5432,
+                                port:
+                                  current.execution_mode === "docker"
+                                    ? undefined
+                                    : value === "mysql"
+                                      ? 3306
+                                      : 5432,
                               }))
                             }
                             options={[
@@ -1422,6 +1576,11 @@ export function PoliciesPage() {
                               updateDatabaseSource(index, (current) => ({
                                 ...current,
                                 execution_mode: value,
+                                host: value === "docker" ? "" : current.host || "127.0.0.1",
+                                port:
+                                  value === "docker"
+                                    ? undefined
+                                    : current.port || (current.engine === "mysql" ? 3306 : 5432),
                               }))
                             }
                             options={[

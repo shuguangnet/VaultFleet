@@ -57,6 +57,9 @@ func New(dataDir string) (*Database, error) {
 	if err := ensureBackupContentManifestColumns(gormDB); err != nil {
 		return nil, fmt.Errorf("ensure backup content manifest columns: %w", err)
 	}
+	if err := ensureArtifactNamingColumns(gormDB); err != nil {
+		return nil, fmt.Errorf("ensure artifact naming columns: %w", err)
+	}
 	if err := ensureIdentityAccessColumns(gormDB); err != nil {
 		return nil, fmt.Errorf("ensure identity access columns: %w", err)
 	}
@@ -133,6 +136,24 @@ func ensureBackupVerificationColumns(gormDB *gorm.DB) error {
 func ensureBackupContentManifestColumns(gormDB *gorm.DB) error {
 	if gormDB.Migrator().HasTable(&TaskHistory{}) && !gormDB.Migrator().HasColumn(&TaskHistory{}, "Manifest") {
 		if err := gormDB.Migrator().AddColumn(&TaskHistory{}, "Manifest"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureArtifactNamingColumns(gormDB *gorm.DB) error {
+	if gormDB.Migrator().HasTable(&BackupPolicy{}) {
+		for _, column := range []string{"ArtifactContextName", "ArchiveRemoteDirTemplate", "ArchiveNameTemplate"} {
+			if !gormDB.Migrator().HasColumn(&BackupPolicy{}, column) {
+				if err := gormDB.Migrator().AddColumn(&BackupPolicy{}, column); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if gormDB.Migrator().HasTable(&TaskHistory{}) && !gormDB.Migrator().HasColumn(&TaskHistory{}, "ArtifactNaming") {
+		if err := gormDB.Migrator().AddColumn(&TaskHistory{}, "ArtifactNaming"); err != nil {
 			return err
 		}
 	}

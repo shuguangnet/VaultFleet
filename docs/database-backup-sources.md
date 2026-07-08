@@ -26,6 +26,17 @@ mysql --version
 
 Docker 执行模式要求目标容器内存在对应 dump 工具。大多数官方 PostgreSQL/MySQL 镜像已包含这些工具。
 
+## MySQL 连接排查
+
+MySQL 主机模式里的“主机”按 TCP 连接处理；填写 `localhost` 时 VaultFleet 会让客户端强制使用 TCP，避免 MySQL 客户端默认走 Unix socket 导致账号来源和预期不一致。
+
+如果加载数据库或备份时报 `ERROR 1045 (28000): Access denied for user ...`，说明 MySQL 拒绝了登录。请检查：
+
+- 用户名和密码是否正确。
+- 执行位置是否选对：Agent 主机模式从 Agent 主机连接；Docker 模式在所选容器内执行 `mysql` / `mysqldump`。
+- MySQL 用户授权来源是否匹配，例如 `root`@`localhost`、`backup`@`%`、`backup`@`172.%` 是不同授权。
+- 编辑已有策略时，若要点击“加载”重新发现数据库列表，需要重新输入数据库密码；保存策略时密码框留空才表示沿用已保存密码。
+
 ## PostgreSQL 示例
 
 单库备份：

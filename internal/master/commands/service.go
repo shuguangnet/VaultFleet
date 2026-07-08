@@ -358,6 +358,13 @@ func (s *Service) CompleteTaskResultWith(ctx context.Context, agentID string, me
 			}
 			taskUpdates["verification"] = string(rawVerification)
 		}
+		if result.ArtifactNaming != nil {
+			rawArtifactNaming, err := json.Marshal(result.ArtifactNaming)
+			if err != nil {
+				return fmt.Errorf("marshal artifact naming metadata: %w", err)
+			}
+			taskUpdates["artifact_naming"] = string(rawArtifactNaming)
+		}
 		if startedAt != nil {
 			taskUpdates["started_at"] = startedAt
 		}

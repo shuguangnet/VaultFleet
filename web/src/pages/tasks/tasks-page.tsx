@@ -71,6 +71,7 @@ export function renderTaskManifestSummary(task: TaskHistory) {
   }
 
   const manifest = task.manifest;
+  const naming = task.artifact_naming || manifest?.artifact_naming;
   const artifact = manifest?.artifact || (
     task.artifact_name
       ? {
@@ -109,6 +110,23 @@ export function renderTaskManifestSummary(task: TaskHistory) {
             <Tag color="default">旧备份无清单</Tag>
           )}
         </Space>
+
+        {naming || manifest?.context_name || manifest?.source_type ? (
+          <ManifestSection title="标识">
+            {naming?.context_name || manifest?.context_name ? (
+              <Tag color="blue">{naming?.context_name || manifest?.context_name}</Tag>
+            ) : null}
+            {naming?.source_type || manifest?.source_type ? (
+              <Tag>{naming?.source_type || manifest?.source_type}</Tag>
+            ) : null}
+            {naming?.artifact_path ? <Tag color="orange">{naming.artifact_path}</Tag> : null}
+            {naming?.legacy ? <Tag>legacy</Tag> : null}
+          </ManifestSection>
+        ) : (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            未保存备份产物命名信息。
+          </Typography.Text>
+        )}
 
         {manifest ? (
           <>
