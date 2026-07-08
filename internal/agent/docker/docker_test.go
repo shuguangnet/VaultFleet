@@ -169,6 +169,37 @@ func TestRestoreDockerSourceFallsBackWhenComposeFileMissing(t *testing.T) {
 	assert.NoFileExists(t, missingComposePath)
 }
 
+func TestRestoreDockerSourceCreatesMissingCustomNetwork(t *testing.T) {
+	var calls []string
+	err := Restore(context.Background(), protocol.DockerRestoreRequest{
+		Sources: []protocol.DockerResolvedSource{
+			{
+				Name:        "api",
+				Image:       "cliproxyapi:latest",
+				NetworkMode: "cliproxyapi_default",
+			},
+		},
+	}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		switch call {
+		case "docker start api":
+			return []byte("not found"), errors.New("start failed")
+		case "docker network inspect cliproxyapi_default":
+			return []byte("not found"), errors.New("network not found")
+		default:
+			return nil, nil
+		}
+	})
+
+	require.NoError(t, err)
+	require.Len(t, calls, 4)
+	assert.Equal(t, "docker start api", calls[0])
+	assert.Equal(t, "docker network inspect cliproxyapi_default", calls[1])
+	assert.Equal(t, "docker network create cliproxyapi_default", calls[2])
+	assert.Equal(t, "docker run -d --name api --network cliproxyapi_default cliproxyapi:latest", calls[3])
+}
+
 func TestRestoreDockerSourceRunsContainerWithRecordedMounts(t *testing.T) {
 	var calls []string
 	err := Restore(context.Background(), protocol.DockerRestoreRequest{

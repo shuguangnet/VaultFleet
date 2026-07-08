@@ -616,6 +616,11 @@ func restoreSource(ctx context.Context, source protocol.DockerResolvedSource, ru
 		args = append(args, "--restart", restart)
 	}
 	if network := strings.TrimSpace(source.NetworkMode); network != "" && network != "default" {
+		if creatableDockerNetworkMode(network) {
+			if err := ensureDockerNetwork(ctx, runner, network); err != nil {
+				return err
+			}
+		}
 		args = append(args, "--network", network)
 	}
 	if workdir := strings.TrimSpace(source.WorkingDir); workdir != "" {
@@ -633,6 +638,33 @@ func restoreSource(ctx context.Context, source protocol.DockerResolvedSource, ru
 		return commandError("restore docker container", output, err)
 	}
 	return nil
+}
+
+func ensureDockerNetwork(ctx context.Context, runner CommandRunner, network string) error {
+	if _, err := runner(ctx, "docker", "network", "inspect", network); err == nil {
+		return nil
+	}
+	if output, err := runner(ctx, "docker", "network", "create", network); err != nil {
+		return commandError("create docker network "+network, output, err)
+	}
+	return nil
+}
+
+func creatableDockerNetworkMode(network string) bool {
+	network = strings.TrimSpace(network)
+	if network == "" {
+		return false
+	}
+	switch network {
+	case "default", "bridge", "host", "none":
+		return false
+	}
+	for _, prefix := range []string{"container:", "service:"} {
+		if strings.HasPrefix(network, prefix) {
+			return false
+		}
+	}
+	return true
 }
 
 func composeRestoreArgs(source protocol.DockerResolvedSource) ([]string, []string, bool) {
