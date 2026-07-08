@@ -279,7 +279,7 @@ func (h *PolicyHandler) BulkAssignPolicies(c *gin.Context) {
 		return
 	}
 
-	requiresDocker, err := policyRequiresDockerWorkload(source)
+	requirements, err := policySourceRequirementsForPolicy(source)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "decode source policy"})
 		return
@@ -291,11 +291,11 @@ func (h *PolicyHandler) BulkAssignPolicies(c *gin.Context) {
 		return
 	}
 
-	response := h.bulkAssignPolicies(source, agents, request.TargetAgentIDs, targetTags, requiresDocker)
+	response := h.bulkAssignPolicies(source, agents, request.TargetAgentIDs, targetTags, requirements)
 	writeDataResponse(c, http.StatusOK, response)
 }
 
-func (h *PolicyHandler) bulkAssignPolicies(source db.BackupPolicy, agents []db.Agent, targetAgentIDs []string, targetTags []string, requiresDocker bool) bulkAssignPolicyResponse {
+func (h *PolicyHandler) bulkAssignPolicies(source db.BackupPolicy, agents []db.Agent, targetAgentIDs []string, targetTags []string, requirements policySourceRequirements) bulkAssignPolicyResponse {
 	agentByID := make(map[string]db.Agent, len(agents))
 	for _, agent := range agents {
 		agentByID[agent.ID] = agent
@@ -352,12 +352,25 @@ func (h *PolicyHandler) bulkAssignPolicies(source db.BackupPolicy, agents []db.A
 			AgentID:   agent.ID,
 			AgentName: agent.Name,
 		}
-		if requiresDocker {
+		if requirements.requiresDocker {
 			supported, err := agentHasCapability(h.DB, agent.ID, protocol.CapabilityDockerWorkloadBackups)
 			if err != nil {
 				result.Error = "agent not found"
 			} else if !supported {
 				result.Error = "agent does not support Docker workload backups"
+			}
+			if result.Error != "" {
+				response.Results = append(response.Results, result)
+				response.FailedCount++
+				continue
+			}
+		}
+		if requirements.requiresDatabase {
+			supported, err := agentHasCapability(h.DB, agent.ID, protocol.CapabilityDatabaseBackups)
+			if err != nil {
+				result.Error = "agent not found"
+			} else if !supported {
+				result.Error = "agent does not support database backups"
 			}
 			if result.Error != "" {
 				response.Results = append(response.Results, result)
@@ -431,17 +444,29 @@ func clonePolicyForAgent(source db.BackupPolicy, agentID string) db.BackupPolicy
 	}
 }
 
-func policyRequiresDockerWorkload(policy db.BackupPolicy) (bool, error) {
+type policySourceRequirements struct {
+	requiresDocker   bool
+	requiresDatabase bool
+}
+
+func policySourceRequirementsForPolicy(policy db.BackupPolicy) (policySourceRequirements, error) {
 	sources, err := policyBackupSources(policy)
 	if err != nil {
-		return false, err
+		return policySourceRequirements{}, err
 	}
+	var requirements policySourceRequirements
 	for _, source := range sources {
 		if source.Type == protocol.BackupSourceTypeDockerContainer {
-			return true, nil
+			requirements.requiresDocker = true
+		}
+		if source.Type == protocol.BackupSourceTypeDatabase {
+			requirements.requiresDatabase = true
+			if source.Database != nil && source.Database.ExecutionMode == protocol.DatabaseExecutionDocker {
+				requirements.requiresDocker = true
+			}
 		}
 	}
-	return false, nil
+	return requirements, nil
 }
 
 func (h *PolicyHandler) GetPolicy(c *gin.Context) {
@@ -486,7 +511,12 @@ func (h *PolicyHandler) UpdatePolicy(c *gin.Context) {
 		if request.BackupSources != nil {
 			nextSources = request.BackupSources
 		}
-		normalizedDirs, normalizedSources, ok := h.normalizePolicySources(c, policy.AgentID, nextDirs, nextSources)
+		existingSources, err := policyBackupSources(policy)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "decode policy"})
+			return
+		}
+		normalizedDirs, normalizedSources, ok := h.normalizePolicySourcesForStorage(c, policy.AgentID, nextDirs, nextSources, existingSources)
 		if !ok {
 			return
 		}
@@ -754,7 +784,7 @@ func newPolicyResponse(policy db.BackupPolicy) (policyResponse, error) {
 		ArchiveFormat:   normalizeArchiveFormat(policy.ArchiveFormat),
 		RepoPath:        policy.RepoPath,
 		BackupDirs:      backupDirs,
-		BackupSources:   backupSources,
+		BackupSources:   redactDatabaseBackupSourceSecrets(backupSources),
 		ExcludePatterns: excludePatterns,
 		PreBackupHook:   preBackupHook,
 		PostBackupHook:  postBackupHook,
@@ -851,6 +881,10 @@ func unmarshalPolicyVerification(raw string) (*protocol.BackupVerificationSettin
 }
 
 func (h *PolicyHandler) normalizePolicySources(c *gin.Context, agentID string, backupDirs []string, backupSources []protocol.BackupSource) ([]string, []protocol.BackupSource, bool) {
+	return h.normalizePolicySourcesForStorage(c, agentID, backupDirs, backupSources, nil)
+}
+
+func (h *PolicyHandler) normalizePolicySourcesForStorage(c *gin.Context, agentID string, backupDirs []string, backupSources []protocol.BackupSource, existingSources []protocol.BackupSource) ([]string, []protocol.BackupSource, bool) {
 	dirs := normalizePolicyPathList(backupDirs)
 	sources := normalizeBackupSources(backupSources)
 	if len(sources) == 0 {
@@ -861,6 +895,7 @@ func (h *PolicyHandler) normalizePolicySources(c *gin.Context, agentID string, b
 
 	mergedDirs := append([]string(nil), dirs...)
 	hasDocker := false
+	hasDatabase := false
 	for i := range sources {
 		switch sources[i].Type {
 		case protocol.BackupSourceTypePath:
@@ -889,6 +924,35 @@ func (h *PolicyHandler) normalizePolicySources(c *gin.Context, agentID string, b
 				return nil, nil, false
 			}
 			hasDocker = true
+		case protocol.BackupSourceTypeDatabase:
+			if sources[i].Database == nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "database source is required"})
+				return nil, nil, false
+			}
+			if ok := normalizeDatabaseBackupSource(c, sources[i].Database); !ok {
+				return nil, nil, false
+			}
+			if sources[i].Database.ExecutionMode == protocol.DatabaseExecutionDocker {
+				if sources[i].Database.DockerContainer == nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "database docker source needs a container"})
+					return nil, nil, false
+				}
+				normalizeDockerContainerSource(sources[i].Database.DockerContainer)
+				if sources[i].Database.DockerContainer.ContainerID == "" &&
+					sources[i].Database.DockerContainer.Name == "" &&
+					(sources[i].Database.DockerContainer.ComposeProject == "" || sources[i].Database.DockerContainer.ComposeService == "") {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "database docker source needs a container id, name, or compose identity"})
+					return nil, nil, false
+				}
+				hasDocker = true
+			}
+			password, ok := h.prepareDatabaseSourcePassword(c, *sources[i].Database, existingSources)
+			if !ok {
+				return nil, nil, false
+			}
+			sources[i].Database.Password = password
+			sources[i].Database.PasswordSet = strings.TrimSpace(password) != ""
+			hasDatabase = true
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported backup source type"})
 			return nil, nil, false
@@ -910,7 +974,65 @@ func (h *PolicyHandler) normalizePolicySources(c *gin.Context, agentID string, b
 			return nil, nil, false
 		}
 	}
+	if hasDatabase {
+		supported, err := agentHasCapability(h.DB, agentID, protocol.CapabilityDatabaseBackups)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "agent not found"})
+			return nil, nil, false
+		}
+		if !supported {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "agent does not support database backups"})
+			return nil, nil, false
+		}
+	}
 	return mergedDirs, sources, true
+}
+
+func (h *PolicyHandler) prepareDatabaseSourcePassword(c *gin.Context, source protocol.DatabaseBackupSource, existingSources []protocol.BackupSource) (string, bool) {
+	if strings.TrimSpace(source.Password) != "" {
+		encrypted, err := db.Encrypt(source.Password, h.MasterKey)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "encryption failed"})
+			return "", false
+		}
+		return encrypted, true
+	}
+	if source.PasswordSet {
+		if existing := findExistingDatabasePassword(source, existingSources); strings.TrimSpace(existing) != "" {
+			return existing, true
+		}
+	}
+	return "", true
+}
+
+func findExistingDatabasePassword(source protocol.DatabaseBackupSource, existingSources []protocol.BackupSource) string {
+	key := databaseSourceIdentityKey(source)
+	for _, existing := range existingSources {
+		if existing.Type != protocol.BackupSourceTypeDatabase || existing.Database == nil {
+			continue
+		}
+		if databaseSourceIdentityKey(*existing.Database) == key {
+			return existing.Database.Password
+		}
+	}
+	return ""
+}
+
+func databaseSourceIdentityKey(source protocol.DatabaseBackupSource) string {
+	container := ""
+	if source.DockerContainer != nil {
+		container = source.DockerContainer.ContainerID + "|" + source.DockerContainer.Name + "|" + source.DockerContainer.ComposeProject + "|" + source.DockerContainer.ComposeService
+	}
+	return strings.Join([]string{
+		strings.TrimSpace(source.Engine),
+		strings.TrimSpace(source.ExecutionMode),
+		strings.TrimSpace(source.Host),
+		strconv.Itoa(source.Port),
+		strings.TrimSpace(source.Username),
+		strings.TrimSpace(source.Database),
+		strconv.FormatBool(source.AllDatabases),
+		container,
+	}, "\x00")
 }
 
 func normalizePolicyPathList(paths []string) []string {
@@ -950,6 +1072,85 @@ func normalizeDockerContainerSource(source *protocol.DockerContainerBackupSource
 	source.ComposeService = strings.TrimSpace(source.ComposeService)
 	source.ComposeWorkingDir = strings.TrimSpace(source.ComposeWorkingDir)
 	source.ComposeConfigFiles = normalizePolicyPathList(source.ComposeConfigFiles)
+}
+
+func normalizeDatabaseBackupSource(c *gin.Context, source *protocol.DatabaseBackupSource) bool {
+	source.Engine = strings.ToLower(strings.TrimSpace(source.Engine))
+	switch source.Engine {
+	case protocol.DatabaseEnginePostgreSQL, protocol.DatabaseEngineMySQL:
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "database source engine must be postgresql or mysql"})
+		return false
+	}
+	source.ExecutionMode = strings.ToLower(strings.TrimSpace(source.ExecutionMode))
+	switch source.ExecutionMode {
+	case protocol.DatabaseExecutionHost, protocol.DatabaseExecutionDocker:
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "database source execution_mode must be host or docker"})
+		return false
+	}
+	source.Host = strings.TrimSpace(source.Host)
+	source.Username = strings.TrimSpace(source.Username)
+	source.Database = strings.TrimSpace(source.Database)
+	source.OutputName = strings.TrimSpace(source.OutputName)
+	source.ConnectionName = strings.TrimSpace(source.ConnectionName)
+	source.ExtraArgs = normalizePolicyPathList(source.ExtraArgs)
+	if source.Username == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "database source username is required"})
+		return false
+	}
+	if source.Port < 0 || source.Port > 65535 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "database source port must be between 0 and 65535"})
+		return false
+	}
+	if !source.AllDatabases && source.Database == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "database source database is required unless all_databases is enabled"})
+		return false
+	}
+	if source.AllDatabases {
+		source.Database = ""
+	}
+	if source.DumpTimeoutSeconds < 0 || source.DumpTimeoutSeconds > maxPolicyHookTimeoutSeconds {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "database source dump_timeout_seconds must be between 0 and 3600"})
+		return false
+	}
+	return true
+}
+
+func redactDatabaseBackupSourceSecrets(sources []protocol.BackupSource) []protocol.BackupSource {
+	redacted := make([]protocol.BackupSource, len(sources))
+	copy(redacted, sources)
+	for i := range redacted {
+		if redacted[i].Type != protocol.BackupSourceTypeDatabase || redacted[i].Database == nil {
+			continue
+		}
+		database := *redacted[i].Database
+		database.PasswordSet = strings.TrimSpace(database.Password) != ""
+		database.Password = ""
+		redacted[i].Database = &database
+	}
+	return redacted
+}
+
+func decryptDatabaseBackupSourceSecrets(sources []protocol.BackupSource, masterKey []byte) ([]protocol.BackupSource, error) {
+	decrypted := make([]protocol.BackupSource, len(sources))
+	copy(decrypted, sources)
+	for i := range decrypted {
+		if decrypted[i].Type != protocol.BackupSourceTypeDatabase || decrypted[i].Database == nil {
+			continue
+		}
+		database := *decrypted[i].Database
+		if strings.TrimSpace(database.Password) != "" {
+			password, err := db.Decrypt(database.Password, masterKey)
+			if err != nil {
+				return nil, err
+			}
+			database.Password = password
+			database.PasswordSet = password != ""
+		}
+		decrypted[i].Database = &database
+	}
+	return decrypted, nil
 }
 
 func policyBackupDirs(policy db.BackupPolicy) ([]string, error) {

@@ -30,6 +30,7 @@ type TaskResult struct {
 	Snapshots           []SnapshotInfo                     `json:"snapshots,omitempty"`
 	ErrorLog            string                             `json:"error_log,omitempty"`
 	Docker              *protocol.DockerBackupMetadata     `json:"docker,omitempty"`
+	Database            *protocol.DatabaseBackupMetadata   `json:"database,omitempty"`
 	Verification        *protocol.BackupVerificationResult `json:"verification,omitempty"`
 }
 
@@ -62,6 +63,7 @@ func (r TaskResult) ToProtocol(agentID string, startedAt time.Time) protocol.Tas
 		FinishedAt:          startedAt.Add(time.Duration(r.DurationMs) * time.Millisecond),
 		Snapshots:           snapshots,
 		Docker:              r.Docker,
+		Database:            r.Database,
 		Verification:        r.Verification,
 	}
 }

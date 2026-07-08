@@ -297,6 +297,90 @@ func TestCreatePolicyRejectsDockerSourceForUnsupportedAgent(t *testing.T) {
 	assert.Equal(t, "agent does not support Docker workload backups", body["error"])
 }
 
+func TestCreatePolicyWithDatabaseBackupSourceEncryptsAndRedactsPassword(t *testing.T) {
+	setup := setupTestPolicyAPI(t)
+	agent := createPolicyTestAgent(t, setup.database)
+	markPolicyAgentCapabilities(t, setup.database, agent.ID, []string{protocol.CapabilityDatabaseBackups})
+	storage := createPolicyTestStorage(t, setup.database)
+
+	w := postAnyJSON(t, setup.router, "/api/policies", map[string]any{
+		"agent_id":   agent.ID,
+		"storage_id": storage.ID,
+		"backup_sources": []map[string]any{
+			{
+				"type": "database",
+				"database": map[string]any{
+					"engine":               "postgresql",
+					"execution_mode":       "host",
+					"host":                 "127.0.0.1",
+					"port":                 5432,
+					"username":             "postgres",
+					"password":             "secret-db-password",
+					"database":             "app",
+					"compress":             true,
+					"output_name":          "app.sql.gz",
+					"dump_timeout_seconds": 600,
+				},
+			},
+		},
+		"schedule":  "0 3 * * *",
+		"retention": map[string]any{"keep_last": 3},
+	})
+
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	sources := body["backup_sources"].([]any)
+	require.Len(t, sources, 1)
+	responseDatabase := sources[0].(map[string]any)["database"].(map[string]any)
+	assert.NotContains(t, responseDatabase, "password")
+	assert.Equal(t, true, responseDatabase["password_set"])
+
+	var stored db.BackupPolicy
+	require.NoError(t, setup.database.DB.First(&stored, "id = ?", body["id"]).Error)
+	var storedSources []protocol.BackupSource
+	require.NoError(t, json.Unmarshal([]byte(stored.BackupSources), &storedSources))
+	require.Len(t, storedSources, 1)
+	require.NotNil(t, storedSources[0].Database)
+	assert.NotEqual(t, "secret-db-password", storedSources[0].Database.Password)
+	decrypted, err := db.Decrypt(storedSources[0].Database.Password, setup.database.MasterKey)
+	require.NoError(t, err)
+	assert.Equal(t, "secret-db-password", decrypted)
+
+	payload, err := policyPushPayload(setup.database, stored, storage)
+	require.NoError(t, err)
+	require.Len(t, payload.BackupSources, 1)
+	require.NotNil(t, payload.BackupSources[0].Database)
+	assert.Equal(t, "secret-db-password", payload.BackupSources[0].Database.Password)
+}
+
+func TestCreatePolicyRejectsDatabaseSourceForUnsupportedAgent(t *testing.T) {
+	setup := setupTestPolicyAPI(t)
+	agent := createPolicyTestAgent(t, setup.database)
+	storage := createPolicyTestStorage(t, setup.database)
+
+	w := postAnyJSON(t, setup.router, "/api/policies", map[string]any{
+		"agent_id":   agent.ID,
+		"storage_id": storage.ID,
+		"backup_sources": []map[string]any{
+			{
+				"type": "database",
+				"database": map[string]any{
+					"engine":         "mysql",
+					"execution_mode": "host",
+					"username":       "root",
+					"database":       "app",
+				},
+			},
+		},
+		"schedule":  "0 3 * * *",
+		"retention": map[string]any{"keep_last": 3},
+	})
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	body := parseJSON(t, w)
+	assert.Equal(t, "agent does not support database backups", body["error"])
+}
+
 func TestCreatePolicyPersistsTimeoutHours(t *testing.T) {
 	setup := setupTestPolicyAPI(t)
 	agent := createPolicyTestAgent(t, setup.database)

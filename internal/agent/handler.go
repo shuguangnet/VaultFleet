@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	agentdatabase "vaultfleet/internal/agent/database"
 	agentdocker "vaultfleet/internal/agent/docker"
 	"vaultfleet/internal/agent/executor"
 	"vaultfleet/internal/agent/filebrowse"
@@ -37,6 +38,7 @@ type AgentUpdater interface {
 
 type BackupRunnerFunc func(context.Context, executor.ExecutorConfig) executor.TaskResult
 type BackupRunnerWithProgressFunc func(context.Context, executor.ExecutorConfig, executor.ProgressCallback) executor.TaskResult
+type DatabasePrepareFunc func(context.Context, agentdatabase.Config) (agentdatabase.Result, func(), error)
 type RestoreRunnerFunc func(context.Context, executor.ExecutorConfig, string, string, []string) error
 type DockerRestoreRunnerFunc func(context.Context, protocol.DockerRestoreRequest) error
 type SnapshotListRunnerFunc func(context.Context, executor.ExecutorConfig) ([]executor.SnapshotInfo, error)
@@ -59,6 +61,7 @@ type HandlerConfig struct {
 	Scheduler                policyScheduler
 	BackupRunner             BackupRunnerFunc
 	BackupRunnerWithProgress BackupRunnerWithProgressFunc
+	DatabasePrepare          DatabasePrepareFunc
 	RestoreRunner            RestoreRunnerFunc
 	DockerRestoreRunner      DockerRestoreRunnerFunc
 	SnapshotListRunner       SnapshotListRunnerFunc
@@ -80,6 +83,7 @@ type Handler struct {
 	scheduler                policyScheduler
 	backupRunner             BackupRunnerFunc
 	backupRunnerWithProgress BackupRunnerWithProgressFunc
+	databasePrepare          DatabasePrepareFunc
 	restoreRunner            RestoreRunnerFunc
 	dockerRestoreRunner      DockerRestoreRunnerFunc
 	snapshotListRunner       SnapshotListRunnerFunc
@@ -137,6 +141,10 @@ func NewHandler(config HandlerConfig) *Handler {
 	if backupVerificationRunner == nil {
 		backupVerificationRunner = runBackupVerification
 	}
+	databasePrepare := config.DatabasePrepare
+	if databasePrepare == nil {
+		databasePrepare = agentdatabase.Prepare
+	}
 	dirSizeFunc := config.DirSizeFunc
 	if dirSizeFunc == nil {
 		dirSizeFunc = filebrowse.CalculateDirSize
@@ -159,6 +167,7 @@ func NewHandler(config HandlerConfig) *Handler {
 		scheduler:                policyScheduler,
 		backupRunner:             runner,
 		backupRunnerWithProgress: progressRunner,
+		databasePrepare:          databasePrepare,
 		restoreRunner:            restoreRunner,
 		dockerRestoreRunner:      dockerRestoreRunner,
 		snapshotListRunner:       snapshotListRunner,
@@ -771,10 +780,27 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 		h.sendTaskResultWithID(messageID, h.failedTaskResult(agentID, "pre_backup_hook: "+err.Error(), startedAt))
 		return
 	}
+	databaseResult, databaseCleanup, err := h.prepareDatabaseBackupSources(ctx, resolvedPolicy.BackupSources, taskLogs)
+	if databaseCleanup != nil {
+		defer databaseCleanup()
+	}
+	if err != nil {
+		log.Printf("prepare database backup sources failed: %v", err)
+		taskLogs.Error("database-dump", "prepare database backup sources failed: "+err.Error())
+		h.sendTaskResultWithID(messageID, h.failedTaskResult(agentID, "database_dump: "+err.Error(), startedAt))
+		return
+	}
+	if len(databaseResult.Paths) > 0 {
+		cfg.BackupDirs = appendUniqueStrings(cfg.BackupDirs, databaseResult.Paths...)
+		taskLogs.Info("database-dump", "prepared database dump files")
+	}
 	taskLogs.Info("backup", "starting backup")
 	result := h.backupRunnerWithProgress(ctx, cfg, h.backupProgressCallback(messageID, agentID, taskLogs))
 	if dockerMetadata != nil {
 		result.Docker = dockerMetadata
+	}
+	if databaseResult.Metadata != nil && len(databaseResult.Metadata.Dumps) > 0 {
+		result.Database = databaseResult.Metadata
 	}
 	if ctx.Err() == context.Canceled {
 		result.Status = "cancelled"
@@ -816,6 +842,21 @@ func (h *Handler) resolvePolicyBackupSources(ctx context.Context, policyPayload 
 	}
 	resolved.BackupDirs = appendUniqueStrings(resolved.BackupDirs, dockerPaths...)
 	return &resolved, metadata, nil
+}
+
+func (h *Handler) prepareDatabaseBackupSources(ctx context.Context, sources []protocol.BackupSource, taskLogs *taskLogEmitter) (agentdatabase.Result, func(), error) {
+	if h.databasePrepare == nil {
+		return agentdatabase.Result{}, func() {}, nil
+	}
+	return h.databasePrepare(ctx, agentdatabase.Config{
+		ConfigDir: h.configDir,
+		Sources:   sources,
+		TaskLog: func(level string, phase string, stream string, line string) {
+			if taskLogs != nil {
+				taskLogs.Emit(level, phase, stream, line)
+			}
+		},
+	})
 }
 
 func (h *Handler) warmSnapshotCache(ctx context.Context, cfg executor.ExecutorConfig, snapshots []executor.SnapshotInfo) {

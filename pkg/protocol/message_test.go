@@ -128,6 +128,22 @@ func TestPolicyPushPayload(t *testing.T) {
 					IncludeComposeFiles: true,
 				},
 			},
+			{
+				Type: BackupSourceTypeDatabase,
+				Database: &DatabaseBackupSource{
+					Engine:             DatabaseEnginePostgreSQL,
+					ExecutionMode:      DatabaseExecutionDocker,
+					Username:           "postgres",
+					Password:           "db-secret",
+					Database:           "app",
+					Compress:           true,
+					OutputName:         "app.sql.gz",
+					DumpTimeoutSeconds: 600,
+					DockerContainer: &DockerContainerBackupSource{
+						Name: "postgres",
+					},
+				},
+			},
 		},
 		ExcludePatterns: []string{"*.log", "*.tmp", "node_modules"},
 		PreBackupHook:   &PolicyHook{Command: "docker exec db pg_dumpall >/backup/db.sql", TimeoutSeconds: 120},
@@ -160,12 +176,20 @@ func TestPolicyPushPayload(t *testing.T) {
 	assert.Equal(t, "vaultfleet/agent-001", parsed.Storage.RepoPath)
 	assert.Equal(t, "secure-password", parsed.ResticPassword)
 	assert.Equal(t, []string{"/etc", "/home", "/opt/myapp/data"}, parsed.BackupDirs)
-	require.Len(t, parsed.BackupSources, 2)
+	require.Len(t, parsed.BackupSources, 3)
 	assert.Equal(t, BackupSourceTypePath, parsed.BackupSources[0].Type)
 	assert.Equal(t, "/etc", parsed.BackupSources[0].Path)
 	require.NotNil(t, parsed.BackupSources[1].DockerContainer)
 	assert.Equal(t, "container-1", parsed.BackupSources[1].DockerContainer.ContainerID)
 	assert.Equal(t, "app", parsed.BackupSources[1].DockerContainer.ComposeProject)
+	require.NotNil(t, parsed.BackupSources[2].Database)
+	assert.Equal(t, DatabaseEnginePostgreSQL, parsed.BackupSources[2].Database.Engine)
+	assert.Equal(t, DatabaseExecutionDocker, parsed.BackupSources[2].Database.ExecutionMode)
+	assert.Equal(t, "db-secret", parsed.BackupSources[2].Database.Password)
+	assert.Equal(t, "app", parsed.BackupSources[2].Database.Database)
+	assert.True(t, parsed.BackupSources[2].Database.Compress)
+	require.NotNil(t, parsed.BackupSources[2].Database.DockerContainer)
+	assert.Equal(t, "postgres", parsed.BackupSources[2].Database.DockerContainer.Name)
 	assert.Equal(t, []string{"*.log", "*.tmp", "node_modules"}, parsed.ExcludePatterns)
 	require.NotNil(t, parsed.Verification)
 	assert.True(t, parsed.Verification.Enabled)
@@ -184,6 +208,37 @@ func TestPolicyPushPayload(t *testing.T) {
 	assert.Equal(t, 7, parsed.Retention.KeepDaily)
 	assert.Equal(t, 4, parsed.Retention.KeepWeekly)
 	assert.Equal(t, 6, parsed.Retention.KeepMonthly)
+}
+
+func TestDatabaseBackupMetadataRoundTrip(t *testing.T) {
+	result := TaskResultPayload{
+		AgentID:    "agent-1",
+		TaskType:   "backup",
+		Status:     "success",
+		DurationMs: 25,
+		Database: &DatabaseBackupMetadata{
+			Dumps: []DatabaseDumpMetadata{
+				{
+					Engine:        DatabaseEngineMySQL,
+					ExecutionMode: DatabaseExecutionHost,
+					Database:      "app",
+					OutputPath:    "/var/lib/vaultfleet/database-dumps/app.sql.gz",
+					OutputName:    "app.sql.gz",
+					Size:          1024,
+					Compressed:    true,
+				},
+			},
+		},
+	}
+
+	_, parsed := roundTripPayload[TaskResultPayload](t, TypeTaskResult, result)
+	require.NotNil(t, parsed.Database)
+	require.Len(t, parsed.Database.Dumps, 1)
+	assert.Equal(t, DatabaseEngineMySQL, parsed.Database.Dumps[0].Engine)
+	assert.Equal(t, DatabaseExecutionHost, parsed.Database.Dumps[0].ExecutionMode)
+	assert.Equal(t, "app.sql.gz", parsed.Database.Dumps[0].OutputName)
+	assert.Equal(t, int64(1024), parsed.Database.Dumps[0].Size)
+	assert.True(t, parsed.Database.Dumps[0].Compressed)
 }
 
 func TestBackupVerifyRoundTrip(t *testing.T) {

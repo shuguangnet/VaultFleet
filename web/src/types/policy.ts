@@ -97,12 +97,13 @@ export interface BackupVerificationSummary {
   error?: string;
 }
 
-export type BackupSourceType = "path" | "docker_container";
+export type BackupSourceType = "path" | "docker_container" | "database";
 
 export interface BackupSource {
   type: BackupSourceType;
   path?: string;
   docker_container?: DockerContainerBackupSource;
+  database?: DatabaseBackupSource;
 }
 
 export interface DockerContainerBackupSource {
@@ -117,4 +118,25 @@ export interface DockerContainerBackupSource {
   include_bind_mounts: boolean;
   include_volumes: boolean;
   include_compose_files: boolean;
+}
+
+export type DatabaseEngine = "postgresql" | "mysql";
+export type DatabaseExecutionMode = "host" | "docker";
+
+export interface DatabaseBackupSource {
+  engine: DatabaseEngine;
+  execution_mode: DatabaseExecutionMode;
+  host?: string;
+  port?: number;
+  username: string;
+  password?: string;
+  password_set?: boolean;
+  database?: string;
+  all_databases?: boolean;
+  compress?: boolean;
+  output_name?: string;
+  extra_args?: string[];
+  docker_container?: DockerContainerBackupSource;
+  connection_name?: string;
+  dump_timeout_seconds?: number;
 }

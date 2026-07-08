@@ -344,6 +344,13 @@ func (s *Service) CompleteTaskResultWith(ctx context.Context, agentID string, me
 			}
 			taskUpdates["docker"] = string(rawDocker)
 		}
+		if result.Database != nil {
+			rawDatabase, err := json.Marshal(result.Database)
+			if err != nil {
+				return fmt.Errorf("marshal database metadata: %w", err)
+			}
+			taskUpdates["database"] = string(rawDatabase)
+		}
 		if result.Verification != nil {
 			rawVerification, err := json.Marshal(result.Verification)
 			if err != nil {

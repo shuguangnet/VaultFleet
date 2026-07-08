@@ -183,6 +183,7 @@ type TaskHistory struct {
 	PolicyID            string     `gorm:"type:text;index" json:"policy_id,omitempty"`
 	StorageID           string     `gorm:"type:text;index" json:"storage_id,omitempty"`
 	Docker              string     `gorm:"type:text" json:"docker,omitempty"`
+	Database            string     `gorm:"type:text" json:"database,omitempty"`
 	Verification        string     `gorm:"type:text" json:"verification,omitempty"`
 	StartedAt           *time.Time `json:"started_at"`
 	FinishedAt          *time.Time `json:"finished_at"`

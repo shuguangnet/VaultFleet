@@ -50,6 +50,7 @@ const (
 	CapabilityDockerWorkloadBackups     = "docker_workload_backups"
 	CapabilityDockerContainerRestore    = "docker_container_restore"
 	CapabilityTypedBackupSources        = "typed_backup_sources"
+	CapabilityDatabaseBackups           = "database_backups"
 	CapabilityBackupVerification        = "backup_verification"
 	CapabilityLiveTaskLogs              = "live_task_logs"
 )
@@ -63,6 +64,7 @@ func DefaultAgentCapabilities() []string {
 		CapabilityPolicyPlaintextRclonePass,
 		CapabilityArchiveBackup,
 		CapabilityTypedBackupSources,
+		CapabilityDatabaseBackups,
 		CapabilityBackupVerification,
 		CapabilityLiveTaskLogs,
 	}
@@ -78,6 +80,15 @@ const (
 const (
 	BackupSourceTypePath            = "path"
 	BackupSourceTypeDockerContainer = "docker_container"
+	BackupSourceTypeDatabase        = "database"
+)
+
+const (
+	DatabaseEnginePostgreSQL = "postgresql"
+	DatabaseEngineMySQL      = "mysql"
+
+	DatabaseExecutionHost   = "host"
+	DatabaseExecutionDocker = "docker"
 )
 
 const (
@@ -172,6 +183,7 @@ type TaskResultPayload struct {
 	FinishedAt          time.Time                 `json:"finished_at"`
 	Snapshots           []SnapshotInfo            `json:"snapshots,omitempty"`
 	Docker              *DockerBackupMetadata     `json:"docker,omitempty"`
+	Database            *DatabaseBackupMetadata   `json:"database,omitempty"`
 	Verification        *BackupVerificationResult `json:"verification,omitempty"`
 }
 
@@ -330,6 +342,43 @@ type BackupSource struct {
 	Type            string                       `json:"type"`
 	Path            string                       `json:"path,omitempty"`
 	DockerContainer *DockerContainerBackupSource `json:"docker_container,omitempty"`
+	Database        *DatabaseBackupSource        `json:"database,omitempty"`
+}
+
+type DatabaseBackupSource struct {
+	Engine             string                       `json:"engine"`
+	ExecutionMode      string                       `json:"execution_mode"`
+	Host               string                       `json:"host,omitempty"`
+	Port               int                          `json:"port,omitempty"`
+	Username           string                       `json:"username"`
+	Password           string                       `json:"password,omitempty"`
+	PasswordSet        bool                         `json:"password_set,omitempty"`
+	Database           string                       `json:"database,omitempty"`
+	AllDatabases       bool                         `json:"all_databases,omitempty"`
+	Compress           bool                         `json:"compress,omitempty"`
+	OutputName         string                       `json:"output_name,omitempty"`
+	ExtraArgs          []string                     `json:"extra_args,omitempty"`
+	DockerContainer    *DockerContainerBackupSource `json:"docker_container,omitempty"`
+	ConnectionName     string                       `json:"connection_name,omitempty"`
+	DumpTimeoutSeconds int                          `json:"dump_timeout_seconds,omitempty"`
+}
+
+type DatabaseBackupMetadata struct {
+	Dumps    []DatabaseDumpMetadata `json:"dumps,omitempty"`
+	Warnings []string               `json:"warnings,omitempty"`
+}
+
+type DatabaseDumpMetadata struct {
+	Engine        string   `json:"engine"`
+	ExecutionMode string   `json:"execution_mode"`
+	Database      string   `json:"database,omitempty"`
+	AllDatabases  bool     `json:"all_databases,omitempty"`
+	ContainerName string   `json:"container_name,omitempty"`
+	OutputPath    string   `json:"output_path,omitempty"`
+	OutputName    string   `json:"output_name,omitempty"`
+	Size          int64    `json:"size,omitempty"`
+	Compressed    bool     `json:"compressed,omitempty"`
+	Warnings      []string `json:"warnings,omitempty"`
 }
 
 type DockerContainerBackupSource struct {

@@ -386,6 +386,10 @@ func policyPushPayload(database *db.Database, policy db.BackupPolicy, storage db
 	if err != nil {
 		return protocol.PolicyPushPayload{}, err
 	}
+	backupSources, err = decryptDatabaseBackupSourceSecrets(backupSources, database.MasterKey)
+	if err != nil {
+		return protocol.PolicyPushPayload{}, err
+	}
 
 	excludePatterns := []string{}
 	if policy.ExcludePatterns != "" {

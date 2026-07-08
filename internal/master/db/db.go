@@ -138,6 +138,11 @@ func ensureDockerBackupColumns(gormDB *gorm.DB) error {
 			return err
 		}
 	}
+	if gormDB.Migrator().HasTable(&TaskHistory{}) && !gormDB.Migrator().HasColumn(&TaskHistory{}, "Database") {
+		if err := gormDB.Migrator().AddColumn(&TaskHistory{}, "Database"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

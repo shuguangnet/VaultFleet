@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	agentdatabase "vaultfleet/internal/agent/database"
 	agentdocker "vaultfleet/internal/agent/docker"
 	"vaultfleet/internal/agent/executor"
 	"vaultfleet/internal/agent/policy"
@@ -963,6 +964,68 @@ func TestHandleBackupNowUsesLegacyBackupRunnerWhenProgressRunnerUnset(t *testing
 	resultMsg := waitForMessageType(t, sent, protocol.TypeTaskResult, time.Second)
 	assert.Equal(t, int32(1), calls.Load())
 	assert.Equal(t, msg.ID, resultMsg.ID)
+}
+
+func TestHandleBackupNowIncludesDatabaseDumpPaths(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	configDir := t.TempDir()
+	dumpPath := filepath.Join(t.TempDir(), "app.sql.gz")
+	require.NoError(t, os.WriteFile(dumpPath, []byte("SQL"), 0o600))
+	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{
+		AgentID:    "agent-1",
+		Storage:    protocol.StorageConfig{RepoPath: "repo/agent-1"},
+		BackupDirs: []string{"/srv"},
+		BackupSources: []protocol.BackupSource{
+			{
+				Type: protocol.BackupSourceTypeDatabase,
+				Database: &protocol.DatabaseBackupSource{
+					Engine:        protocol.DatabaseEnginePostgreSQL,
+					ExecutionMode: protocol.DatabaseExecutionHost,
+					Username:      "postgres",
+					Database:      "app",
+				},
+			},
+		},
+	}))
+	var cleanupCalled atomic.Bool
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   configDir,
+		SendFunc:    sent.send,
+		DatabasePrepare: func(_ context.Context, cfg agentdatabase.Config) (agentdatabase.Result, func(), error) {
+			require.Equal(t, configDir, cfg.ConfigDir)
+			require.Len(t, cfg.Sources, 1)
+			return agentdatabase.Result{
+				Paths: []string{dumpPath},
+				Metadata: &protocol.DatabaseBackupMetadata{Dumps: []protocol.DatabaseDumpMetadata{{
+					Engine:        protocol.DatabaseEnginePostgreSQL,
+					ExecutionMode: protocol.DatabaseExecutionHost,
+					Database:      "app",
+					OutputPath:    dumpPath,
+					OutputName:    "app.sql.gz",
+					Size:          3,
+					Compressed:    true,
+				}}},
+			}, func() { cleanupCalled.Store(true) }, nil
+		},
+		BackupRunnerWithProgress: func(_ context.Context, cfg executor.ExecutorConfig, _ executor.ProgressCallback) executor.TaskResult {
+			assert.Equal(t, []string{"/srv", dumpPath}, cfg.BackupDirs)
+			return executor.TaskResult{Type: "backup", Status: "success", DurationMs: 10}
+		},
+	})
+	msg, err := protocol.NewMessage(protocol.TypeBackupNow, protocol.BackupNowPayload{AgentID: "agent-1"})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	resultMsg := waitForMessageType(t, sent, protocol.TypeTaskResult, time.Second)
+	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&resultMsg)
+	require.NoError(t, err)
+	require.NotNil(t, result.Database)
+	require.Len(t, result.Database.Dumps, 1)
+	assert.Equal(t, "app.sql.gz", result.Database.Dumps[0].OutputName)
+	assert.Eventually(t, cleanupCalled.Load, time.Second, 10*time.Millisecond)
 }
 
 func TestBackupNowSendsProgressMessages(t *testing.T) {

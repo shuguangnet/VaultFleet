@@ -66,6 +66,7 @@ type taskResponse struct {
 	Error               string                             `json:"error,omitempty"`
 	Progress            *protocol.BackupProgressPayload    `json:"progress,omitempty"`
 	Docker              *protocol.DockerBackupMetadata     `json:"docker,omitempty"`
+	Database            *protocol.DatabaseBackupMetadata   `json:"database,omitempty"`
 	Verification        *protocol.BackupVerificationResult `json:"verification,omitempty"`
 	CreatedAt           time.Time                          `json:"created_at"`
 	UpdatedAt           time.Time                          `json:"updated_at"`
@@ -644,6 +645,12 @@ func newTaskResponse(history db.TaskHistory) taskResponse {
 		var metadata protocol.DockerBackupMetadata
 		if err := json.Unmarshal([]byte(history.Docker), &metadata); err == nil {
 			response.Docker = &metadata
+		}
+	}
+	if history.Database != "" {
+		var metadata protocol.DatabaseBackupMetadata
+		if err := json.Unmarshal([]byte(history.Database), &metadata); err == nil {
+			response.Database = &metadata
 		}
 	}
 	if history.Verification != "" {

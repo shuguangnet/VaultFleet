@@ -418,6 +418,90 @@ describe("PoliciesPage rclone form state", () => {
     );
   });
 
+  it("adds and submits a PostgreSQL database backup source", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listPolicies).mockResolvedValue([]);
+    vi.mocked(listAgents).mockResolvedValue([
+      {
+        id: "agent-1",
+        name: "node-1",
+        status: "online",
+        last_seen: "",
+        version: "",
+        hostname: "",
+        os: "",
+        arch: "",
+        capabilities: ["database_backups"],
+        created_at: "2026-05-25T00:00:00Z",
+      },
+    ]);
+    vi.mocked(listStorage).mockResolvedValue([
+      {
+        id: "storage-1",
+        name: "S3 Store",
+        rclone_type: "s3",
+        rclone_config: {},
+        created_at: "2026-05-25T00:00:00Z",
+        updated_at: "2026-05-25T00:00:00Z",
+      },
+    ]);
+    vi.mocked(createPolicy).mockResolvedValue({
+      id: "policy-1",
+      agent_id: "agent-1",
+      storage_id: "storage-1",
+      backup_mode: "snapshot",
+      repo_path: "vaultfleet/node-1",
+      backup_dirs: [],
+      backup_sources: [],
+      exclude_patterns: [],
+      schedule: "0 2 * * *",
+      retention: {},
+      timeout_hours: 6,
+      synced: false,
+      created_at: "2026-05-25T00:00:00Z",
+      updated_at: "2026-05-25T00:00:00Z",
+    });
+    vi.mocked(updatePolicy).mockResolvedValue({} as never);
+    vi.mocked(deletePolicy).mockResolvedValue({} as never);
+    vi.mocked(backupNow).mockResolvedValue({ command_id: "cmd-1", message_id: "msg-1" });
+
+    render(
+      <QueryClientProvider client={newTestQueryClient()}>
+        <AntdApp>
+          <PoliciesPage />
+        </AntdApp>
+      </QueryClientProvider>,
+    );
+
+    await clickButtonByText(user, "添加策略");
+    await user.click(screen.getAllByRole("combobox")[0]);
+    await clickOptionByName("node-1");
+    await user.click(screen.getAllByRole("combobox")[1]);
+    await clickOptionByName("S3 Store");
+    await clickButtonByText(user, "添加数据库");
+    await user.type(screen.getByLabelText("数据库用户"), "postgres");
+    await user.type(screen.getByLabelText("数据库密码"), "secret");
+    await user.type(screen.getByLabelText("数据库名"), "app");
+    fireEvent.submit(screen.getByRole("form", { name: "备份策略表单" }));
+
+    await waitFor(() => expect(createPolicy).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(createPolicy).mock.calls[0][0].backup_sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "database",
+          database: expect.objectContaining({
+            engine: "postgresql",
+            execution_mode: "host",
+            username: "postgres",
+            password: "secret",
+            database: "app",
+            compress: true,
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("does not discover Docker containers for unsupported agents", async () => {
     const user = userEvent.setup();
     vi.mocked(listPolicies).mockResolvedValue([]);

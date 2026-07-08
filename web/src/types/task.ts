@@ -33,6 +33,7 @@ export interface TaskHistory {
   error_log?: string;
   progress?: BackupProgress;
   docker?: DockerBackupMetadata;
+  database?: DatabaseBackupMetadata;
   verification?: BackupVerificationResult;
   created_at: string;
   updated_at?: string;
@@ -56,6 +57,24 @@ export interface BackupVerificationCheck {
 
 export interface DockerBackupMetadata {
   sources?: DockerResolvedSource[];
+  warnings?: string[];
+}
+
+export interface DatabaseBackupMetadata {
+  dumps?: DatabaseDumpMetadata[];
+  warnings?: string[];
+}
+
+export interface DatabaseDumpMetadata {
+  engine: "postgresql" | "mysql";
+  execution_mode: "host" | "docker";
+  database?: string;
+  all_databases?: boolean;
+  container_name?: string;
+  output_path?: string;
+  output_name?: string;
+  size?: number;
+  compressed?: boolean;
   warnings?: string[];
 }
 

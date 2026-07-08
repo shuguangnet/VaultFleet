@@ -525,6 +525,10 @@ func createTaskHistory(gormDB *gorm.DB, agentID string, messageID string, result
 	if err != nil {
 		return err
 	}
+	rawDatabase, err := marshalDatabaseBackupMetadata(result.Database)
+	if err != nil {
+		return err
+	}
 	rawVerification, err := marshalBackupVerificationResult(result.Verification)
 	if err != nil {
 		return err
@@ -542,6 +546,7 @@ func createTaskHistory(gormDB *gorm.DB, agentID string, messageID string, result
 		ArchiveFormat:       result.ArchiveFormat,
 		MessageID:           messageID,
 		Docker:              rawDocker,
+		Database:            rawDatabase,
 		Verification:        rawVerification,
 		StartedAt:           &startedAt,
 		FinishedAt:          &finishedAt,
@@ -576,6 +581,17 @@ func marshalDockerBackupMetadata(metadata *protocol.DockerBackupMetadata) (strin
 	raw, err := json.Marshal(metadata)
 	if err != nil {
 		return "", fmt.Errorf("marshal docker metadata: %w", err)
+	}
+	return string(raw), nil
+}
+
+func marshalDatabaseBackupMetadata(metadata *protocol.DatabaseBackupMetadata) (string, error) {
+	if metadata == nil {
+		return "", nil
+	}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		return "", fmt.Errorf("marshal database metadata: %w", err)
 	}
 	return string(raw), nil
 }

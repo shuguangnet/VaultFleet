@@ -61,6 +61,7 @@ import type {
   BackupPolicy,
   BackupSource,
   BulkAssignPolicyResponse,
+  DatabaseBackupSource,
   DockerContainerBackupSource,
   PolicyHook,
   PolicyInput,
@@ -200,6 +201,10 @@ function dockerSourcesFromPolicy(policy: BackupPolicy): BackupSource[] {
   );
 }
 
+function databaseSourcesFromPolicy(policy: BackupPolicy): BackupSource[] {
+  return (policy.backup_sources ?? []).filter((s) => s.type === "database");
+}
+
 function verificationLabel(policy: BackupPolicy) {
   const latest = policy.latest_verification;
   if (!policy.verification?.enabled) return { text: "未启用", status: "default" as const };
@@ -217,7 +222,10 @@ function buildBackupSources(input: PolicyInput): BackupSource[] {
   const dockerSources = (input.backup_sources ?? []).filter(
     (s) => s.type === "docker_container"
   );
-  return [...pathSources, ...dockerSources];
+  const databaseSources = (input.backup_sources ?? []).filter(
+    (s) => s.type === "database"
+  );
+  return [...pathSources, ...dockerSources, ...databaseSources];
 }
 
 function dockerSourceKey(s: DockerContainerBackupSource): string {
@@ -253,6 +261,29 @@ function sourceFromContainer(c: DockerContainer): BackupSource {
       include_compose_files: true,
     },
   };
+}
+
+function defaultDatabaseSource(): BackupSource {
+  return {
+    type: "database",
+    database: {
+      engine: "postgresql",
+      execution_mode: "host",
+      host: "127.0.0.1",
+      port: 5432,
+      username: "",
+      database: "",
+      all_databases: false,
+      compress: true,
+      dump_timeout_seconds: 600,
+    },
+  };
+}
+
+function databaseSourceLabel(source: DatabaseBackupSource): string {
+  const engine = source.engine === "mysql" ? "MySQL" : "PostgreSQL";
+  const scope = source.all_databases ? "全部数据库" : source.database || "未选择数据库";
+  return `${engine} / ${scope}`;
 }
 
 function detectRetentionPreset(r: RetentionConfig): string {
@@ -417,7 +448,10 @@ export function PoliciesPage() {
       retention: policy.retention,
       rclone_args: policy.rclone_args || {},
       timeout_hours: policy.timeout_hours || 6,
-      backup_sources: dockerSourcesFromPolicy(policy),
+      backup_sources: [
+        ...dockerSourcesFromPolicy(policy),
+        ...databaseSourcesFromPolicy(policy),
+      ],
       verification: policy.verification ?? {
         enabled: false,
         schedule: "0 4 * * *",
@@ -484,8 +518,14 @@ export function PoliciesPage() {
   const dockerCapable = !!selectedAgent?.capabilities?.includes(
     "docker_workload_backups"
   );
+  const databaseCapable = !!selectedAgent?.capabilities?.includes(
+    "database_backups"
+  );
   const selectedDockerSources = (formData.backup_sources ?? []).filter(
     (s) => s.type === "docker_container"
+  );
+  const selectedDatabaseSources = (formData.backup_sources ?? []).filter(
+    (s) => s.type === "database"
   );
   const selectedDockerKeys = new Set(
     selectedDockerSources
@@ -499,6 +539,24 @@ export function PoliciesPage() {
     queryFn: () => discoverDockerAgent(formData.agent_id),
     enabled: drawerOpen && !!formData.agent_id && isAgentOnline && dockerCapable,
   });
+
+  const setDatabaseSources = (databaseSources: BackupSource[]) => {
+    setFormData({
+      ...formData,
+      backup_sources: [...selectedDockerSources, ...databaseSources],
+    });
+  };
+
+  const updateDatabaseSource = (
+    index: number,
+    updater: (source: DatabaseBackupSource) => DatabaseBackupSource,
+  ) => {
+    const next = selectedDatabaseSources.map((source, i) => {
+      if (i !== index || !source.database) return source;
+      return { type: "database" as const, database: updater(source.database) };
+    });
+    setDatabaseSources(next);
+  };
 
   const columns: ColumnsType<BackupPolicy> = [
     {
@@ -1156,7 +1214,10 @@ export function PoliciesPage() {
                                   newDockerSources.push(sourceFromContainer(c));
                                 setFormData({
                                   ...formData,
-                                  backup_sources: newDockerSources,
+                                  backup_sources: [
+                                    ...newDockerSources,
+                                    ...selectedDatabaseSources,
+                                  ],
                                 });
                               }}
                             />
@@ -1199,6 +1260,252 @@ export function PoliciesPage() {
                 )}
             </div>
           )}
+
+          <div
+            style={{
+              border: "1px solid #f0f0f0",
+              borderRadius: 6,
+              padding: 12,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 8,
+                alignItems: "center",
+              }}
+            >
+              <div>
+                <Typography.Text strong>数据库备份源</Typography.Text>
+                <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
+                  支持 PostgreSQL / MySQL 逻辑 dump，生成的 SQL 文件会进入快照或压缩包；不会自动恢复数据库。
+                </Typography.Paragraph>
+              </div>
+              <Button
+                icon={<PlusOutlined />}
+                disabled={!databaseCapable}
+                onClick={() => setDatabaseSources([...selectedDatabaseSources, defaultDatabaseSource()])}
+              >
+                添加数据库
+              </Button>
+            </div>
+            {!databaseCapable && (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                当前 Agent 未上报数据库备份能力。
+              </Typography.Text>
+            )}
+            {selectedDatabaseSources.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 12 }}>
+                {selectedDatabaseSources.map((source, index) => {
+                  const db = source.database;
+                  if (!db) return null;
+                  const idPrefix = `policy-db-${index}`;
+                  return (
+                    <div
+                      key={index}
+                      style={{ border: "1px solid #f0f0f0", borderRadius: 6, padding: 12 }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                        <Typography.Text strong>{databaseSourceLabel(db)}</Typography.Text>
+                        <Button
+                          danger
+                          size="small"
+                          icon={<DeleteOutlined />}
+                          onClick={() =>
+                            setDatabaseSources(
+                              selectedDatabaseSources.filter((_, i) => i !== index),
+                            )
+                          }
+                        />
+                      </div>
+                      <Row gutter={[8, 8]} style={{ marginTop: 8 }}>
+                        <Col xs={24} sm={12}>
+                          <label htmlFor={`${idPrefix}-engine`} style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>数据库类型</label>
+                          <Select
+                            id={`${idPrefix}-engine`}
+                            style={{ width: "100%" }}
+                            value={db.engine}
+                            onChange={(value) =>
+                              updateDatabaseSource(index, (current) => ({
+                                ...current,
+                                engine: value,
+                                port: value === "mysql" ? 3306 : 5432,
+                              }))
+                            }
+                            options={[
+                              { value: "postgresql", label: "PostgreSQL" },
+                              { value: "mysql", label: "MySQL" },
+                            ]}
+                          />
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <label htmlFor={`${idPrefix}-mode`} style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>执行位置</label>
+                          <Select
+                            id={`${idPrefix}-mode`}
+                            style={{ width: "100%" }}
+                            value={db.execution_mode}
+                            onChange={(value) =>
+                              updateDatabaseSource(index, (current) => ({
+                                ...current,
+                                execution_mode: value,
+                              }))
+                            }
+                            options={[
+                              { value: "host", label: "Agent 主机" },
+                              { value: "docker", label: "Docker 容器" },
+                            ]}
+                          />
+                        </Col>
+                        {db.execution_mode === "docker" ? (
+                          <Col xs={24}>
+                            <label htmlFor={`${idPrefix}-container`} style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>数据库容器</label>
+                            <Select
+                              id={`${idPrefix}-container`}
+                              style={{ width: "100%" }}
+                              value={db.docker_container ? dockerSourceKey(db.docker_container) : undefined}
+                              placeholder={dockerCapable ? "选择容器" : "当前 Agent 不支持 Docker"}
+                              disabled={!dockerCapable}
+                              onChange={(value) => {
+                                const container = dockerDiscoveryQuery.data?.containers.find(
+                                  (item) => containerKey(item) === value,
+                                );
+                                if (!container) return;
+                                updateDatabaseSource(index, (current) => ({
+                                  ...current,
+                                  docker_container: sourceFromContainer(container).docker_container,
+                                }));
+                              }}
+                              options={(dockerDiscoveryQuery.data?.containers ?? []).map((item) => ({
+                                value: containerKey(item),
+                                label: `${item.names?.[0] || item.id.slice(0, 12)} (${item.image})`,
+                                disabled: !item.selectable,
+                              }))}
+                            />
+                          </Col>
+                        ) : (
+                          <>
+                            <Col xs={24} sm={16}>
+                              <label htmlFor={`${idPrefix}-host`} style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>主机</label>
+                              <Input
+                                id={`${idPrefix}-host`}
+                                value={db.host}
+                                onChange={(e) =>
+                                  updateDatabaseSource(index, (current) => ({
+                                    ...current,
+                                    host: e.target.value,
+                                  }))
+                                }
+                              />
+                            </Col>
+                            <Col xs={24} sm={8}>
+                              <label htmlFor={`${idPrefix}-port`} style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>端口</label>
+                              <InputNumber
+                                id={`${idPrefix}-port`}
+                                style={{ width: "100%" }}
+                                min={0}
+                                max={65535}
+                                value={db.port}
+                                onChange={(value) =>
+                                  updateDatabaseSource(index, (current) => ({
+                                    ...current,
+                                    port: (value as number) ?? undefined,
+                                  }))
+                                }
+                              />
+                            </Col>
+                          </>
+                        )}
+                        <Col xs={24} sm={12}>
+                          <label htmlFor={`${idPrefix}-username`} style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>数据库用户</label>
+                          <Input
+                            id={`${idPrefix}-username`}
+                            value={db.username}
+                            onChange={(e) =>
+                              updateDatabaseSource(index, (current) => ({
+                                ...current,
+                                username: e.target.value,
+                              }))
+                            }
+                          />
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <label htmlFor={`${idPrefix}-password`} style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>数据库密码</label>
+                          <Input.Password
+                            id={`${idPrefix}-password`}
+                            placeholder={db.password_set ? "已保存，留空则不变" : "可留空"}
+                            value={db.password ?? ""}
+                            onChange={(e) =>
+                              updateDatabaseSource(index, (current) => ({
+                                ...current,
+                                password: e.target.value,
+                                password_set: current.password_set || e.target.value.length > 0,
+                              }))
+                            }
+                          />
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <label htmlFor={`${idPrefix}-database`} style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>数据库名</label>
+                          <Input
+                            id={`${idPrefix}-database`}
+                            disabled={!!db.all_databases}
+                            value={db.database}
+                            onChange={(e) =>
+                              updateDatabaseSource(index, (current) => ({
+                                ...current,
+                                database: e.target.value,
+                              }))
+                            }
+                          />
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <label htmlFor={`${idPrefix}-output`} style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>输出文件名</label>
+                          <Input
+                            id={`${idPrefix}-output`}
+                            placeholder="自动生成"
+                            value={db.output_name}
+                            onChange={(e) =>
+                              updateDatabaseSource(index, (current) => ({
+                                ...current,
+                                output_name: e.target.value,
+                              }))
+                            }
+                          />
+                        </Col>
+                        <Col xs={24}>
+                          <Space wrap>
+                            <Checkbox
+                              checked={!!db.all_databases}
+                              onChange={(e) =>
+                                updateDatabaseSource(index, (current) => ({
+                                  ...current,
+                                  all_databases: e.target.checked,
+                                  database: e.target.checked ? "" : current.database,
+                                }))
+                              }
+                            >
+                              备份全部数据库
+                            </Checkbox>
+                            <Checkbox
+                              checked={db.compress !== false}
+                              onChange={(e) =>
+                                updateDatabaseSource(index, (current) => ({
+                                  ...current,
+                                  compress: e.target.checked,
+                                }))
+                              }
+                            >
+                              gzip 压缩 dump
+                            </Checkbox>
+                          </Space>
+                        </Col>
+                      </Row>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           <Alert
             type="warning"
