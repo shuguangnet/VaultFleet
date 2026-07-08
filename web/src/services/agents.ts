@@ -1,5 +1,6 @@
 import { Agent, ApiAgent, CreateAgentResponse } from "@/types/agent";
-import { BrowseRequest, BrowseResponse, DirSizeRequest, DirSizeResponse, DockerDiscoveryResponse } from "@/types/api";
+import { BrowseRequest, BrowseResponse, DatabaseDiscoveryResponse, DirSizeRequest, DirSizeResponse, DockerDiscoveryResponse } from "@/types/api";
+import type { DatabaseBackupSource } from "@/types/policy";
 import { apiDelete, apiGet, apiPost, apiPut } from "./http";
 
 export const listAgents = async (tagsOrContext?: unknown) => {
@@ -19,6 +20,8 @@ export const getInstallToken = (id: string) => apiGet<{ id: string; enroll_token
 export const browseAgent = (id: string, body: BrowseRequest) => apiPost<BrowseResponse>(`/api/agents/${id}/browse`, body);
 export const dirSizeAgent = (id: string, body: DirSizeRequest) => apiPost<DirSizeResponse>(`/api/agents/${id}/dir-size`, body);
 export const discoverDockerAgent = (id: string) => apiPost<DockerDiscoveryResponse>(`/api/agents/${id}/docker/discover`);
+export const discoverDatabaseAgent = (id: string, source: DatabaseBackupSource) =>
+  apiPost<DatabaseDiscoveryResponse>(`/api/agents/${id}/database/discover`, { source });
 export const backupNow = (id: string) => apiPost<{ command_id: string; message_id: string }>(`/api/agents/${id}/backup-now`);
 export const updateAgent = (id: string, body: { version?: string; github_repo?: string } = {}) =>
   apiPost<{ accepted: boolean; message_id: string; version: string; github_repo?: string }>(`/api/agents/${id}/update-agent`, body);

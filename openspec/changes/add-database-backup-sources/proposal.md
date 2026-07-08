@@ -5,7 +5,7 @@ VaultFleet can currently back up MySQL and PostgreSQL only through manual pre-ba
 ## What Changes
 
 - Add first-class database backup sources for PostgreSQL and MySQL.
-- Support logical dump backups using `pg_dump` / `pg_dumpall` and `mysqldump`.
+- Support logical dump backups using `pg_dump`, `psql` database discovery, `mysqldump`, and `mysql` database discovery.
 - Support running dump commands from an Agent host or inside a selected Docker container.
 - Store database connection and dump options as typed policy source configuration instead of free-form hook commands.
 - Write dump files into an Agent-managed staging directory and include them in both snapshot and archive backup modes.

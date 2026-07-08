@@ -101,6 +101,12 @@ export interface DockerDiscoveryResponse {
   containers: DockerContainer[];
 }
 
+export interface DatabaseDiscoveryResponse {
+  available: boolean;
+  error?: string;
+  databases: string[];
+}
+
 export interface DockerContainer {
   id: string;
   names: string[];

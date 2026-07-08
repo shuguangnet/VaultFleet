@@ -2566,6 +2566,40 @@ func TestHandlerDockerDiscoveryReqSendsResponseWithSameID(t *testing.T) {
 	assert.Equal(t, "container-1", payload.Containers[0].ID)
 }
 
+func TestHandlerDatabaseDiscoveryReqSendsResponseWithSameID(t *testing.T) {
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{
+		ConfigDir: t.TempDir(),
+		SendFunc:  sent.send,
+		DatabaseList: func(_ context.Context, cfg agentdatabase.ListConfig) ([]string, error) {
+			assert.NotEmpty(t, cfg.ConfigDir)
+			assert.Equal(t, protocol.DatabaseEnginePostgreSQL, cfg.Source.Engine)
+			assert.Equal(t, "postgres", cfg.Source.Username)
+			return []string{"app", "analytics"}, nil
+		},
+	})
+
+	req, err := protocol.NewMessage(protocol.TypeDatabaseDiscoveryReq, protocol.DatabaseDiscoveryReqPayload{
+		Source: protocol.DatabaseBackupSource{
+			Engine:        protocol.DatabaseEnginePostgreSQL,
+			ExecutionMode: protocol.DatabaseExecutionHost,
+			Username:      "postgres",
+			Password:      "secret",
+		},
+	})
+	require.NoError(t, err)
+	handler.Handle(*req)
+
+	messages := sent.snapshot()
+	require.Len(t, messages, 1)
+	assert.Equal(t, protocol.TypeDatabaseDiscoveryResp, messages[0].Type)
+	assert.Equal(t, req.ID, messages[0].ID)
+	payload, err := protocol.ParsePayload[protocol.DatabaseDiscoveryRespPayload](&messages[0])
+	require.NoError(t, err)
+	assert.True(t, payload.Available)
+	assert.Equal(t, []string{"app", "analytics"}, payload.Databases)
+}
+
 func TestHandlerBackupResolvesDockerSourcesBeforeRunner(t *testing.T) {
 	store := policy.NewStore(t.TempDir())
 	configDir := filepath.Join(t.TempDir(), "config")

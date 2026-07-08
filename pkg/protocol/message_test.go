@@ -241,6 +241,31 @@ func TestDatabaseBackupMetadataRoundTrip(t *testing.T) {
 	assert.True(t, parsed.Database.Dumps[0].Compressed)
 }
 
+func TestDatabaseDiscoveryRoundTrip(t *testing.T) {
+	req := DatabaseDiscoveryReqPayload{
+		Source: DatabaseBackupSource{
+			Engine:        DatabaseEnginePostgreSQL,
+			ExecutionMode: DatabaseExecutionDocker,
+			Username:      "postgres",
+			Password:      "secret",
+			DockerContainer: &DockerContainerBackupSource{
+				Name: "db",
+			},
+		},
+	}
+	_, parsedReq := roundTripPayload[DatabaseDiscoveryReqPayload](t, TypeDatabaseDiscoveryReq, req)
+	assert.Equal(t, DatabaseEnginePostgreSQL, parsedReq.Source.Engine)
+	assert.Equal(t, "db", parsedReq.Source.DockerContainer.Name)
+
+	resp := DatabaseDiscoveryRespPayload{
+		Available: true,
+		Databases: []string{"app", "analytics"},
+	}
+	_, parsedResp := roundTripPayload[DatabaseDiscoveryRespPayload](t, TypeDatabaseDiscoveryResp, resp)
+	assert.True(t, parsedResp.Available)
+	assert.Equal(t, []string{"app", "analytics"}, parsedResp.Databases)
+}
+
 func TestBackupVerifyRoundTrip(t *testing.T) {
 	req := BackupVerifyReqPayload{
 		AgentID: "agent-1",
@@ -706,6 +731,8 @@ func TestAllMessageTypeConstants(t *testing.T) {
 		TypeDirBrowseResp,
 		TypeDockerDiscoveryReq,
 		TypeDockerDiscoveryResp,
+		TypeDatabaseDiscoveryReq,
+		TypeDatabaseDiscoveryResp,
 		TypePolicyPush,
 		TypePolicyAck,
 		TypeBackupNow,
@@ -735,6 +762,8 @@ func TestAllMessageTypeConstants(t *testing.T) {
 		"dir_browse_resp",
 		"docker_discovery_req",
 		"docker_discovery_resp",
+		"database_discovery_req",
+		"database_discovery_resp",
 		"policy_push",
 		"policy_ack",
 		"backup_now",
@@ -760,7 +789,7 @@ func TestAllMessageTypeConstants(t *testing.T) {
 	}
 
 	assert.Equal(t, expected, types)
-	assert.Len(t, types, 27)
+	assert.Len(t, types, 29)
 	seen := make(map[string]bool)
 	for _, typ := range types {
 		assert.NotEmpty(t, typ)

@@ -10,35 +10,37 @@ import (
 
 // Message type constants identify WebSocket payload kinds exchanged by master and agents.
 const (
-	TypeHeartbeat            = "heartbeat"
-	TypeDirBrowseReq         = "dir_browse_req"
-	TypeDirBrowseResp        = "dir_browse_resp"
-	TypeDockerDiscoveryReq   = "docker_discovery_req"
-	TypeDockerDiscoveryResp  = "docker_discovery_resp"
-	TypePolicyPush           = "policy_push"
-	TypePolicyAck            = "policy_ack"
-	TypeBackupNow            = "backup_now"
-	TypeBackupVerifyReq      = "backup_verify_req"
-	TypeTaskResult           = "task_result"
-	TypeRestoreReq           = "restore_req"
-	TypeSelectiveRestoreReq  = "selective_restore_req"
-	TypeRestoreProgress      = "restore_progress"
-	TypeRestorePreflightReq  = "restore_preflight_req"
-	TypeRestorePreflightResp = "restore_preflight_resp"
-	TypeSnapshotListReq      = "snapshot_list_req"
-	TypeSnapshotListResp     = "snapshot_list_resp"
-	TypeSnapshotBrowseReq    = "snapshot_browse_req"
-	TypeSnapshotBrowseResp   = "snapshot_browse_resp"
-	TypeCollectLogsReq       = "collect_logs_req"
-	TypeCollectLogsResp      = "collect_logs_resp"
-	TypeDirSizeReq           = "dir_size_req"
-	TypeDirSizeResp          = "dir_size_resp"
-	TypeVersionInfo          = "version_info"
-	TypeUpdateAgent          = "update_agent"
-	TypeUpdateAgentResp      = "update_agent_resp"
-	TypeBackupProgress       = "backup_progress"
-	TypeTaskLog              = "task_log"
-	TypeCancelTask           = "cancel_task"
+	TypeHeartbeat             = "heartbeat"
+	TypeDirBrowseReq          = "dir_browse_req"
+	TypeDirBrowseResp         = "dir_browse_resp"
+	TypeDockerDiscoveryReq    = "docker_discovery_req"
+	TypeDockerDiscoveryResp   = "docker_discovery_resp"
+	TypeDatabaseDiscoveryReq  = "database_discovery_req"
+	TypeDatabaseDiscoveryResp = "database_discovery_resp"
+	TypePolicyPush            = "policy_push"
+	TypePolicyAck             = "policy_ack"
+	TypeBackupNow             = "backup_now"
+	TypeBackupVerifyReq       = "backup_verify_req"
+	TypeTaskResult            = "task_result"
+	TypeRestoreReq            = "restore_req"
+	TypeSelectiveRestoreReq   = "selective_restore_req"
+	TypeRestoreProgress       = "restore_progress"
+	TypeRestorePreflightReq   = "restore_preflight_req"
+	TypeRestorePreflightResp  = "restore_preflight_resp"
+	TypeSnapshotListReq       = "snapshot_list_req"
+	TypeSnapshotListResp      = "snapshot_list_resp"
+	TypeSnapshotBrowseReq     = "snapshot_browse_req"
+	TypeSnapshotBrowseResp    = "snapshot_browse_resp"
+	TypeCollectLogsReq        = "collect_logs_req"
+	TypeCollectLogsResp       = "collect_logs_resp"
+	TypeDirSizeReq            = "dir_size_req"
+	TypeDirSizeResp           = "dir_size_resp"
+	TypeVersionInfo           = "version_info"
+	TypeUpdateAgent           = "update_agent"
+	TypeUpdateAgentResp       = "update_agent_resp"
+	TypeBackupProgress        = "backup_progress"
+	TypeTaskLog               = "task_log"
+	TypeCancelTask            = "cancel_task"
 )
 
 const (
@@ -309,6 +311,16 @@ type DockerDiscoveryRespPayload struct {
 	Available  bool              `json:"available"`
 	Error      string            `json:"error,omitempty"`
 	Containers []DockerContainer `json:"containers"`
+}
+
+type DatabaseDiscoveryReqPayload struct {
+	Source DatabaseBackupSource `json:"source"`
+}
+
+type DatabaseDiscoveryRespPayload struct {
+	Available bool     `json:"available"`
+	Error     string   `json:"error,omitempty"`
+	Databases []string `json:"databases"`
 }
 
 type DockerContainer struct {

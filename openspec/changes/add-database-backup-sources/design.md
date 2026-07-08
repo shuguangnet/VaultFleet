@@ -58,9 +58,9 @@ Alternative considered: Put passwords directly in `pg_dump` / `mysqldump` argume
 
 Agent invokes:
 - PostgreSQL single database: `pg_dump`
-- PostgreSQL all databases: `pg_dumpall`
+- PostgreSQL all databases: `psql` to list databases, then `pg_dump` once per database
 - MySQL single database: `mysqldump <database>`
-- MySQL all databases: `mysqldump --all-databases`
+- MySQL all databases: `mysql` to list databases, then `mysqldump <database>` once per database
 
 For Docker execution, the commands run inside the selected container. For host execution, the commands must exist on the Agent host. Missing binaries produce actionable task errors.
 

@@ -148,6 +148,8 @@ func expectedResponseType(requestType string) (string, error) {
 		return protocol.TypeDirSizeResp, nil
 	case protocol.TypeDockerDiscoveryReq:
 		return protocol.TypeDockerDiscoveryResp, nil
+	case protocol.TypeDatabaseDiscoveryReq:
+		return protocol.TypeDatabaseDiscoveryResp, nil
 	case protocol.TypeSnapshotListReq:
 		return protocol.TypeSnapshotListResp, nil
 	case protocol.TypeSnapshotBrowseReq:

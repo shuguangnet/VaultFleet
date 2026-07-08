@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { listAgents, backupNow, discoverDockerAgent, listAgentTags } from "@/services/agents";
+import { listAgents, backupNow, discoverDatabaseAgent, discoverDockerAgent, listAgentTags } from "@/services/agents";
 import {
   bulkAssignPolicy,
   createPolicy,
@@ -22,6 +22,7 @@ import { PoliciesPage } from "./policies-page";
 
 vi.mock("@/services/agents", () => ({
   backupNow: vi.fn(),
+  discoverDatabaseAgent: vi.fn(),
   discoverDockerAgent: vi.fn(),
   listAgentTags: vi.fn(),
   listAgents: vi.fn(),
@@ -72,6 +73,10 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.mocked(listAgentTags).mockResolvedValue([]);
+  vi.mocked(discoverDatabaseAgent).mockResolvedValue({
+    available: true,
+    databases: [],
+  });
   vi.mocked(bulkAssignPolicy).mockResolvedValue({
     source_policy_id: "policy-1",
     target_tags: [],
@@ -496,6 +501,105 @@ describe("PoliciesPage rclone form state", () => {
             password: "secret",
             database: "app",
             compress: true,
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("loads database names and submits the selected database", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listPolicies).mockResolvedValue([]);
+    vi.mocked(listAgents).mockResolvedValue([
+      {
+        id: "agent-1",
+        name: "node-1",
+        status: "online",
+        last_seen: "",
+        version: "",
+        hostname: "",
+        os: "",
+        arch: "",
+        capabilities: ["database_backups"],
+        created_at: "2026-05-25T00:00:00Z",
+      },
+    ]);
+    vi.mocked(listStorage).mockResolvedValue([
+      {
+        id: "storage-1",
+        name: "S3 Store",
+        rclone_type: "s3",
+        rclone_config: {},
+        created_at: "2026-05-25T00:00:00Z",
+        updated_at: "2026-05-25T00:00:00Z",
+      },
+    ]);
+    vi.mocked(discoverDatabaseAgent).mockResolvedValue({
+      available: true,
+      databases: ["app", "analytics"],
+    });
+    vi.mocked(createPolicy).mockResolvedValue({
+      id: "policy-1",
+      agent_id: "agent-1",
+      storage_id: "storage-1",
+      backup_mode: "snapshot",
+      repo_path: "vaultfleet/node-1",
+      backup_dirs: [],
+      backup_sources: [],
+      exclude_patterns: [],
+      schedule: "0 2 * * *",
+      retention: {},
+      timeout_hours: 6,
+      synced: false,
+      created_at: "2026-05-25T00:00:00Z",
+      updated_at: "2026-05-25T00:00:00Z",
+    });
+    vi.mocked(updatePolicy).mockResolvedValue({} as never);
+    vi.mocked(deletePolicy).mockResolvedValue({} as never);
+    vi.mocked(backupNow).mockResolvedValue({ command_id: "cmd-1", message_id: "msg-1" });
+
+    render(
+      <QueryClientProvider client={newTestQueryClient()}>
+        <AntdApp>
+          <PoliciesPage />
+        </AntdApp>
+      </QueryClientProvider>,
+    );
+
+    await clickButtonByText(user, "添加策略");
+    await user.click(screen.getAllByRole("combobox")[0]);
+    await clickOptionByName("node-1");
+    await user.click(screen.getAllByRole("combobox")[1]);
+    await clickOptionByName("S3 Store");
+    await clickButtonByText(user, "添加数据库");
+    await user.type(screen.getByLabelText("数据库用户"), "postgres");
+    await user.type(screen.getByLabelText("数据库密码"), "secret");
+    await clickButtonByText(user, "加载");
+
+    await waitFor(() => expect(discoverDatabaseAgent).toHaveBeenCalledTimes(1));
+    expect(discoverDatabaseAgent).toHaveBeenCalledWith(
+      "agent-1",
+      expect.objectContaining({
+        engine: "postgresql",
+        execution_mode: "host",
+        username: "postgres",
+        password: "secret",
+        all_databases: true,
+        database: "",
+      }),
+    );
+
+    await user.type(screen.getByLabelText("数据库名"), "analytics");
+    fireEvent.submit(screen.getByRole("form", { name: "备份策略表单" }));
+
+    await waitFor(() => expect(createPolicy).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(createPolicy).mock.calls[0][0].backup_sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "database",
+          database: expect.objectContaining({
+            database: "analytics",
+            all_databases: false,
           }),
         }),
       ]),

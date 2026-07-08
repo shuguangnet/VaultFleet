@@ -283,6 +283,79 @@ func TestDiscoverDockerRejectsOfflineAgent(t *testing.T) {
 	assert.Equal(t, "agent offline", body["error"])
 }
 
+func TestDiscoverDatabasesHappyRelay(t *testing.T) {
+	setup := setupBrowseAPI(t)
+	agent := createBrowseAgent(t, setup.database, "online")
+	markBrowseAgentCapabilities(t, setup.database, agent.ID, []string{protocol.CapabilityDatabaseBackups})
+	setup.hub.Add(agent.ID, nil)
+	setup.handler.timeout = time.Second
+	setup.handler.sendAndWait = func(agentID string, msg protocol.Message, timeout time.Duration) (<-chan protocol.Message, error) {
+		assert.Equal(t, agent.ID, agentID)
+		assert.Equal(t, protocol.TypeDatabaseDiscoveryReq, msg.Type)
+		assert.Equal(t, time.Second, timeout)
+		req, err := protocol.ParsePayload[protocol.DatabaseDiscoveryReqPayload](&msg)
+		require.NoError(t, err)
+		assert.Equal(t, protocol.DatabaseEngineMySQL, req.Source.Engine)
+		assert.Equal(t, protocol.DatabaseExecutionDocker, req.Source.ExecutionMode)
+		assert.Equal(t, "root", req.Source.Username)
+		assert.Equal(t, "secret", req.Source.Password)
+		assert.True(t, req.Source.AllDatabases)
+		assert.Empty(t, req.Source.Database)
+		require.NotNil(t, req.Source.DockerContainer)
+		assert.Equal(t, "mysql", req.Source.DockerContainer.Name)
+
+		resp, err := protocol.NewMessage(protocol.TypeDatabaseDiscoveryResp, protocol.DatabaseDiscoveryRespPayload{
+			Available: true,
+			Databases: []string{"app", "logs"},
+		})
+		require.NoError(t, err)
+		resp.ID = msg.ID
+		ch := make(chan protocol.Message, 1)
+		ch <- *resp
+		close(ch)
+		return ch, nil
+	}
+
+	w := postBrowseJSON(t, setup.router, "/api/agents/"+agent.ID+"/database/discover", map[string]any{
+		"source": map[string]any{
+			"engine":         "mysql",
+			"execution_mode": "docker",
+			"username":       "root",
+			"password":       "secret",
+			"docker_container": map[string]any{
+				"name": "mysql",
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	raw := parseJSON(t, w)
+	data, err := json.Marshal(raw["data"])
+	require.NoError(t, err)
+	var body protocol.DatabaseDiscoveryRespPayload
+	require.NoError(t, json.Unmarshal(data, &body))
+	assert.True(t, body.Available)
+	assert.Equal(t, []string{"app", "logs"}, body.Databases)
+}
+
+func TestDiscoverDatabasesRejectsUnsupportedAgent(t *testing.T) {
+	setup := setupBrowseAPI(t)
+	agent := createBrowseAgent(t, setup.database, "online")
+	setup.hub.Add(agent.ID, nil)
+
+	w := postBrowseJSON(t, setup.router, "/api/agents/"+agent.ID+"/database/discover", map[string]any{
+		"source": map[string]any{
+			"engine":         "postgresql",
+			"execution_mode": "host",
+			"username":       "postgres",
+		},
+	})
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	body := parseJSON(t, w)
+	assert.Equal(t, "agent does not support database backups", body["error"])
+}
+
 func markBrowseAgentCapabilities(t *testing.T, database *db.Database, agentID string, capabilities []string) {
 	t.Helper()
 	data, err := json.Marshal(map[string]any{"capabilities": capabilities})

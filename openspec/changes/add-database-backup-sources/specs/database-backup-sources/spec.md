@@ -39,7 +39,8 @@ VaultFleet SHALL execute PostgreSQL database backup sources as logical dump file
 
 #### Scenario: Dump all PostgreSQL databases
 - **WHEN** a backup runs for a PostgreSQL source configured for all databases
-- **THEN** the Agent runs `pg_dumpall` with the configured connection and writes a staged SQL dump file
+- **THEN** the Agent lists available databases and runs `pg_dump` once per database
+- **AND** each database is written to a separate staged SQL dump file
 
 #### Scenario: PostgreSQL dump command missing
 - **WHEN** the required PostgreSQL dump command is unavailable in the selected execution environment
@@ -54,7 +55,8 @@ VaultFleet SHALL execute MySQL database backup sources as logical dump files bef
 
 #### Scenario: Dump all MySQL databases
 - **WHEN** a backup runs for a MySQL source configured for all databases
-- **THEN** the Agent runs `mysqldump --all-databases` and writes a staged SQL dump file
+- **THEN** the Agent lists available databases and runs `mysqldump` once per database
+- **AND** each database is written to a separate staged SQL dump file
 
 #### Scenario: MySQL dump command missing
 - **WHEN** `mysqldump` is unavailable in the selected execution environment
@@ -107,6 +109,11 @@ The policy UI SHALL allow operators to add, edit, validate, and remove PostgreSQ
 #### Scenario: Add database source
 - **WHEN** an operator edits a backup policy for a capable Agent
 - **THEN** the UI offers a database source type with PostgreSQL and MySQL configuration fields
+
+#### Scenario: Select discovered database
+- **WHEN** an operator enters database connection settings and requests database discovery
+- **THEN** VaultFleet asks the selected Agent to list databases using those settings
+- **AND** the UI lets the operator choose one discovered database or choose all databases
 
 #### Scenario: Configure Docker database dump
 - **WHEN** an operator chooses Docker execution mode for a database source

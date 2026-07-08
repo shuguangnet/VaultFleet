@@ -16,7 +16,7 @@
 ## 3. Agent Database Dump Execution
 
 - [x] 3.1 Add an Agent database dump package or service that prepares per-task staging directories and builds PostgreSQL/MySQL dump commands.
-- [x] 3.2 Implement host execution for `pg_dump`, `pg_dumpall`, and `mysqldump` with safe credential passing and timeout/cancellation handling.
+- [x] 3.2 Implement host execution for `pg_dump`, `psql` database discovery, `mysqldump`, and `mysql` database discovery with safe credential passing and timeout/cancellation handling.
 - [x] 3.3 Implement Docker execution for PostgreSQL/MySQL dump sources using selected container identity and safe credential passing.
 - [x] 3.4 Support single-database and all-databases dump modes, optional gzip compression, deterministic dump filenames, and non-secret metadata.
 - [x] 3.5 Redact database secrets from dump stdout/stderr task logs and remove temporary credential files after each dump.

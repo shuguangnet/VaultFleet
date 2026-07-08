@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   Alert,
   App,
+  AutoComplete,
   Button,
   Card,
   Checkbox,
@@ -38,6 +39,7 @@ import type { ColumnsType } from "antd/es/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   backupNow,
+  discoverDatabaseAgent,
   discoverDockerAgent,
   listAgentTags,
   listAgents,
@@ -321,6 +323,14 @@ export function PoliciesPage() {
     useState<BulkAssignPolicyResponse | null>(null);
   const [retentionPreset, setRetentionPreset] = useState("standard");
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [databaseDiscovery, setDatabaseDiscovery] = useState<
+    Record<number, { databases: string[]; error?: string }>
+  >({});
+  const [databaseDiscoveryLoadingIndex, setDatabaseDiscoveryLoadingIndex] =
+    useState<number | null>(null);
+  const [databasePickerOpenIndex, setDatabasePickerOpenIndex] = useState<
+    number | null
+  >(null);
   const preBackupTimeout = Form.useWatch(
     ["pre_backup_hook", "timeout_seconds"],
     { preserve: true }
@@ -352,6 +362,9 @@ export function PoliciesPage() {
     setFormData(defaultPolicyInput());
     setRetentionPreset("standard");
     setAdvancedOpen(false);
+    setDatabaseDiscovery({});
+    setDatabaseDiscoveryLoadingIndex(null);
+    setDatabasePickerOpenIndex(null);
   };
 
   const createMutation = useMutation({
@@ -556,6 +569,57 @@ export function PoliciesPage() {
       return { type: "database" as const, database: updater(source.database) };
     });
     setDatabaseSources(next);
+  };
+
+  const discoverDatabasesForSource = async (
+    index: number,
+    source: DatabaseBackupSource,
+  ) => {
+    if (!formData.agent_id || !isAgentOnline || !databaseCapable) {
+      message.warning("节点不在线或不支持数据库备份");
+      return;
+    }
+    if (!source.username?.trim()) {
+      message.warning("请先填写数据库用户");
+      return;
+    }
+    if (source.execution_mode === "docker" && !source.docker_container) {
+      message.warning("请先选择数据库容器");
+      return;
+    }
+
+    setDatabaseDiscoveryLoadingIndex(index);
+    try {
+      const result = await discoverDatabaseAgent(formData.agent_id, {
+        ...source,
+        database: "",
+        all_databases: true,
+        output_name: "",
+      });
+      setDatabaseDiscovery((current) => ({
+        ...current,
+        [index]: {
+          databases: result.databases ?? [],
+          error: result.error,
+        },
+      }));
+      if (result.error) {
+        message.error("加载数据库失败: " + result.error);
+      } else if ((result.databases ?? []).length === 0) {
+        message.warning("未发现可备份数据库");
+      } else {
+        setDatabasePickerOpenIndex(index);
+        message.success(`已加载 ${result.databases.length} 个数据库`);
+      }
+    } catch (error: any) {
+      setDatabaseDiscovery((current) => ({
+        ...current,
+        [index]: { databases: [], error: error.message },
+      }));
+      message.error("加载数据库失败: " + error.message);
+    } finally {
+      setDatabaseDiscoveryLoadingIndex(null);
+    }
   };
 
   const columns: ColumnsType<BackupPolicy> = [
@@ -783,6 +847,7 @@ export function PoliciesPage() {
                   };
                   if (!editingId && agent) updates.repo_path = agent.name;
                   setFormData({ ...formData, ...updates });
+                  setDatabaseDiscovery({});
                 }}
                 virtual={false}
                 options={agents?.map((a) => ({
@@ -1285,7 +1350,10 @@ export function PoliciesPage() {
               <Button
                 icon={<PlusOutlined />}
                 disabled={!databaseCapable}
-                onClick={() => setDatabaseSources([...selectedDatabaseSources, defaultDatabaseSource()])}
+                onClick={() => {
+                  setDatabaseSources([...selectedDatabaseSources, defaultDatabaseSource()]);
+                  setDatabaseDiscovery({});
+                }}
               >
                 添加数据库
               </Button>
@@ -1298,10 +1366,12 @@ export function PoliciesPage() {
             {selectedDatabaseSources.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 12 }}>
                 {selectedDatabaseSources.map((source, index) => {
-                  const db = source.database;
-                  if (!db) return null;
-                  const idPrefix = `policy-db-${index}`;
-                  return (
+	                  const db = source.database;
+	                  if (!db) return null;
+	                  const idPrefix = `policy-db-${index}`;
+	                  const discoveredDatabases = databaseDiscovery[index]?.databases ?? [];
+	                  const databaseDiscoveryError = databaseDiscovery[index]?.error;
+	                  return (
                     <div
                       key={index}
                       style={{ border: "1px solid #f0f0f0", borderRadius: 6, padding: 12 }}
@@ -1313,9 +1383,12 @@ export function PoliciesPage() {
                           size="small"
                           icon={<DeleteOutlined />}
                           onClick={() =>
-                            setDatabaseSources(
-                              selectedDatabaseSources.filter((_, i) => i !== index),
-                            )
+                            {
+                              setDatabaseSources(
+                                selectedDatabaseSources.filter((_, i) => i !== index),
+                              );
+                              setDatabaseDiscovery({});
+                            }
                           }
                         />
                       </div>
@@ -1446,17 +1519,61 @@ export function PoliciesPage() {
                         </Col>
                         <Col xs={24} sm={12}>
                           <label htmlFor={`${idPrefix}-database`} style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>数据库名</label>
-                          <Input
-                            id={`${idPrefix}-database`}
-                            disabled={!!db.all_databases}
-                            value={db.database}
-                            onChange={(e) =>
-                              updateDatabaseSource(index, (current) => ({
-                                ...current,
-                                database: e.target.value,
-                              }))
-                            }
-                          />
+                          <Space.Compact style={{ width: "100%" }}>
+                            <AutoComplete
+                              id={`${idPrefix}-database`}
+                              style={{ width: "100%" }}
+                              disabled={!!db.all_databases}
+                              value={db.database}
+                              open={
+                                !db.all_databases &&
+                                databasePickerOpenIndex === index &&
+                                discoveredDatabases.length > 0
+                              }
+                              placeholder={db.all_databases ? "已选择全部数据库" : "输入或加载后选择"}
+                              options={discoveredDatabases.map((name) => ({
+                                value: name,
+                                label: name,
+                              }))}
+                              onFocus={() => setDatabasePickerOpenIndex(index)}
+                              onBlur={() => setDatabasePickerOpenIndex(null)}
+                              onChange={(value) =>
+                                updateDatabaseSource(index, (current) => ({
+                                  ...current,
+                                  database: value,
+                                }))
+                              }
+                              onSelect={(value) => {
+                                updateDatabaseSource(index, (current) => ({
+                                  ...current,
+                                  database: value,
+                                }));
+                                setDatabasePickerOpenIndex(null);
+                              }}
+                              filterOption={(inputValue, option) =>
+                                String(option?.value ?? "")
+                                  .toLowerCase()
+                                  .includes(inputValue.toLowerCase())
+                              }
+                            />
+                            <Button
+                              icon={<ReloadOutlined spin={databaseDiscoveryLoadingIndex === index} />}
+                              disabled={
+                                !!db.all_databases ||
+                                !isAgentOnline ||
+                                !databaseCapable ||
+                                databaseDiscoveryLoadingIndex !== null
+                              }
+                              onClick={() => discoverDatabasesForSource(index, db)}
+                            >
+                              加载
+                            </Button>
+                          </Space.Compact>
+                          {databaseDiscoveryError && !db.all_databases && (
+                            <Typography.Text type="danger" style={{ fontSize: 12 }}>
+                              {databaseDiscoveryError}
+                            </Typography.Text>
+                          )}
                         </Col>
                         <Col xs={24} sm={12}>
                           <label htmlFor={`${idPrefix}-output`} style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>输出文件名</label>

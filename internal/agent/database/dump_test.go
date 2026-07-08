@@ -54,8 +54,51 @@ func TestPreparePostgresHostDump(t *testing.T) {
 	assert.True(t, result.Metadata.Dumps[0].Compressed)
 }
 
-func TestPrepareMySQLDockerDump(t *testing.T) {
-	var command string
+func TestPreparePostgresAllDatabasesSplitsDumpFiles(t *testing.T) {
+	var commands []string
+	result, cleanup, err := Prepare(context.Background(), Config{
+		ConfigDir: t.TempDir(),
+		Sources: []protocol.BackupSource{{
+			Type: protocol.BackupSourceTypeDatabase,
+			Database: &protocol.DatabaseBackupSource{
+				Engine:        protocol.DatabaseEnginePostgreSQL,
+				ExecutionMode: protocol.DatabaseExecutionHost,
+				Username:      "postgres",
+				Password:      "secret",
+				AllDatabases:  true,
+				Compress:      true,
+			},
+		}},
+		Now: func() time.Time { return time.Date(2026, 7, 8, 1, 2, 3, 0, time.UTC) },
+		Runner: func(_ context.Context, _ []string, name string, args ...string) ([]byte, []byte, error) {
+			command := name + " " + strings.Join(args, " ")
+			commands = append(commands, command)
+			if name == "psql" {
+				return []byte("app\nanalytics\n"), nil, nil
+			}
+			return []byte("-- " + command), nil, nil
+		},
+	})
+	require.NoError(t, err)
+	defer cleanup()
+
+	assert.Equal(t, []string{
+		"psql -U postgres -d postgres -At -c SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname",
+		"pg_dump -U postgres -d app",
+		"pg_dump -U postgres -d analytics",
+	}, commands)
+	require.Len(t, result.Paths, 2)
+	require.Len(t, result.Metadata.Dumps, 2)
+	assert.Equal(t, "app", result.Metadata.Dumps[0].Database)
+	assert.Equal(t, "analytics", result.Metadata.Dumps[1].Database)
+	assert.False(t, result.Metadata.Dumps[0].AllDatabases)
+	assert.True(t, strings.HasSuffix(result.Metadata.Dumps[0].OutputName, ".sql.gz"))
+	assert.FileExists(t, result.Paths[0])
+	assert.FileExists(t, result.Paths[1])
+}
+
+func TestPrepareMySQLDockerAllDatabasesSplitsDumpFiles(t *testing.T) {
+	var commands []string
 	result, cleanup, err := Prepare(context.Background(), Config{
 		ConfigDir: t.TempDir(),
 		Sources: []protocol.BackupSource{{
@@ -66,22 +109,35 @@ func TestPrepareMySQLDockerDump(t *testing.T) {
 				Username:      "root",
 				Password:      "secret",
 				AllDatabases:  true,
+				OutputName:    "full.sql",
 				DockerContainer: &protocol.DockerContainerBackupSource{
 					Name: "mysql",
 				},
 			},
 		}},
 		Runner: func(_ context.Context, _ []string, name string, args ...string) ([]byte, []byte, error) {
-			command = name + " " + strings.Join(args, " ")
-			return []byte("SQL"), nil, nil
+			command := name + " " + strings.Join(args, " ")
+			commands = append(commands, command)
+			if strings.Contains(command, " mysql -u root -N -B -e SHOW DATABASES") {
+				return []byte("information_schema\napp\nperformance_schema\nlogs\n"), nil, nil
+			}
+			return []byte("-- " + command), nil, nil
 		},
 	})
 	require.NoError(t, err)
 	defer cleanup()
 
-	assert.Equal(t, "docker exec -i -e MYSQL_PWD=secret mysql mysqldump -u root --all-databases", command)
-	require.Len(t, result.Metadata.Dumps, 1)
-	assert.True(t, result.Metadata.Dumps[0].AllDatabases)
+	assert.Equal(t, []string{
+		"docker exec -i -e MYSQL_PWD=secret mysql mysql -u root -N -B -e SHOW DATABASES",
+		"docker exec -i -e MYSQL_PWD=secret mysql mysqldump -u root app",
+		"docker exec -i -e MYSQL_PWD=secret mysql mysqldump -u root logs",
+	}, commands)
+	require.Len(t, result.Paths, 2)
+	require.Len(t, result.Metadata.Dumps, 2)
+	assert.Equal(t, "app", result.Metadata.Dumps[0].Database)
+	assert.Equal(t, "full-app.sql", result.Metadata.Dumps[0].OutputName)
+	assert.Equal(t, "logs", result.Metadata.Dumps[1].Database)
+	assert.Equal(t, "full-logs.sql", result.Metadata.Dumps[1].OutputName)
 	assert.Equal(t, "mysql", result.Metadata.Dumps[0].ContainerName)
 }
 

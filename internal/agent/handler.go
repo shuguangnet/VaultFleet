@@ -39,6 +39,7 @@ type AgentUpdater interface {
 type BackupRunnerFunc func(context.Context, executor.ExecutorConfig) executor.TaskResult
 type BackupRunnerWithProgressFunc func(context.Context, executor.ExecutorConfig, executor.ProgressCallback) executor.TaskResult
 type DatabasePrepareFunc func(context.Context, agentdatabase.Config) (agentdatabase.Result, func(), error)
+type DatabaseListFunc func(context.Context, agentdatabase.ListConfig) ([]string, error)
 type RestoreRunnerFunc func(context.Context, executor.ExecutorConfig, string, string, []string) error
 type DockerRestoreRunnerFunc func(context.Context, protocol.DockerRestoreRequest) error
 type SnapshotListRunnerFunc func(context.Context, executor.ExecutorConfig) ([]executor.SnapshotInfo, error)
@@ -62,6 +63,7 @@ type HandlerConfig struct {
 	BackupRunner             BackupRunnerFunc
 	BackupRunnerWithProgress BackupRunnerWithProgressFunc
 	DatabasePrepare          DatabasePrepareFunc
+	DatabaseList             DatabaseListFunc
 	RestoreRunner            RestoreRunnerFunc
 	DockerRestoreRunner      DockerRestoreRunnerFunc
 	SnapshotListRunner       SnapshotListRunnerFunc
@@ -84,6 +86,7 @@ type Handler struct {
 	backupRunner             BackupRunnerFunc
 	backupRunnerWithProgress BackupRunnerWithProgressFunc
 	databasePrepare          DatabasePrepareFunc
+	databaseList             DatabaseListFunc
 	restoreRunner            RestoreRunnerFunc
 	dockerRestoreRunner      DockerRestoreRunnerFunc
 	snapshotListRunner       SnapshotListRunnerFunc
@@ -145,6 +148,10 @@ func NewHandler(config HandlerConfig) *Handler {
 	if databasePrepare == nil {
 		databasePrepare = agentdatabase.Prepare
 	}
+	databaseList := config.DatabaseList
+	if databaseList == nil {
+		databaseList = agentdatabase.List
+	}
 	dirSizeFunc := config.DirSizeFunc
 	if dirSizeFunc == nil {
 		dirSizeFunc = filebrowse.CalculateDirSize
@@ -168,6 +175,7 @@ func NewHandler(config HandlerConfig) *Handler {
 		backupRunner:             runner,
 		backupRunnerWithProgress: progressRunner,
 		databasePrepare:          databasePrepare,
+		databaseList:             databaseList,
 		restoreRunner:            restoreRunner,
 		dockerRestoreRunner:      dockerRestoreRunner,
 		snapshotListRunner:       snapshotListRunner,
@@ -196,6 +204,8 @@ func (h *Handler) Handle(msg protocol.Message) {
 		h.handleDirBrowseReq(msg)
 	case protocol.TypeDockerDiscoveryReq:
 		h.handleDockerDiscoveryReq(msg)
+	case protocol.TypeDatabaseDiscoveryReq:
+		h.handleDatabaseDiscoveryReq(msg)
 	case protocol.TypeDirSizeReq:
 		h.handleDirSizeReq(msg)
 	case protocol.TypeRestoreReq, protocol.TypeSelectiveRestoreReq:
@@ -1873,6 +1883,44 @@ func (h *Handler) handleDockerDiscoveryReq(msg protocol.Message) {
 	resp.ID = msg.ID
 	if err := h.sendMessage(*resp); err != nil {
 		log.Printf("send docker discovery response failed: %v", err)
+	}
+}
+
+func (h *Handler) handleDatabaseDiscoveryReq(msg protocol.Message) {
+	req, err := protocol.ParsePayload[protocol.DatabaseDiscoveryReqPayload](&msg)
+	if err != nil {
+		log.Printf("parse database discovery request failed: %v", err)
+		return
+	}
+
+	timeout := 30 * time.Second
+	if req.Source.DumpTimeoutSeconds > 0 {
+		timeout = time.Duration(req.Source.DumpTimeoutSeconds) * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	databases, listErr := h.databaseList(ctx, agentdatabase.ListConfig{
+		ConfigDir: h.configDir,
+		Source:    req.Source,
+	})
+	payload := protocol.DatabaseDiscoveryRespPayload{
+		Available: listErr == nil,
+		Databases: databases,
+	}
+	if listErr != nil {
+		payload.Error = listErr.Error()
+		payload.Databases = nil
+	}
+
+	resp, err := protocol.NewMessage(protocol.TypeDatabaseDiscoveryResp, payload)
+	if err != nil {
+		log.Printf("create database discovery response failed: %v", err)
+		return
+	}
+	resp.ID = msg.ID
+	if err := h.sendMessage(*resp); err != nil {
+		log.Printf("send database discovery response failed: %v", err)
 	}
 }
 

@@ -31,9 +31,22 @@ type Config struct {
 	Now       func() time.Time
 }
 
+type ListConfig struct {
+	ConfigDir string
+	Source    protocol.DatabaseBackupSource
+	TaskLog   LogFunc
+	Runner    CommandRunner
+}
+
 type Result struct {
 	Paths    []string
 	Metadata *protocol.DatabaseBackupMetadata
+}
+
+type commandSpec struct {
+	Env     []string
+	Command string
+	Args    []string
 }
 
 func Prepare(ctx context.Context, cfg Config) (Result, func(), error) {
@@ -61,15 +74,38 @@ func Prepare(ctx context.Context, cfg Config) (Result, func(), error) {
 		Metadata: &protocol.DatabaseBackupMetadata{},
 	}
 	for _, source := range sources {
-		meta, err := dumpSource(ctx, cfg, stageDir, source)
+		metas, err := dumpSource(ctx, cfg, stageDir, source)
 		if err != nil {
 			cleanup()
 			return Result{}, func() {}, err
 		}
-		result.Paths = append(result.Paths, meta.OutputPath)
-		result.Metadata.Dumps = append(result.Metadata.Dumps, meta)
+		for _, meta := range metas {
+			result.Paths = append(result.Paths, meta.OutputPath)
+			result.Metadata.Dumps = append(result.Metadata.Dumps, meta)
+		}
 	}
 	return result, cleanup, nil
+}
+
+func List(ctx context.Context, cfg ListConfig) ([]string, error) {
+	if cfg.Runner == nil {
+		cfg.Runner = runCommand
+	}
+	configDir := strings.TrimSpace(cfg.ConfigDir)
+	if configDir == "" {
+		return nil, errors.New("database list config dir is required")
+	}
+	stageDir, err := os.MkdirTemp(configDir, "database-discovery-*")
+	if err != nil {
+		return nil, fmt.Errorf("prepare database discovery staging: %w", err)
+	}
+	defer os.RemoveAll(stageDir)
+
+	return listDatabases(ctx, Config{
+		ConfigDir: configDir,
+		TaskLog:   cfg.TaskLog,
+		Runner:    cfg.Runner,
+	}, stageDir, cfg.Source)
 }
 
 func databaseSources(sources []protocol.BackupSource) []protocol.DatabaseBackupSource {
@@ -82,16 +118,69 @@ func databaseSources(sources []protocol.BackupSource) []protocol.DatabaseBackupS
 	return databases
 }
 
-func dumpSource(ctx context.Context, cfg Config, stageDir string, source protocol.DatabaseBackupSource) (protocol.DatabaseDumpMetadata, error) {
+func dumpSource(ctx context.Context, cfg Config, stageDir string, source protocol.DatabaseBackupSource) ([]protocol.DatabaseDumpMetadata, error) {
+	if source.AllDatabases {
+		return dumpAllDatabases(ctx, cfg, stageDir, source)
+	}
+	meta, err := dumpSingleDatabase(ctx, cfg, stageDir, source)
+	if err != nil {
+		return nil, err
+	}
+	return []protocol.DatabaseDumpMetadata{meta}, nil
+}
+
+func dumpAllDatabases(ctx context.Context, cfg Config, stageDir string, source protocol.DatabaseBackupSource) ([]protocol.DatabaseDumpMetadata, error) {
+	databases, err := listDatabases(ctx, cfg, stageDir, source)
+	if err != nil {
+		return nil, err
+	}
+	if len(databases) == 0 {
+		return nil, fmt.Errorf("database dump all databases: no databases found")
+	}
+
+	metas := make([]protocol.DatabaseDumpMetadata, 0, len(databases))
+	seenOutputNames := make(map[string]int, len(databases))
+	now := cfg.Now()
+	for _, database := range databases {
+		single := source
+		single.AllDatabases = false
+		single.Database = database
+		single.OutputName = uniqueDumpFileName(dumpFileNameForDatabase(source, database, now), seenOutputNames)
+		singleMeta, err := dumpSingleDatabase(ctx, cfg, stageDir, single)
+		if err != nil {
+			return nil, err
+		}
+		metas = append(metas, singleMeta)
+	}
+	return metas, nil
+}
+
+func listDatabases(ctx context.Context, cfg Config, stageDir string, source protocol.DatabaseBackupSource) ([]string, error) {
+	log(cfg.TaskLog, "info", "system", "listing "+source.Engine+" databases")
+	spec, err := buildListCommand(stageDir, source)
+	if err != nil {
+		return nil, err
+	}
+	stdout, stderr, err := cfg.Runner(ctx, spec.Env, spec.Command, spec.Args...)
+	if len(stderr) > 0 {
+		log(cfg.TaskLog, "error", "stderr", redactSecrets(string(stderr), source.Password))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list %s databases: %w", source.Engine, err)
+	}
+	return parseDatabaseList(stdout, source.Engine), nil
+}
+
+func dumpSingleDatabase(ctx context.Context, cfg Config, stageDir string, source protocol.DatabaseBackupSource) (protocol.DatabaseDumpMetadata, error) {
 	name := dumpFileName(source, cfg.Now())
 	outputPath := filepath.Join(stageDir, name)
 	log(cfg.TaskLog, "info", "system", "starting "+source.Engine+" dump "+dumpLabel(source))
 
-	env, command, args, err := buildCommand(stageDir, source)
+	spec, err := buildDumpCommand(stageDir, source)
 	if err != nil {
 		return protocol.DatabaseDumpMetadata{}, err
 	}
-	stdout, stderr, err := cfg.Runner(ctx, env, command, args...)
+	stdout, stderr, err := cfg.Runner(ctx, spec.Env, spec.Command, spec.Args...)
 	if len(stderr) > 0 {
 		log(cfg.TaskLog, "error", "stderr", redactSecrets(string(stderr), source.Password))
 	}
@@ -122,26 +211,32 @@ func dumpSource(ctx context.Context, cfg Config, stageDir string, source protoco
 	return meta, nil
 }
 
-func buildCommand(stageDir string, source protocol.DatabaseBackupSource) ([]string, string, []string, error) {
+func buildDumpCommand(stageDir string, source protocol.DatabaseBackupSource) (commandSpec, error) {
 	switch source.Engine {
 	case protocol.DatabaseEnginePostgreSQL:
 		return buildPostgresCommand(source)
 	case protocol.DatabaseEngineMySQL:
 		return buildMySQLCommand(stageDir, source)
 	default:
-		return nil, "", nil, fmt.Errorf("unsupported database engine %q", source.Engine)
+		return commandSpec{}, fmt.Errorf("unsupported database engine %q", source.Engine)
 	}
 }
 
-func buildPostgresCommand(source protocol.DatabaseBackupSource) ([]string, string, []string, error) {
+func buildListCommand(stageDir string, source protocol.DatabaseBackupSource) (commandSpec, error) {
+	switch source.Engine {
+	case protocol.DatabaseEnginePostgreSQL:
+		return buildPostgresListCommand(source)
+	case protocol.DatabaseEngineMySQL:
+		return buildMySQLListCommand(stageDir, source)
+	default:
+		return commandSpec{}, fmt.Errorf("unsupported database engine %q", source.Engine)
+	}
+}
+
+func buildPostgresCommand(source protocol.DatabaseBackupSource) (commandSpec, error) {
 	tool := "pg_dump"
-	if source.AllDatabases {
-		tool = "pg_dumpall"
-	}
 	args := postgresConnectionArgs(source)
-	if !source.AllDatabases {
-		args = append(args, "-d", source.Database)
-	}
+	args = append(args, "-d", source.Database)
 	args = append(args, source.ExtraArgs...)
 	env := []string{}
 	if source.Password != "" {
@@ -150,7 +245,7 @@ func buildPostgresCommand(source protocol.DatabaseBackupSource) ([]string, strin
 	if source.ExecutionMode == protocol.DatabaseExecutionDocker {
 		container := dockerContainerName(source)
 		if container == "" {
-			return nil, "", nil, errors.New("database docker source needs a container")
+			return commandSpec{}, errors.New("database docker source needs a container")
 		}
 		dockerArgs := []string{"exec", "-i"}
 		if source.Password != "" {
@@ -158,9 +253,32 @@ func buildPostgresCommand(source protocol.DatabaseBackupSource) ([]string, strin
 		}
 		dockerArgs = append(dockerArgs, container, tool)
 		dockerArgs = append(dockerArgs, args...)
-		return nil, "docker", dockerArgs, nil
+		return commandSpec{Command: "docker", Args: dockerArgs}, nil
 	}
-	return env, tool, args, nil
+	return commandSpec{Env: env, Command: tool, Args: args}, nil
+}
+
+func buildPostgresListCommand(source protocol.DatabaseBackupSource) (commandSpec, error) {
+	args := postgresConnectionArgs(source)
+	args = append(args, "-d", "postgres", "-At", "-c", "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname")
+	env := []string{}
+	if source.Password != "" {
+		env = append(env, "PGPASSWORD="+source.Password)
+	}
+	if source.ExecutionMode == protocol.DatabaseExecutionDocker {
+		container := dockerContainerName(source)
+		if container == "" {
+			return commandSpec{}, errors.New("database docker source needs a container")
+		}
+		dockerArgs := []string{"exec", "-i"}
+		if source.Password != "" {
+			dockerArgs = append(dockerArgs, "-e", "PGPASSWORD="+source.Password)
+		}
+		dockerArgs = append(dockerArgs, container, "psql")
+		dockerArgs = append(dockerArgs, args...)
+		return commandSpec{Command: "docker", Args: dockerArgs}, nil
+	}
+	return commandSpec{Env: env, Command: "psql", Args: args}, nil
 }
 
 func postgresConnectionArgs(source protocol.DatabaseBackupSource) []string {
@@ -177,18 +295,14 @@ func postgresConnectionArgs(source protocol.DatabaseBackupSource) []string {
 	return args
 }
 
-func buildMySQLCommand(stageDir string, source protocol.DatabaseBackupSource) ([]string, string, []string, error) {
+func buildMySQLCommand(stageDir string, source protocol.DatabaseBackupSource) (commandSpec, error) {
 	args := mysqlConnectionArgs(source)
-	if source.AllDatabases {
-		args = append(args, "--all-databases")
-	} else {
-		args = append(args, source.Database)
-	}
+	args = append(args, source.Database)
 	args = append(args, source.ExtraArgs...)
 	if source.ExecutionMode == protocol.DatabaseExecutionDocker {
 		container := dockerContainerName(source)
 		if container == "" {
-			return nil, "", nil, errors.New("database docker source needs a container")
+			return commandSpec{}, errors.New("database docker source needs a container")
 		}
 		dockerArgs := []string{"exec", "-i"}
 		if source.Password != "" {
@@ -196,16 +310,41 @@ func buildMySQLCommand(stageDir string, source protocol.DatabaseBackupSource) ([
 		}
 		dockerArgs = append(dockerArgs, container, "mysqldump")
 		dockerArgs = append(dockerArgs, args...)
-		return nil, "docker", dockerArgs, nil
+		return commandSpec{Command: "docker", Args: dockerArgs}, nil
 	}
 	if source.Password != "" {
 		defaultsFile, err := writeMySQLDefaultsFile(stageDir, source)
 		if err != nil {
-			return nil, "", nil, err
+			return commandSpec{}, err
 		}
 		args = append([]string{"--defaults-extra-file=" + defaultsFile}, args...)
 	}
-	return nil, "mysqldump", args, nil
+	return commandSpec{Command: "mysqldump", Args: args}, nil
+}
+
+func buildMySQLListCommand(stageDir string, source protocol.DatabaseBackupSource) (commandSpec, error) {
+	args := append(mysqlConnectionArgs(source), "-N", "-B", "-e", "SHOW DATABASES")
+	if source.ExecutionMode == protocol.DatabaseExecutionDocker {
+		container := dockerContainerName(source)
+		if container == "" {
+			return commandSpec{}, errors.New("database docker source needs a container")
+		}
+		dockerArgs := []string{"exec", "-i"}
+		if source.Password != "" {
+			dockerArgs = append(dockerArgs, "-e", "MYSQL_PWD="+source.Password)
+		}
+		dockerArgs = append(dockerArgs, container, "mysql")
+		dockerArgs = append(dockerArgs, args...)
+		return commandSpec{Command: "docker", Args: dockerArgs}, nil
+	}
+	if source.Password != "" {
+		defaultsFile, err := writeMySQLDefaultsFile(stageDir, source)
+		if err != nil {
+			return commandSpec{}, err
+		}
+		args = append([]string{"--defaults-extra-file=" + defaultsFile}, args...)
+	}
+	return commandSpec{Command: "mysql", Args: args}, nil
 }
 
 func mysqlConnectionArgs(source protocol.DatabaseBackupSource) []string {
@@ -267,6 +406,75 @@ func dumpFileName(source protocol.DatabaseBackupSource, now time.Time) string {
 		name += ".gz"
 	}
 	return safeFilePart(name)
+}
+
+func dumpFileNameForDatabase(source protocol.DatabaseBackupSource, database string, now time.Time) string {
+	if strings.TrimSpace(source.OutputName) == "" {
+		single := source
+		single.AllDatabases = false
+		single.Database = database
+		return dumpFileName(single, now)
+	}
+	name := safeFilePart(source.OutputName)
+	extension := ".sql"
+	if source.Compress {
+		extension = ".sql.gz"
+	}
+	base := strings.TrimSuffix(name, ".gz")
+	base = strings.TrimSuffix(base, ".sql")
+	base = strings.TrimSpace(base)
+	if base == "" {
+		base = "database-dump"
+	}
+	return safeFilePart(base + "-" + database + extension)
+}
+
+func uniqueDumpFileName(name string, seen map[string]int) string {
+	count := seen[name]
+	seen[name] = count + 1
+	if count == 0 {
+		return name
+	}
+	extension := ""
+	base := name
+	if strings.HasSuffix(base, ".sql.gz") {
+		extension = ".sql.gz"
+		base = strings.TrimSuffix(base, ".sql.gz")
+	} else if strings.HasSuffix(base, ".sql") {
+		extension = ".sql"
+		base = strings.TrimSuffix(base, ".sql")
+	}
+	return fmt.Sprintf("%s-%d%s", base, count+1, extension)
+}
+
+func parseDatabaseList(output []byte, engine string) []string {
+	lines := strings.Split(string(output), "\n")
+	databases := make([]string, 0, len(lines))
+	seen := make(map[string]struct{}, len(lines))
+	for _, line := range lines {
+		database := strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if database == "" || skipDatabase(engine, database) {
+			continue
+		}
+		if _, ok := seen[database]; ok {
+			continue
+		}
+		seen[database] = struct{}{}
+		databases = append(databases, database)
+	}
+	return databases
+}
+
+func skipDatabase(engine string, database string) bool {
+	if engine != protocol.DatabaseEngineMySQL {
+		return false
+	}
+	switch database {
+	case "information_schema", "performance_schema":
+		return true
+	default:
+		return false
+	}
 }
 
 func safeFilePart(value string) string {

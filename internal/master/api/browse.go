@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -38,6 +39,10 @@ type dirSizeRequest struct {
 	Path string `json:"path" binding:"required"`
 }
 
+type databaseDiscoveryRequest struct {
+	Source protocol.DatabaseBackupSource `json:"source" binding:"required"`
+}
+
 func NewBrowseHandler(database *db.Database, hub BrowseHub) *BrowseHandler {
 	handler := &BrowseHandler{
 		DB:      database,
@@ -55,6 +60,7 @@ func RegisterBrowseRoutes(rg *gin.RouterGroup, h *BrowseHandler) {
 	rg.POST("/agents/:id/browse", h.BrowseAgent)
 	rg.POST("/agents/:id/dir-size", h.DirSize)
 	rg.POST("/agents/:id/docker/discover", h.DiscoverDocker)
+	rg.POST("/agents/:id/database/discover", h.DiscoverDatabases)
 }
 
 func (h *BrowseHandler) BrowseAgent(c *gin.Context) {
@@ -230,6 +236,129 @@ func (h *BrowseHandler) DiscoverDocker(c *gin.Context) {
 	case <-c.Request.Context().Done():
 		writeErrorResponse(c, http.StatusGatewayTimeout, "request cancelled")
 	}
+}
+
+func (h *BrowseHandler) DiscoverDatabases(c *gin.Context) {
+	agentID := c.Param("id")
+	if !h.agentExists(c, agentID) {
+		return
+	}
+	supported, err := agentHasCapability(h.DB, agentID, protocol.CapabilityDatabaseBackups)
+	if err != nil {
+		writeErrorResponse(c, http.StatusInternalServerError, "database error")
+		return
+	}
+	if !supported {
+		writeErrorResponse(c, http.StatusBadRequest, "agent does not support database backups")
+		return
+	}
+	if h.Hub == nil || !h.Hub.IsOnline(agentID) {
+		writeErrorResponse(c, http.StatusBadGateway, "agent offline")
+		return
+	}
+
+	var request databaseDiscoveryRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		writeErrorResponse(c, http.StatusBadRequest, "invalid request")
+		return
+	}
+	source, ok := normalizeDatabaseDiscoverySource(c, request.Source)
+	if !ok {
+		return
+	}
+
+	msg, err := protocol.NewMessage(protocol.TypeDatabaseDiscoveryReq, protocol.DatabaseDiscoveryReqPayload{
+		Source: source,
+	})
+	if err != nil {
+		writeErrorResponse(c, http.StatusInternalServerError, "encode database discovery request")
+		return
+	}
+
+	wait := h.sendAndWait
+	if wait == nil && h.Hub != nil {
+		wait = h.Hub.SendAndWait
+	}
+	if wait == nil {
+		writeErrorResponse(c, http.StatusBadGateway, "agent offline")
+		return
+	}
+	respCh, err := wait(agentID, *msg, h.timeout)
+	if err != nil {
+		writeErrorResponse(c, http.StatusBadGateway, "agent offline")
+		return
+	}
+
+	select {
+	case resp, ok := <-respCh:
+		if !ok {
+			writeErrorResponse(c, http.StatusGatewayTimeout, "timeout waiting for agent response")
+			return
+		}
+		payload, err := protocol.ParsePayload[protocol.DatabaseDiscoveryRespPayload](&resp)
+		if err != nil {
+			writeErrorResponse(c, http.StatusBadGateway, "invalid agent response")
+			return
+		}
+		writeDataResponse(c, http.StatusOK, payload)
+	case <-c.Request.Context().Done():
+		writeErrorResponse(c, http.StatusGatewayTimeout, "request cancelled")
+	}
+}
+
+func normalizeDatabaseDiscoverySource(c *gin.Context, source protocol.DatabaseBackupSource) (protocol.DatabaseBackupSource, bool) {
+	source.Engine = strings.ToLower(strings.TrimSpace(source.Engine))
+	switch source.Engine {
+	case protocol.DatabaseEnginePostgreSQL, protocol.DatabaseEngineMySQL:
+	default:
+		writeErrorResponse(c, http.StatusBadRequest, "database source engine must be postgresql or mysql")
+		return protocol.DatabaseBackupSource{}, false
+	}
+	source.ExecutionMode = strings.ToLower(strings.TrimSpace(source.ExecutionMode))
+	switch source.ExecutionMode {
+	case protocol.DatabaseExecutionHost, protocol.DatabaseExecutionDocker:
+	default:
+		writeErrorResponse(c, http.StatusBadRequest, "database source execution_mode must be host or docker")
+		return protocol.DatabaseBackupSource{}, false
+	}
+	source.Host = strings.TrimSpace(source.Host)
+	source.Username = strings.TrimSpace(source.Username)
+	source.Password = strings.TrimSpace(source.Password)
+	source.Database = ""
+	source.AllDatabases = true
+	source.OutputName = ""
+	source.ConnectionName = strings.TrimSpace(source.ConnectionName)
+	source.ExtraArgs = normalizePolicyPathList(source.ExtraArgs)
+	if source.Username == "" {
+		writeErrorResponse(c, http.StatusBadRequest, "database source username is required")
+		return protocol.DatabaseBackupSource{}, false
+	}
+	if source.Port < 0 || source.Port > 65535 {
+		writeErrorResponse(c, http.StatusBadRequest, "database source port must be between 0 and 65535")
+		return protocol.DatabaseBackupSource{}, false
+	}
+	if source.ExecutionMode == protocol.DatabaseExecutionDocker {
+		if source.DockerContainer == nil || strings.TrimSpace(firstDatabaseDiscoveryContainerIdentity(*source.DockerContainer)) == "" {
+			writeErrorResponse(c, http.StatusBadRequest, "database docker source needs a container")
+			return protocol.DatabaseBackupSource{}, false
+		}
+		normalizeDockerContainerSource(source.DockerContainer)
+	}
+	if source.DumpTimeoutSeconds < 0 || source.DumpTimeoutSeconds > maxPolicyHookTimeoutSeconds {
+		writeErrorResponse(c, http.StatusBadRequest, "database source dump_timeout_seconds must be between 0 and 3600")
+		return protocol.DatabaseBackupSource{}, false
+	}
+	return source, true
+}
+
+func firstDatabaseDiscoveryContainerIdentity(container protocol.DockerContainerBackupSource) string {
+	for _, value := range []string{container.ContainerID, container.Name, container.ComposeService} {
+		value = strings.Trim(strings.TrimSpace(value), "/")
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (h *BrowseHandler) agentExists(c *gin.Context, agentID string) bool {
