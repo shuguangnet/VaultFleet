@@ -14,11 +14,16 @@ export default defineConfig({
     }
   },
   server: {
+    host: "0.0.0.0",
     port: 5173,
+    strictPort: true,
+    allowedHosts: true,
     proxy: {
       "/api": "https://vf.933999.xyz",
+      "/health": "https://vf.933999.xyz",
+      "/ready": "https://vf.933999.xyz",
       "/ws": {
-        target: "ws://vf.933999.xyz",
+        target: "wss://vf.933999.xyz",
         ws: true
       },
       "/install.sh": "https://vf.933999.xyz"

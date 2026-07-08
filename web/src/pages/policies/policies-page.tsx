@@ -621,7 +621,7 @@ export function PoliciesPage() {
                     cancelText="取消"
                     onConfirm={() => deleteMutation.mutate(record.id)}
                   >
-                    <span style={{ color: "#ff4d4f" }}>删除</span>
+                    <span style={{ color: "#c53030" }}>删除</span>
                   </Popconfirm>
                 ),
               } : null,
@@ -827,7 +827,7 @@ export function PoliciesPage() {
                     borderRadius: 6,
                     border: `1px solid ${
                       formData.backup_mode === "snapshot"
-                        ? "#1668dc"
+                        ? "#1f4f8f"
                         : "#f0f0f0"
                     }`,
                     background:
@@ -856,7 +856,7 @@ export function PoliciesPage() {
                     borderRadius: 6,
                     border: `1px solid ${
                       formData.backup_mode === "archive"
-                        ? "#1668dc"
+                        ? "#1f4f8f"
                         : "#f0f0f0"
                     }`,
                     background:
@@ -1406,7 +1406,7 @@ export function PoliciesPage() {
                       padding: 10,
                       borderRadius: 6,
                       border: `1px solid ${
-                        retentionPreset === key ? "#1668dc" : "#f0f0f0"
+                        retentionPreset === key ? "#1f4f8f" : "#f0f0f0"
                       }`,
                       background:
                         retentionPreset === key

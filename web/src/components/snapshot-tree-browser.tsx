@@ -452,7 +452,7 @@ function TreeNodeRow({
                 padding: "2px 8px",
                 paddingLeft: padLeft,
                 fontSize: 10,
-                color: "#ff4d4f",
+                color: "#c53030",
               }}
             >
               {node.error}

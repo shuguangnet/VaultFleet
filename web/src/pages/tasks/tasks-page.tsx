@@ -313,7 +313,7 @@ export function TasksPage() {
           </Typography.Text>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
             {task.policy_id && (
-              <Tag color="purple" style={{ fontSize: 11 }}>
+              <Tag style={{ fontSize: 11 }}>
                 策略:{task.policy_id.substring(0, 8)}
               </Tag>
             )}

@@ -201,7 +201,7 @@ export function AppLayout({ user }: AppLayoutProps) {
         width="min(86vw, 320px)"
         className="vf-mobile-nav-drawer"
         styles={{
-          body: { padding: 0, background: "#0f1f3d" },
+          body: { padding: 0, background: "#172033" },
           header: { display: "none" },
         }}
       >
@@ -228,9 +228,8 @@ export function AppLayout({ user }: AppLayoutProps) {
             alignItems: "center",
             justifyContent: "space-between",
             padding: "0 20px",
-            background: "rgba(255, 255, 255, 0.88)",
-            borderBottom: "1px solid rgba(237, 241, 247, 0.92)",
-            backdropFilter: "blur(14px)",
+            background: "#ffffff",
+            borderBottom: "1px solid #e7ebf0",
             position: "sticky",
             top: 0,
             zIndex: 10,
@@ -296,7 +295,7 @@ export function AppLayout({ user }: AppLayoutProps) {
         <Content
           className="vf-app-content"
           style={{
-            background: "#f3f6fb",
+            background: "#f6f7f9",
             overflow: "auto",
           }}
         >

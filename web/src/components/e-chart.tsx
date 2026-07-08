@@ -71,7 +71,7 @@ export function EChart({
     if (loading) {
       chart.showLoading("default", {
         text: "加载中",
-        color: "#1668dc",
+        color: "#1f4f8f",
         textColor: "rgba(0, 0, 0, 0.45)",
         maskColor: "rgba(255, 255, 255, 0.6)",
       });

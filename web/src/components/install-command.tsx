@@ -80,7 +80,7 @@ export function InstallCommand({ enrollToken }: InstallCommandProps) {
                 padding: "10px 12px",
                 borderRadius: 6,
                 border: `1px solid ${
-                  scriptSource === option.value ? "#1668dc" : "#f0f0f0"
+                  scriptSource === option.value ? "#1f4f8f" : "#f0f0f0"
                 }`,
                 background:
                   scriptSource === option.value ? "rgba(22,104,220,0.04)" : "transparent",
@@ -93,7 +93,7 @@ export function InstallCommand({ enrollToken }: InstallCommandProps) {
                 value={option.value}
                 checked={scriptSource === option.value}
                 onChange={() => setScriptSource(option.value)}
-                style={{ marginTop: 2, accentColor: "#1668dc" }}
+                style={{ marginTop: 2, accentColor: "#1f4f8f" }}
               />
               <span>
                 <div style={{ fontSize: 13, fontWeight: 500 }}>{option.label}</div>
@@ -154,7 +154,7 @@ export function InstallCommand({ enrollToken }: InstallCommandProps) {
           </pre>
           <Button
             type="text"
-            icon={copied ? <CheckOutlined style={{ color: "#52c41a" }} /> : <CopyOutlined />}
+            icon={copied ? <CheckOutlined style={{ color: "#2f855a" }} /> : <CopyOutlined />}
             onClick={handleCopy}
             className="vf-icon-button"
             style={{ position: "absolute", top: 8, right: 8 }}

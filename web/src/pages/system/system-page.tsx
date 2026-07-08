@@ -346,7 +346,7 @@ export function SystemPage() {
       <Card
         title={
           <Space>
-            <ThunderboltOutlined style={{ color: "#1668dc" }} />
+            <ThunderboltOutlined style={{ color: "#1f4f8f" }} />
             <Typography.Text strong>系统状态</Typography.Text>
             {versionInfo?.version && (
               <Tag style={{ fontFamily: "monospace" }}>{versionInfo.version}</Tag>

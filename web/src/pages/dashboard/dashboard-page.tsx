@@ -50,12 +50,12 @@ interface DashboardTaskRow {
 }
 
 const chartColors = {
-  primary: "#1668dc",
-  success: "#52c41a",
-  warning: "#faad14",
-  error: "#ff4d4f",
-  cyan: "#13c2c2",
-  purple: "#722ed1",
+  primary: "#1f4f8f",
+  success: "#2f855a",
+  warning: "#b7791f",
+  error: "#c53030",
+  cyan: "#3b6978",
+  purple: "#6b5f89",
   slate: "#667085",
 };
 
@@ -67,7 +67,7 @@ const taskStatusMeta: Record<
   running: { label: "运行中", color: chartColors.primary },
   success: { label: "成功", color: chartColors.success },
   failed: { label: "失败", color: chartColors.error },
-  timeout: { label: "超时", color: "#fa8c16" },
+  timeout: { label: "超时", color: "#9a5b13" },
   cancelled: { label: "已取消", color: chartColors.slate },
 };
 

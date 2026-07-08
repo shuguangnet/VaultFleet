@@ -42,8 +42,8 @@ export function LoginPage({ onComplete }: LoginPageProps) {
         style={{
           width: "100%",
           maxWidth: 420,
-          boxShadow: "0 20px 60px rgba(0, 0, 0, 0.3)",
-          borderRadius: 10,
+          boxShadow: "0 16px 40px rgba(15, 23, 42, 0.18)",
+          borderRadius: 4,
         }}
         styles={{ body: { padding: "32px 32px 24px" } }}
       >
@@ -56,7 +56,7 @@ export function LoginPage({ onComplete }: LoginPageProps) {
           }}
         >
           <SafetyCertificateOutlined
-            style={{ fontSize: 28, color: "#1668dc" }}
+            style={{ fontSize: 28, color: "#1f4f8f" }}
           />
           <Typography.Title level={4} style={{ margin: 0 }}>
             云备份

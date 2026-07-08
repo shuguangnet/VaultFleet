@@ -12,7 +12,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
   font-feature-settings: "tnum";
-  background-color: #f3f6fb;
+  background-color: #f6f7f9;
   color: rgba(0, 0, 0, 0.88);
   overflow-x: hidden;
 }
@@ -39,7 +39,7 @@ button {
 
 ::selection {
   color: #ffffff;
-  background: #1668dc;
+  background: #1f4f8f;
 }
 
 .vf-app-shell {
@@ -48,9 +48,7 @@ button {
 
 .vf-app-shell .ant-layout-sider,
 .vf-mobile-nav-drawer .ant-drawer-body {
-  background:
-    linear-gradient(180deg, rgba(22, 104, 220, 0.16), transparent 180px),
-    #0c1424 !important;
+  background: #172033 !important;
 }
 
 .vf-app-brand {
@@ -76,10 +74,10 @@ button {
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  color: #67e8f9;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  color: #bfd0e6;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 4px;
   font-size: 19px;
 }
 
@@ -112,7 +110,7 @@ button {
 .vf-app-shell .ant-menu-dark .ant-menu-item {
   margin-inline: 10px;
   width: calc(100% - 20px);
-  border-radius: 6px;
+  border-radius: 4px;
 }
 
 .vf-app-shell .ant-menu-dark .ant-menu-item .anticon {
@@ -120,8 +118,8 @@ button {
 }
 
 .vf-app-shell .ant-menu-dark .ant-menu-item-selected {
-  background: linear-gradient(90deg, #1668dc, #13c2c2) !important;
-  box-shadow: 0 10px 26px rgba(22, 104, 220, 0.3);
+  background: rgba(255, 255, 255, 0.10) !important;
+  box-shadow: inset 3px 0 0 #8fb4e8;
 }
 
 .vf-app-shell .ant-menu-dark .ant-menu-item-selected .anticon {
@@ -129,17 +127,12 @@ button {
 }
 
 .vf-app-header {
-  box-shadow:
-    0 1px 0 rgba(17, 24, 39, 0.06),
-    0 10px 28px rgba(15, 23, 42, 0.04);
+  box-shadow: none;
 }
 
 .vf-app-content {
   padding: 20px 24px;
-  background:
-    linear-gradient(180deg, rgba(22, 104, 220, 0.07), rgba(22, 104, 220, 0) 220px),
-    linear-gradient(90deg, rgba(19, 194, 194, 0.04), transparent 360px),
-    #f3f6fb !important;
+  background: #f6f7f9 !important;
 }
 
 .vf-icon-button {
@@ -149,11 +142,11 @@ button {
   align-items: center;
   justify-content: center;
   padding: 0;
-  border-radius: 6px;
+  border-radius: 4px;
 }
 
 .vf-icon-button:focus-visible {
-  outline: 2px solid #1668dc;
+  outline: 2px solid #1f4f8f;
   outline-offset: 2px;
 }
 
@@ -168,36 +161,7 @@ button {
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  background:
-    linear-gradient(135deg, rgba(27, 58, 107, 0.92), transparent 42%),
-    linear-gradient(225deg, rgba(12, 20, 36, 0.92), transparent 38%),
-    #0a1530;
-}
-
-.vf-login-backdrop::before,
-.vf-login-backdrop::after {
-  position: absolute;
-  inset: -18%;
-  z-index: -1;
-  pointer-events: none;
-  content: "";
-}
-
-.vf-login-backdrop::before {
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-  background-size: 64px 64px;
-  opacity: 0.55;
-  animation: vf-login-grid-drift 28s linear infinite;
-}
-
-.vf-login-backdrop::after {
-  background:
-    linear-gradient(115deg, transparent 0 34%, rgba(103, 232, 249, 0.1) 42%, transparent 52%),
-    linear-gradient(295deg, transparent 0 50%, rgba(22, 104, 220, 0.16) 58%, transparent 68%);
-  opacity: 0.78;
-  animation: vf-login-sweep 18s ease-in-out infinite alternate;
+  background: #172033;
 }
 
 .vf-login-backdrop > .ant-card {
@@ -205,44 +169,15 @@ button {
   z-index: 1;
 }
 
-@keyframes vf-login-grid-drift {
-  from {
-    background-position: 0 0, 0 0;
-  }
-
-  to {
-    background-position: 64px 64px, 64px 64px;
-  }
-}
-
-@keyframes vf-login-sweep {
-  from {
-    transform: translate3d(-4%, -2%, 0);
-  }
-
-  to {
-    transform: translate3d(4%, 2%, 0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .vf-login-backdrop::before,
-  .vf-login-backdrop::after {
-    animation: none;
-  }
-}
-
 .ant-card {
-  background: rgba(255, 255, 255, 0.96);
-  border-color: rgba(218, 226, 237, 0.92);
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.72) inset,
-    0 10px 30px rgba(15, 23, 42, 0.06);
+  background: #ffffff;
+  border-color: #e7ebf0;
+  box-shadow: none;
 }
 
 .ant-card .ant-card-head {
   min-height: 48px;
-  border-bottom-color: #edf1f7;
+  border-bottom-color: #e7ebf0;
 }
 
 .ant-card .ant-card-head-title {
@@ -256,23 +191,23 @@ button {
 
 .ant-modal .ant-modal-content,
 .ant-drawer .ant-drawer-content {
-  border: 1px solid rgba(218, 226, 237, 0.86);
-  box-shadow: 0 26px 70px rgba(15, 23, 42, 0.18);
+  border: 1px solid #d8dee8;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12);
 }
 
 .ant-modal .ant-modal-header,
 .ant-drawer .ant-drawer-header {
-  border-bottom-color: #edf1f7;
+  border-bottom-color: #e7ebf0;
 }
 
 .ant-btn-primary {
-  background: linear-gradient(135deg, #1668dc, #13c2c2);
-  box-shadow: 0 10px 22px rgba(22, 104, 220, 0.18);
+  background: #1f4f8f;
+  box-shadow: none;
 }
 
 .ant-btn-primary:not(:disabled):not(.ant-btn-disabled):hover {
-  background: linear-gradient(135deg, #155bd4, #0fadb8);
-  box-shadow: 0 14px 28px rgba(22, 104, 220, 0.24);
+  background: #173f73;
+  box-shadow: none;
 }
 
 .ant-input,
@@ -293,7 +228,7 @@ button {
 }
 
 .ant-alert {
-  border-radius: 8px;
+  border-radius: 4px;
 }
 
 .ant-table-wrapper .ant-table {
@@ -304,15 +239,15 @@ button {
   color: rgba(17, 24, 39, 0.72);
   font-weight: 600;
   letter-spacing: 0;
-  background: #f5f8fc;
+  background: #f8fafc;
 }
 
 .ant-table-wrapper .ant-table-tbody > tr > td {
-  border-bottom-color: #edf1f7;
+  border-bottom-color: #e7ebf0;
 }
 
 .ant-table-wrapper .ant-table-tbody > tr:hover > td {
-  background: #f4f8ff !important;
+  background: #f8fafc !important;
 }
 
 .ant-table-wrapper .ant-table-cell {
@@ -321,7 +256,7 @@ button {
 
 .ant-tag {
   max-width: 100%;
-  border-radius: 999px;
+  border-radius: 4px;
   font-weight: 500;
 }
 
@@ -334,47 +269,19 @@ button {
 }
 
 .vf-page-heading {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
   padding: 18px 20px;
-  overflow: hidden;
-  background:
-    linear-gradient(120deg, rgba(255, 255, 255, 0.98), rgba(245, 249, 255, 0.94)),
-    #ffffff;
-  border: 1px solid rgba(218, 226, 237, 0.92);
-  border-radius: 8px;
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.76) inset,
-    0 10px 28px rgba(15, 23, 42, 0.05);
-}
-
-.vf-page-heading::before {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 4px;
-  content: "";
-  background: linear-gradient(180deg, #1668dc, #13c2c2);
-}
-
-.vf-page-heading::after {
-  position: absolute;
-  inset: 0 0 auto auto;
-  width: 42%;
-  height: 100%;
-  pointer-events: none;
-  content: "";
-  background:
-    linear-gradient(135deg, transparent 0 48%, rgba(19, 194, 194, 0.1) 48.2%, transparent 48.8%),
-    linear-gradient(135deg, transparent 0 66%, rgba(22, 104, 220, 0.08) 66.2%, transparent 66.7%);
+  background: #ffffff;
+  border: 1px solid #e7ebf0;
+  border-radius: 4px;
+  box-shadow: none;
 }
 
 .vf-page-heading-main {
-  position: relative;
-  z-index: 1;
   display: flex;
   min-width: 0;
   align-items: center;
@@ -387,10 +294,10 @@ button {
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  color: #1668dc;
-  background: #eef6ff;
-  border: 1px solid #d6e8ff;
-  border-radius: 8px;
+  color: #1f4f8f;
+  background: #f3f6fb;
+  border: 1px solid #d8dee8;
+  border-radius: 4px;
   font-size: 16px;
 }
 
@@ -432,8 +339,6 @@ button {
 }
 
 .vf-page-heading-actions {
-  position: relative;
-  z-index: 1;
   justify-content: flex-end;
 }
 
@@ -474,7 +379,7 @@ button {
   gap: 8px;
   padding: 10px 16px;
   background: #fff;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid #e7ebf0;
 }
 
 .vf-key-value-row {
@@ -486,57 +391,38 @@ button {
 }
 
 .vf-dashboard-hero {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   min-width: 0;
   padding: 24px 26px;
-  overflow: hidden;
-  background:
-    linear-gradient(120deg, rgba(9, 21, 39, 0.96), rgba(15, 36, 67, 0.96)),
-    #0f1f3d;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.18);
-}
-
-.vf-dashboard-hero::before {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  content: "";
-  background:
-    linear-gradient(90deg, rgba(22, 104, 220, 0.2), transparent 38%),
-    linear-gradient(135deg, transparent 0 58%, rgba(19, 194, 194, 0.16) 58.2%, transparent 58.8%);
-}
-
-.vf-dashboard-hero > * {
-  position: relative;
-  z-index: 1;
+  background: #ffffff;
+  border: 1px solid #e7ebf0;
+  border-radius: 4px;
+  box-shadow: none;
 }
 
 .vf-dashboard-eyebrow {
   display: block;
   margin-bottom: 4px;
-  color: #67e8f9;
+  color: #64748b;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0;
   text-transform: uppercase;
 }
 
 .vf-dashboard-title.ant-typography {
   margin: 0;
-  color: #ffffff;
+  color: #111827;
   line-height: 1.25;
 }
 
 .vf-dashboard-subtitle {
   display: block;
   margin-top: 6px;
-  color: rgba(229, 237, 248, 0.7);
+  color: rgba(17, 24, 39, 0.58);
 }
 
 .vf-dashboard-hero-actions {
@@ -546,7 +432,7 @@ button {
 .vf-readiness-tag {
   max-width: min(420px, 100%);
   padding: 4px 10px;
-  border-radius: 999px;
+  border-radius: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -570,19 +456,19 @@ button {
 }
 
 .vf-metric-card-primary::before {
-  background: #1668dc;
+  background: #1f4f8f;
 }
 
 .vf-metric-card-success::before {
-  background: #52c41a;
+  background: #2f855a;
 }
 
 .vf-metric-card-warning::before {
-  background: #faad14;
+  background: #b7791f;
 }
 
 .vf-metric-card-danger::before {
-  background: #ff4d4f;
+  background: #c53030;
 }
 
 .vf-metric-card .ant-card-body {
@@ -612,25 +498,26 @@ button {
   height: 34px;
   align-items: center;
   justify-content: center;
-  color: #1668dc;
-  background: #f1f6ff;
-  border-radius: 8px;
+  color: #1f4f8f;
+  background: #f3f6fb;
+  border: 1px solid #e7ebf0;
+  border-radius: 4px;
   font-size: 18px;
 }
 
 .vf-metric-card-success .vf-metric-icon {
-  color: #389e0d;
-  background: #f0f9eb;
+  color: #2f855a;
+  background: #f7faf8;
 }
 
 .vf-metric-card-warning .vf-metric-icon {
-  color: #d48806;
-  background: #fff7e6;
+  color: #b7791f;
+  background: #fbfaf7;
 }
 
 .vf-metric-card-danger .vf-metric-icon {
-  color: #cf1322;
-  background: #fff1f0;
+  color: #c53030;
+  background: #fdf8f8;
 }
 
 .vf-metric-value.ant-typography {
@@ -664,21 +551,18 @@ button {
   gap: 12px;
   padding: 16px;
   color: inherit;
-  background:
-    linear-gradient(180deg, #ffffff, #f8fbff);
-  border: 1px solid #edf1f7;
-  border-radius: 8px;
+  background: #ffffff;
+  border: 1px solid #e7ebf0;
+  border-radius: 4px;
   transition:
     border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    transform 0.2s ease;
+    background-color 0.2s ease;
 }
 
 .vf-dashboard-action:hover {
   color: inherit;
-  border-color: #91caff;
-  box-shadow: 0 8px 18px rgba(22, 104, 220, 0.08);
-  transform: translateY(-1px);
+  background: #f8fafc;
+  border-color: #cbd5e1;
 }
 
 .vf-dashboard-action > span:last-child {
@@ -699,10 +583,10 @@ button {
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  color: #1668dc;
-  background: #ffffff;
-  border: 1px solid #e6ebf2;
-  border-radius: 8px;
+  color: #1f4f8f;
+  background: #f8fafc;
+  border: 1px solid #e7ebf0;
+  border-radius: 4px;
   font-size: 17px;
 }
 

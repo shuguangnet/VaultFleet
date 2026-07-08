@@ -299,7 +299,7 @@ export function StoragePage() {
                   key: "delete",
                   icon: <DeleteOutlined />,
                   label: (
-                    <span style={{ color: "#ff4d4f" }}>删除</span>
+                    <span style={{ color: "#c53030" }}>删除</span>
                   ),
                   onClick: () => setConfirmDeleteId(record.id),
                 },
@@ -380,13 +380,13 @@ export function StoragePage() {
               ) : testResult ? (
                 testResult.ok ? (
                   <Typography.Text type="success" style={{ fontSize: 12 }}>
-                    <CheckCircleTwoTone twoToneColor="#52c41a" /> 通过 (
+                    <CheckCircleTwoTone twoToneColor="#2f855a" /> 通过 (
                     {testResult.latency_ms}ms)
                   </Typography.Text>
                 ) : (
                   <Tooltip title={testResult.error}>
                     <Typography.Text type="danger" style={{ fontSize: 12 }}>
-                      <CloseCircleTwoTone twoToneColor="#ff4d4f" /> 失败
+                      <CloseCircleTwoTone twoToneColor="#c53030" /> 失败
                     </Typography.Text>
                   </Tooltip>
                 )
