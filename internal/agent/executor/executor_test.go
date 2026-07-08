@@ -1,10 +1,14 @@
 package executor
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -306,6 +310,52 @@ func TestRunArchiveJobUploadsArtifactToRemote(t *testing.T) {
 	}
 	if !strings.Contains(logLine, "vaultfleet:tenant/agent-1/"+filepath.ToSlash(result.ArtifactPath)) {
 		t.Fatalf("rclone log = %q, want remote artifact destination", logLine)
+	}
+}
+
+func TestRunArchiveJobWritesManifestAtTarGzRoot(t *testing.T) {
+	configDir, backupDir := setupArchiveTestDirs(t)
+	setupFakeRclone(t)
+	result := RunArchiveJob(context.Background(), ExecutorConfig{
+		ConfigDir:     configDir,
+		RepoPath:      "tenant/agent-1",
+		BackupDirs:    []string{backupDir},
+		ArchiveFormat: protocol.ArchiveFormatTarGz,
+		ExtraArchiveFiles: []ArchiveExtraFile{{
+			Name: protocol.BackupContentManifestName,
+			Data: []byte(`{"version":1}`),
+		}},
+	})
+
+	if result.Status != "success" {
+		t.Fatalf("Status = %q, want success; error log: %q", result.Status, result.ErrorLog)
+	}
+	content := readTarGzEntry(t, filepath.Join(configDir, "artifacts", result.ArtifactName), protocol.BackupContentManifestName)
+	if string(content) != `{"version":1}` {
+		t.Fatalf("manifest content = %q", content)
+	}
+}
+
+func TestRunArchiveJobWritesManifestAtZipRoot(t *testing.T) {
+	configDir, backupDir := setupArchiveTestDirs(t)
+	setupFakeRclone(t)
+	result := RunArchiveJob(context.Background(), ExecutorConfig{
+		ConfigDir:     configDir,
+		RepoPath:      "tenant/agent-1",
+		BackupDirs:    []string{backupDir},
+		ArchiveFormat: protocol.ArchiveFormatZip,
+		ExtraArchiveFiles: []ArchiveExtraFile{{
+			Name: protocol.BackupContentManifestName,
+			Data: []byte(`{"version":1}`),
+		}},
+	})
+
+	if result.Status != "success" {
+		t.Fatalf("Status = %q, want success; error log: %q", result.Status, result.ErrorLog)
+	}
+	content := readZipEntry(t, filepath.Join(configDir, "artifacts", result.ArtifactName), protocol.BackupContentManifestName)
+	if string(content) != `{"version":1}` {
+		t.Fatalf("manifest content = %q", content)
 	}
 }
 
@@ -666,4 +716,89 @@ func assertProtocolResult(t *testing.T, got, want protocol.TaskResultPayload) {
 
 func shellQuoteForSh(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func setupArchiveTestDirs(t *testing.T) (string, string) {
+	t.Helper()
+	configDir := t.TempDir()
+	backupDir := filepath.Join(t.TempDir(), "data")
+	if err := os.MkdirAll(backupDir, 0o755); err != nil {
+		t.Fatalf("mkdir backup dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(backupDir, "hello.txt"), []byte("hello archive"), 0o644); err != nil {
+		t.Fatalf("seed backup file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "rclone.conf"), []byte("[vaultfleet]\ntype = memory\n"), 0o600); err != nil {
+		t.Fatalf("write rclone config: %v", err)
+	}
+	return configDir, backupDir
+}
+
+func setupFakeRclone(t *testing.T) {
+	t.Helper()
+	binDir := t.TempDir()
+	rclonePath := filepath.Join(binDir, "rclone")
+	if err := os.WriteFile(rclonePath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake rclone: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func readTarGzEntry(t *testing.T, archivePath string, entryName string) []byte {
+	t.Helper()
+	file, err := os.Open(archivePath)
+	if err != nil {
+		t.Fatalf("open tar.gz: %v", err)
+	}
+	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatalf("read gzip: %v", err)
+	}
+	defer gz.Close()
+	reader := tar.NewReader(gz)
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read tar entry: %v", err)
+		}
+		if header.Name == entryName {
+			data, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatalf("read tar manifest: %v", err)
+			}
+			return data
+		}
+	}
+	t.Fatalf("entry %q not found in %s", entryName, archivePath)
+	return nil
+}
+
+func readZipEntry(t *testing.T, archivePath string, entryName string) []byte {
+	t.Helper()
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	defer reader.Close()
+	for _, file := range reader.File {
+		if file.Name != entryName {
+			continue
+		}
+		rc, err := file.Open()
+		if err != nil {
+			t.Fatalf("open zip manifest: %v", err)
+		}
+		defer rc.Close()
+		data, err := io.ReadAll(rc)
+		if err != nil {
+			t.Fatalf("read zip manifest: %v", err)
+		}
+		return data
+	}
+	t.Fatalf("entry %q not found in %s", entryName, archivePath)
+	return nil
 }

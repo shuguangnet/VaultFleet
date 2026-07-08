@@ -187,6 +187,100 @@ type TaskResultPayload struct {
 	Docker              *DockerBackupMetadata     `json:"docker,omitempty"`
 	Database            *DatabaseBackupMetadata   `json:"database,omitempty"`
 	Verification        *BackupVerificationResult `json:"verification,omitempty"`
+	Manifest            *BackupContentManifest    `json:"manifest,omitempty"`
+}
+
+const (
+	BackupContentManifestVersion = 1
+	BackupContentManifestName    = "VAULTFLEET-MANIFEST.json"
+)
+
+// BackupContentManifest describes the non-secret contents of one backup run.
+type BackupContentManifest struct {
+	Version         int                `json:"version"`
+	GeneratedAt     time.Time          `json:"generated_at"`
+	BackupMode      string             `json:"backup_mode,omitempty"`
+	ArchiveFormat   string             `json:"archive_format,omitempty"`
+	Agent           ManifestAgent      `json:"agent"`
+	Policy          ManifestPolicy     `json:"policy,omitempty"`
+	Sources         ManifestSources    `json:"sources"`
+	ExcludePatterns []string           `json:"exclude_patterns,omitempty"`
+	Artifact        *ManifestArtifact  `json:"artifact,omitempty"`
+	Warnings        []ManifestWarning  `json:"warnings,omitempty"`
+	ContextName     string             `json:"context_name,omitempty"`
+	SiteName        string             `json:"site_name,omitempty"`
+	Integrity       *ManifestIntegrity `json:"integrity,omitempty"`
+}
+
+type ManifestAgent struct {
+	ID       string `json:"id,omitempty"`
+	Version  string `json:"version,omitempty"`
+	Hostname string `json:"hostname,omitempty"`
+}
+
+type ManifestPolicy struct {
+	BackupMode    string `json:"backup_mode,omitempty"`
+	ArchiveFormat string `json:"archive_format,omitempty"`
+	StorageType   string `json:"storage_type,omitempty"`
+	Repository    string `json:"repository,omitempty"`
+}
+
+type ManifestSources struct {
+	Paths     []ManifestPathSource   `json:"paths,omitempty"`
+	Docker    []ManifestDockerSource `json:"docker,omitempty"`
+	Databases []ManifestDatabaseDump `json:"databases,omitempty"`
+}
+
+type ManifestPathSource struct {
+	Path   string `json:"path"`
+	Kind   string `json:"kind,omitempty"`
+	Origin string `json:"origin,omitempty"`
+}
+
+type ManifestDockerSource struct {
+	ContainerID        string            `json:"container_id,omitempty"`
+	Name               string            `json:"name,omitempty"`
+	Image              string            `json:"image,omitempty"`
+	ComposeProject     string            `json:"compose_project,omitempty"`
+	ComposeService     string            `json:"compose_service,omitempty"`
+	ComposeWorkingDir  string            `json:"compose_working_dir,omitempty"`
+	ComposeConfigFiles []string          `json:"compose_config_files,omitempty"`
+	Mounts             []DockerMount     `json:"mounts,omitempty"`
+	ResolvedPaths      []string          `json:"resolved_paths,omitempty"`
+	Warnings           []ManifestWarning `json:"warnings,omitempty"`
+}
+
+type ManifestDatabaseDump struct {
+	Engine        string            `json:"engine,omitempty"`
+	ExecutionMode string            `json:"execution_mode,omitempty"`
+	Database      string            `json:"database,omitempty"`
+	AllDatabases  bool              `json:"all_databases,omitempty"`
+	ContainerName string            `json:"container_name,omitempty"`
+	OutputName    string            `json:"output_name,omitempty"`
+	Size          int64             `json:"size,omitempty"`
+	Compressed    bool              `json:"compressed,omitempty"`
+	Warnings      []ManifestWarning `json:"warnings,omitempty"`
+}
+
+type ManifestArtifact struct {
+	Name        string `json:"name,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Format      string `json:"format,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+}
+
+type ManifestWarning struct {
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message"`
+	Source  string `json:"source,omitempty"`
+}
+
+type ManifestIntegrity struct {
+	FileCount int64  `json:"file_count,omitempty"`
+	TotalSize int64  `json:"total_size,omitempty"`
+	Checksum  string `json:"checksum,omitempty"`
+	Algorithm string `json:"algorithm,omitempty"`
 }
 
 const (

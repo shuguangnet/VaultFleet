@@ -20,6 +20,42 @@ import (
 	"vaultfleet/pkg/protocol"
 )
 
+func TestNewTaskResponseIncludesManifestAndToleratesMissingManifest(t *testing.T) {
+	generatedAt := time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC)
+	rawManifest, err := json.Marshal(protocol.BackupContentManifest{
+		Version:     protocol.BackupContentManifestVersion,
+		GeneratedAt: generatedAt,
+		BackupMode:  protocol.BackupModeArchive,
+		Agent:       protocol.ManifestAgent{ID: "agent-1", Hostname: "node-1"},
+		Sources: protocol.ManifestSources{
+			Paths:     []protocol.ManifestPathSource{{Path: "/srv/site", Kind: "path"}},
+			Databases: []protocol.ManifestDatabaseDump{{Engine: protocol.DatabaseEngineMySQL, Database: "app", OutputName: "mysql-app.sql.gz"}},
+		},
+		Artifact: &protocol.ManifestArtifact{Name: "backup.zip", Path: "artifacts/backup.zip", Format: protocol.ArchiveFormatZip, Size: 2048},
+	})
+	require.NoError(t, err)
+
+	response := newTaskResponse(db.TaskHistory{
+		AgentID:  "agent-1",
+		Type:     "backup",
+		Status:   "success",
+		Manifest: string(rawManifest),
+	})
+
+	require.NotNil(t, response.Manifest)
+	assert.Equal(t, protocol.BackupContentManifestVersion, response.Manifest.Version)
+	assert.Equal(t, "node-1", response.Manifest.Agent.Hostname)
+	require.Len(t, response.Manifest.Sources.Paths, 1)
+	assert.Equal(t, "/srv/site", response.Manifest.Sources.Paths[0].Path)
+	require.Len(t, response.Manifest.Sources.Databases, 1)
+	assert.Equal(t, "mysql-app.sql.gz", response.Manifest.Sources.Databases[0].OutputName)
+	require.NotNil(t, response.Manifest.Artifact)
+	assert.Equal(t, int64(2048), response.Manifest.Artifact.Size)
+
+	legacy := newTaskResponse(db.TaskHistory{AgentID: "agent-1", Type: "backup", Status: "success"})
+	assert.Nil(t, legacy.Manifest)
+}
+
 func TestBackupNowSendsAgentCommand(t *testing.T) {
 	setup := setupTasksAPI(t)
 	agent := createTasksTestAgent(t, setup.database, "online")

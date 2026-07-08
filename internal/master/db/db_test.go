@@ -174,6 +174,7 @@ func TestDatabaseInit_AddsDockerBackupColumnsToLegacySchema(t *testing.T) {
 	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "Docker"))
 	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "Database"))
 	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "Verification"))
+	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "Manifest"))
 
 	policy := BackupPolicy{
 		AgentID:         "agent-001",
@@ -187,10 +188,11 @@ func TestDatabaseInit_AddsDockerBackupColumnsToLegacySchema(t *testing.T) {
 	require.NoError(t, database.DB.Create(&policy).Error)
 
 	history := TaskHistory{
-		AgentID: "agent-001",
-		Type:    "backup",
-		Status:  "success",
-		Docker:  `{"warnings":["compose file missing"]}`,
+		AgentID:  "agent-001",
+		Type:     "backup",
+		Status:   "success",
+		Docker:   `{"warnings":["compose file missing"]}`,
+		Manifest: `{"version":1,"sources":{"paths":[{"path":"/etc","kind":"path"}]}}`,
 	}
 	require.NoError(t, database.DB.Create(&history).Error)
 
@@ -201,6 +203,7 @@ func TestDatabaseInit_AddsDockerBackupColumnsToLegacySchema(t *testing.T) {
 	var storedHistory TaskHistory
 	require.NoError(t, database.DB.First(&storedHistory, "id = ?", history.ID).Error)
 	assert.JSONEq(t, history.Docker, storedHistory.Docker)
+	assert.JSONEq(t, history.Manifest, storedHistory.Manifest)
 }
 
 func TestUserCRUD(t *testing.T) {

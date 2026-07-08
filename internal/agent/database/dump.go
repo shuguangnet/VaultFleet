@@ -166,7 +166,7 @@ func listDatabases(ctx context.Context, cfg Config, stageDir string, source prot
 		log(cfg.TaskLog, "error", "stderr", redactSecrets(string(stderr), source.Password))
 	}
 	if err != nil {
-		return nil, fmt.Errorf("list %s databases: %w", source.Engine, err)
+		return nil, fmt.Errorf("list %s databases: %w", source.Engine, commandError(err, stderr, source.Password))
 	}
 	return parseDatabaseList(stdout, source.Engine), nil
 }
@@ -185,7 +185,7 @@ func dumpSingleDatabase(ctx context.Context, cfg Config, stageDir string, source
 		log(cfg.TaskLog, "error", "stderr", redactSecrets(string(stderr), source.Password))
 	}
 	if err != nil {
-		return protocol.DatabaseDumpMetadata{}, fmt.Errorf("database dump %s: %w", dumpLabel(source), err)
+		return protocol.DatabaseDumpMetadata{}, fmt.Errorf("database dump %s: %w", dumpLabel(source), commandError(err, stderr, source.Password))
 	}
 	if err := writeDump(outputPath, stdout, source.Compress); err != nil {
 		return protocol.DatabaseDumpMetadata{}, fmt.Errorf("write database dump %s: %w", outputPath, err)
@@ -535,6 +535,17 @@ func redactSecrets(text string, secrets ...string) string {
 		}
 	}
 	return text
+}
+
+func commandError(err error, stderr []byte, secrets ...string) error {
+	if err == nil {
+		return nil
+	}
+	detail := strings.TrimSpace(redactSecrets(string(stderr), secrets...))
+	if detail == "" {
+		return err
+	}
+	return fmt.Errorf("%w: %s", err, detail)
 }
 
 func log(logFn LogFunc, level string, stream string, line string) {

@@ -68,6 +68,7 @@ type taskResponse struct {
 	Docker              *protocol.DockerBackupMetadata     `json:"docker,omitempty"`
 	Database            *protocol.DatabaseBackupMetadata   `json:"database,omitempty"`
 	Verification        *protocol.BackupVerificationResult `json:"verification,omitempty"`
+	Manifest            *protocol.BackupContentManifest    `json:"manifest,omitempty"`
 	CreatedAt           time.Time                          `json:"created_at"`
 	UpdatedAt           time.Time                          `json:"updated_at"`
 }
@@ -657,6 +658,12 @@ func newTaskResponse(history db.TaskHistory) taskResponse {
 		var verification protocol.BackupVerificationResult
 		if err := json.Unmarshal([]byte(history.Verification), &verification); err == nil {
 			response.Verification = &verification
+		}
+	}
+	if history.Manifest != "" {
+		var manifest protocol.BackupContentManifest
+		if err := json.Unmarshal([]byte(history.Manifest), &manifest); err == nil {
+			response.Manifest = &manifest
 		}
 	}
 	return response

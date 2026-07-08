@@ -32,6 +32,7 @@ type TaskResult struct {
 	Docker              *protocol.DockerBackupMetadata     `json:"docker,omitempty"`
 	Database            *protocol.DatabaseBackupMetadata   `json:"database,omitempty"`
 	Verification        *protocol.BackupVerificationResult `json:"verification,omitempty"`
+	Manifest            *protocol.BackupContentManifest    `json:"manifest,omitempty"`
 }
 
 func (r TaskResult) ToProtocol(agentID string, startedAt time.Time) protocol.TaskResultPayload {
@@ -65,22 +66,29 @@ func (r TaskResult) ToProtocol(agentID string, startedAt time.Time) protocol.Tas
 		Docker:              r.Docker,
 		Database:            r.Database,
 		Verification:        r.Verification,
+		Manifest:            r.Manifest,
 	}
 }
 
+type ArchiveExtraFile struct {
+	Name string
+	Data []byte
+}
+
 type ExecutorConfig struct {
-	ConfigDir      string
-	RepoPath       string
-	BackupDirs     []string
-	Excludes       []string
-	Retention      RetentionPolicy
-	RcloneArgs     map[string]string
-	PlainBackup    bool
-	BackupMode     string
-	ArchiveFormat  string
-	PreBackupHook  *protocol.PolicyHook
-	PostBackupHook *protocol.PolicyHook
-	TaskLog        TaskLogCallback
+	ConfigDir         string
+	RepoPath          string
+	BackupDirs        []string
+	Excludes          []string
+	Retention         RetentionPolicy
+	RcloneArgs        map[string]string
+	PlainBackup       bool
+	BackupMode        string
+	ArchiveFormat     string
+	ExtraArchiveFiles []ArchiveExtraFile
+	PreBackupHook     *protocol.PolicyHook
+	PostBackupHook    *protocol.PolicyHook
+	TaskLog           TaskLogCallback
 }
 
 type BackupProgress struct {
@@ -308,7 +316,7 @@ func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) 
 	artifactName := "backup-" + time.Now().UTC().Format("20060102-150405") + archiveFileSuffix(result.ArchiveFormat)
 	artifactPath := filepath.Join(artifactDir, artifactName)
 	emitTaskLog(cfg.TaskLog, "info", "archive", "system", "writing local archive "+artifactName)
-	if err := writeArchive(artifactPath, result.ArchiveFormat, cfg.BackupDirs, cfg.Excludes); err != nil {
+	if err := writeArchive(artifactPath, result.ArchiveFormat, cfg.BackupDirs, cfg.Excludes, cfg.ExtraArchiveFiles); err != nil {
 		emitTaskLog(cfg.TaskLog, "error", "archive", "stderr", err.Error())
 		result.ErrorLog = "archive: " + err.Error()
 		return result
@@ -365,14 +373,14 @@ func archiveContentType(format string) string {
 	return "application/gzip"
 }
 
-func writeArchive(output string, format string, dirs []string, excludes []string) error {
+func writeArchive(output string, format string, dirs []string, excludes []string, extraFiles []ArchiveExtraFile) error {
 	if normalizeArchiveFormat(format) == protocol.ArchiveFormatZip {
-		return writeZipArchive(output, dirs, excludes)
+		return writeZipArchive(output, dirs, excludes, extraFiles)
 	}
-	return writeTarGzArchive(output, dirs, excludes)
+	return writeTarGzArchive(output, dirs, excludes, extraFiles)
 }
 
-func writeTarGzArchive(output string, dirs []string, excludes []string) error {
+func writeTarGzArchive(output string, dirs []string, excludes []string, extraFiles []ArchiveExtraFile) error {
 	file, err := os.Create(output)
 	if err != nil {
 		return err
@@ -383,6 +391,25 @@ func writeTarGzArchive(output string, dirs []string, excludes []string) error {
 	defer gz.Close()
 	writer := tar.NewWriter(gz)
 	defer writer.Close()
+
+	for _, extra := range extraFiles {
+		name, ok := safeArchiveRootName(extra.Name)
+		if !ok {
+			continue
+		}
+		header := &tar.Header{
+			Name:    name,
+			Mode:    0o644,
+			Size:    int64(len(extra.Data)),
+			ModTime: time.Now().UTC(),
+		}
+		if err := writer.WriteHeader(header); err != nil {
+			return err
+		}
+		if _, err := writer.Write(extra.Data); err != nil {
+			return err
+		}
+	}
 
 	for _, root := range dirs {
 		root = filepath.Clean(root)
@@ -423,7 +450,7 @@ func writeTarGzArchive(output string, dirs []string, excludes []string) error {
 	return nil
 }
 
-func writeZipArchive(output string, dirs []string, excludes []string) error {
+func writeZipArchive(output string, dirs []string, excludes []string, extraFiles []ArchiveExtraFile) error {
 	file, err := os.Create(output)
 	if err != nil {
 		return err
@@ -432,6 +459,20 @@ func writeZipArchive(output string, dirs []string, excludes []string) error {
 
 	writer := zip.NewWriter(file)
 	defer writer.Close()
+
+	for _, extra := range extraFiles {
+		name, ok := safeArchiveRootName(extra.Name)
+		if !ok {
+			continue
+		}
+		entry, err := writer.Create(name)
+		if err != nil {
+			return err
+		}
+		if _, err := entry.Write(extra.Data); err != nil {
+			return err
+		}
+	}
 
 	for _, root := range dirs {
 		root = filepath.Clean(root)
@@ -466,6 +507,14 @@ func writeZipArchive(output string, dirs []string, excludes []string) error {
 		}
 	}
 	return nil
+}
+
+func safeArchiveRootName(name string) (string, bool) {
+	name = strings.TrimSpace(filepath.ToSlash(name))
+	if name == "" || name == "." || strings.Contains(name, "/") || strings.Contains(name, `\`) {
+		return "", false
+	}
+	return name, true
 }
 
 func emitProgress(progressFn ProgressCallback, phase string, progress *BackupProgress) {

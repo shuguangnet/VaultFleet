@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   App,
   Button,
@@ -62,6 +63,164 @@ export function formatDuration(ms: number): string {
   const pad = (n: number) => n.toString().padStart(2, "0");
   if (hours > 0) return `${hours}:${pad(minutes)}:${pad(seconds)}`;
   return `${minutes}:${pad(seconds)}`;
+}
+
+export function renderTaskManifestSummary(task: TaskHistory) {
+  if (task.type !== "backup") {
+    return null;
+  }
+
+  const manifest = task.manifest;
+  const artifact = manifest?.artifact || (
+    task.artifact_name
+      ? {
+          name: task.artifact_name,
+          path: task.artifact_path,
+          format: task.archive_format,
+          content_type: task.artifact_content_type,
+          size: task.artifact_size,
+        }
+      : undefined
+  );
+  const warnings = manifest?.warnings || [];
+
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        padding: "10px 12px",
+        background: "#fff",
+        border: "1px solid #f0f0f0",
+        borderRadius: 6,
+      }}
+    >
+      <Space direction="vertical" size={8} style={{ width: "100%" }}>
+        <Space wrap>
+          <Typography.Text strong style={{ fontSize: 12 }}>
+            备份内容清单
+          </Typography.Text>
+          {manifest ? (
+            <>
+              <Tag color="blue">v{manifest.version}</Tag>
+              {manifest.agent?.hostname && <Tag>{manifest.agent.hostname}</Tag>}
+              {manifest.backup_mode && <Tag>{manifest.backup_mode}</Tag>}
+            </>
+          ) : (
+            <Tag color="default">旧备份无清单</Tag>
+          )}
+        </Space>
+
+        {manifest ? (
+          <>
+            {manifest.sources?.paths?.length ? (
+              <ManifestSection title="路径">
+                {manifest.sources.paths.slice(0, 6).map((source) => (
+                  <Tag key={`${source.kind || "path"}-${source.path}`} style={{ maxWidth: "100%", whiteSpace: "normal" }}>
+                    {source.kind || "path"}: {source.path}
+                  </Tag>
+                ))}
+              </ManifestSection>
+            ) : null}
+
+            {manifest.sources?.docker?.length ? (
+              <ManifestSection title="Docker">
+                {manifest.sources.docker.map((source) => (
+                  <Tag key={source.container_id || source.name || source.image}>
+                    {source.compose_project || source.name || source.container_id || "container"}
+                    {source.compose_service ? ` / ${source.compose_service}` : ""}
+                    {source.image ? ` · ${source.image}` : ""}
+                  </Tag>
+                ))}
+              </ManifestSection>
+            ) : null}
+
+            {manifest.sources?.databases?.length ? (
+              <ManifestSection title="数据库">
+                {manifest.sources.databases.map((dump) => (
+                  <Tag key={`${dump.engine}-${dump.database || "all"}-${dump.output_name}`}>
+                    {dump.engine || "database"}:{dump.all_databases ? "全部数据库" : dump.database || "-"}
+                    {dump.output_name ? ` · ${dump.output_name}` : ""}
+                    {dump.size ? ` · ${formatBytes(dump.size)}` : ""}
+                  </Tag>
+                ))}
+              </ManifestSection>
+            ) : null}
+
+            {manifest.exclude_patterns?.length ? (
+              <ManifestSection title="排除规则">
+                {manifest.exclude_patterns.map((pattern) => (
+                  <Tag key={pattern}>{pattern}</Tag>
+                ))}
+              </ManifestSection>
+            ) : null}
+          </>
+        ) : (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            此任务由旧版本创建，任务历史没有保存 VAULTFLEET-MANIFEST.json。
+            {task.docker?.sources?.length || task.database?.dumps?.length
+              ? " 下方显示可用的 Docker / 数据库元数据。"
+              : ""}
+          </Typography.Text>
+        )}
+
+        {!manifest && task.docker?.sources?.length ? (
+          <ManifestSection title="Docker">
+            {task.docker.sources.map((source) => (
+              <Tag key={source.container_id || source.name || source.image}>
+                {source.name || source.container_id || "container"}
+                {source.image ? ` · ${source.image}` : ""}
+              </Tag>
+            ))}
+          </ManifestSection>
+        ) : null}
+
+        {!manifest && task.database?.dumps?.length ? (
+          <ManifestSection title="数据库">
+            {task.database.dumps.map((dump) => (
+              <Tag key={`${dump.engine}-${dump.database || "all"}-${dump.output_name}`}>
+                {dump.engine}:{dump.all_databases ? "全部数据库" : dump.database || "-"}
+                {dump.output_name ? ` · ${dump.output_name}` : ""}
+              </Tag>
+            ))}
+          </ManifestSection>
+        ) : null}
+
+        {artifact ? (
+          <ManifestSection title="产物">
+            {artifact.name && <Tag color="orange">{artifact.name}</Tag>}
+            {artifact.path && <Tag>{artifact.path}</Tag>}
+            {artifact.format && <Tag>{artifact.format}</Tag>}
+            {artifact.content_type && <Tag>{artifact.content_type}</Tag>}
+            {artifact.size ? <Tag>{formatBytes(artifact.size)}</Tag> : null}
+          </ManifestSection>
+        ) : null}
+
+        {warnings.length ? (
+          <ManifestSection title="告警">
+            {warnings.map((warning, index) => (
+              <Tag color="gold" key={`${warning.code || "warning"}-${index}`}>
+                {warning.source ? `${warning.source}: ` : ""}
+                {warning.message}
+              </Tag>
+            ))}
+          </ManifestSection>
+        ) : null}
+      </Space>
+    </div>
+  );
+}
+
+function ManifestSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div>
+      <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>
+        {title}
+      </Typography.Text>
+      <Space wrap size={[4, 4]}>
+        {children}
+      </Space>
+    </div>
+  );
 }
 
 export function TasksPage() {
@@ -415,6 +574,8 @@ export function TasksPage() {
           </div>
         </div>
       ) : null}
+
+      {renderTaskManifestSummary(task)}
 
       {!task.error_log && task.status === "success" && (
         <div style={{ marginTop: 12 }}>

@@ -167,6 +167,52 @@ func TestPrepareRedactsSecretFromStderr(t *testing.T) {
 	assert.Contains(t, strings.Join(lines, "\n"), redact.Placeholder)
 }
 
+func TestListMySQLDatabasesReturnsRedactedStderr(t *testing.T) {
+	_, err := List(context.Background(), ListConfig{
+		ConfigDir: t.TempDir(),
+		Source: protocol.DatabaseBackupSource{
+			Engine:        protocol.DatabaseEngineMySQL,
+			ExecutionMode: protocol.DatabaseExecutionHost,
+			Username:      "root",
+			Password:      "plain-secret",
+		},
+		Runner: func(context.Context, []string, string, ...string) ([]byte, []byte, error) {
+			return nil, []byte("ERROR 1045 (28000): Access denied for password plain-secret"), errors.New("exit status 1")
+		},
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "list mysql databases: exit status 1")
+	assert.Contains(t, err.Error(), "Access denied")
+	assert.NotContains(t, err.Error(), "plain-secret")
+	assert.Contains(t, err.Error(), redact.Placeholder)
+}
+
+func TestPrepareReturnsRedactedDumpStderr(t *testing.T) {
+	_, _, err := Prepare(context.Background(), Config{
+		ConfigDir: t.TempDir(),
+		Sources: []protocol.BackupSource{{
+			Type: protocol.BackupSourceTypeDatabase,
+			Database: &protocol.DatabaseBackupSource{
+				Engine:        protocol.DatabaseEngineMySQL,
+				ExecutionMode: protocol.DatabaseExecutionHost,
+				Username:      "root",
+				Password:      "plain-secret",
+				Database:      "app",
+			},
+		}},
+		Runner: func(context.Context, []string, string, ...string) ([]byte, []byte, error) {
+			return nil, []byte("mysqldump: password plain-secret rejected"), errors.New("exit status 2")
+		},
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "database dump app: exit status 2")
+	assert.Contains(t, err.Error(), "mysqldump")
+	assert.NotContains(t, err.Error(), "plain-secret")
+	assert.Contains(t, err.Error(), redact.Placeholder)
+}
+
 func TestPrepareCleanupRemovesStageDir(t *testing.T) {
 	result, cleanup, err := Prepare(context.Background(), Config{
 		ConfigDir: t.TempDir(),

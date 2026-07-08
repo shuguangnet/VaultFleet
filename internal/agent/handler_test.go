@@ -274,7 +274,7 @@ func TestNewHandlerRestoresSavedPolicySchedule(t *testing.T) {
 		SendFunc:    sent.send,
 		BackupRunnerWithProgress: func(_ context.Context, cfg executor.ExecutorConfig, _ executor.ProgressCallback) executor.TaskResult {
 			runnerCalls.Add(1)
-			assert.Equal(t, []string{"/srv"}, cfg.BackupDirs)
+			assert.Equal(t, []string{"/srv"}, filterManifestBackupDirs(cfg.BackupDirs))
 			assert.Equal(t, "bucket/agent-1", cfg.RepoPath)
 			return executor.TaskResult{Type: "backup", Status: "success", DurationMs: 10, SnapshotID: "snap-1"}
 		},
@@ -783,6 +783,116 @@ func TestHandleBackupNowLoadsPolicyRunsBackupAndSendsTaskResult(t *testing.T) {
 	assert.Equal(t, result.StartedAt.Add(1500*time.Millisecond), result.FinishedAt)
 }
 
+func TestRunBackupForPolicyStagesManifestForSnapshotAndCleansUp(t *testing.T) {
+	configDir := t.TempDir()
+	sent := &sentMessages{}
+	var runnerConfig executor.ExecutorConfig
+	var manifestPath string
+	var manifestBytes []byte
+	handler := NewHandler(HandlerConfig{
+		ConfigDir:    configDir,
+		SendFunc:     sent.send,
+		AgentVersion: "test-version",
+		PolicyStore:  policy.NewStore(t.TempDir()),
+		DatabasePrepare: func(context.Context, agentdatabase.Config) (agentdatabase.Result, func(), error) {
+			return agentdatabase.Result{}, func() {}, nil
+		},
+		BackupRunnerWithProgress: func(_ context.Context, cfg executor.ExecutorConfig, _ executor.ProgressCallback) executor.TaskResult {
+			runnerConfig = cfg
+			for _, path := range cfg.BackupDirs {
+				if filepath.Base(path) == protocol.BackupContentManifestName {
+					manifestPath = path
+				}
+			}
+			var err error
+			manifestBytes, err = os.ReadFile(manifestPath)
+			require.NoError(t, err)
+			return executor.TaskResult{Type: "backup", Status: "success", DurationMs: 10, SnapshotID: "snap-1"}
+		},
+	})
+
+	handler.runBackupForPolicy(context.Background(), "msg-1", "agent-1", &protocol.PolicyPushPayload{
+		AgentID:         "agent-1",
+		Storage:         protocol.StorageConfig{RcloneType: "s3", RcloneConfig: map[string]string{"provider": "Other"}, RepoPath: "repo/agent-1"},
+		BackupMode:      protocol.BackupModeSnapshot,
+		BackupDirs:      []string{"/srv/site"},
+		ExcludePatterns: []string{"*.log"},
+	})
+
+	require.NotEmpty(t, manifestPath)
+	assert.Contains(t, manifestPath, "backup-manifest-")
+	assert.Contains(t, runnerConfig.BackupDirs, manifestPath)
+	assert.NoFileExists(t, manifestPath)
+
+	var staged protocol.BackupContentManifest
+	require.NoError(t, json.Unmarshal(manifestBytes, &staged))
+	assert.Equal(t, protocol.BackupContentManifestVersion, staged.Version)
+	assert.Equal(t, "agent-1", staged.Agent.ID)
+	assert.Equal(t, "test-version", staged.Agent.Version)
+	assert.Contains(t, staged.ExcludePatterns, "*.log")
+	require.Len(t, staged.Sources.Paths, 2)
+	assert.Equal(t, protocol.BackupContentManifestName, filepath.Base(staged.Sources.Paths[1].Path))
+	assert.Equal(t, "manifest", staged.Sources.Paths[1].Kind)
+
+	resultMessages := sent.messagesOfType(protocol.TypeTaskResult)
+	require.Len(t, resultMessages, 1)
+	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&resultMessages[0])
+	require.NoError(t, err)
+	require.NotNil(t, result.Manifest)
+	assert.Equal(t, protocol.BackupModeSnapshot, result.Manifest.BackupMode)
+	assert.Equal(t, protocol.BackupModeSnapshot, result.Manifest.Artifact.Format)
+}
+
+func TestRunBackupForPolicyAddsManifestToArchiveAndRecordsArtifact(t *testing.T) {
+	configDir := t.TempDir()
+	sent := &sentMessages{}
+	var runnerConfig executor.ExecutorConfig
+	handler := NewHandler(HandlerConfig{
+		ConfigDir:    configDir,
+		SendFunc:     sent.send,
+		AgentVersion: "test-version",
+		PolicyStore:  policy.NewStore(t.TempDir()),
+		BackupRunnerWithProgress: func(_ context.Context, cfg executor.ExecutorConfig, _ executor.ProgressCallback) executor.TaskResult {
+			runnerConfig = cfg
+			return executor.TaskResult{
+				Type:                "backup",
+				Status:              "success",
+				DurationMs:          10,
+				BackupMode:          protocol.BackupModeArchive,
+				ArchiveFormat:       protocol.ArchiveFormatZip,
+				ArtifactName:        "backup.zip",
+				ArtifactPath:        "artifacts/backup.zip",
+				ArtifactSize:        2048,
+				ArtifactContentType: "application/zip",
+			}
+		},
+	})
+
+	handler.runBackupForPolicy(context.Background(), "msg-1", "agent-1", &protocol.PolicyPushPayload{
+		AgentID:       "agent-1",
+		Storage:       protocol.StorageConfig{RcloneType: "s3", RcloneConfig: map[string]string{"provider": "Other"}, RepoPath: "repo/agent-1"},
+		BackupMode:    protocol.BackupModeArchive,
+		ArchiveFormat: protocol.ArchiveFormatZip,
+		BackupDirs:    []string{"/srv/site"},
+	})
+
+	require.Len(t, runnerConfig.ExtraArchiveFiles, 1)
+	assert.Equal(t, protocol.BackupContentManifestName, runnerConfig.ExtraArchiveFiles[0].Name)
+	assert.Contains(t, string(runnerConfig.ExtraArchiveFiles[0].Data), `"version": 1`)
+	assert.NotContains(t, string(runnerConfig.ExtraArchiveFiles[0].Data), "artifacts/backup.zip")
+
+	resultMessages := sent.messagesOfType(protocol.TypeTaskResult)
+	require.Len(t, resultMessages, 1)
+	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&resultMessages[0])
+	require.NoError(t, err)
+	require.NotNil(t, result.Manifest)
+	require.NotNil(t, result.Manifest.Artifact)
+	assert.Equal(t, "backup.zip", result.Manifest.Artifact.Name)
+	assert.Equal(t, "artifacts/backup.zip", result.Manifest.Artifact.Path)
+	assert.Equal(t, int64(2048), result.Manifest.Artifact.Size)
+	assert.Equal(t, "application/zip", result.Manifest.Artifact.ContentType)
+}
+
 func TestHandleBackupNowUsesInlinePolicyPayloadForArchive(t *testing.T) {
 	store := policy.NewStore(t.TempDir())
 	configDir := t.TempDir()
@@ -1010,7 +1120,7 @@ func TestHandleBackupNowIncludesDatabaseDumpPaths(t *testing.T) {
 			}, func() { cleanupCalled.Store(true) }, nil
 		},
 		BackupRunnerWithProgress: func(_ context.Context, cfg executor.ExecutorConfig, _ executor.ProgressCallback) executor.TaskResult {
-			assert.Equal(t, []string{"/srv", dumpPath}, cfg.BackupDirs)
+			assert.Equal(t, []string{"/srv", dumpPath}, filterManifestBackupDirs(cfg.BackupDirs))
 			return executor.TaskResult{Type: "backup", Status: "success", DurationMs: 10}
 		},
 	})
@@ -2643,7 +2753,7 @@ func TestHandlerBackupResolvesDockerSourcesBeforeRunner(t *testing.T) {
 	require.NoError(t, err)
 	handler.Handle(*backup)
 	result := waitForMessageType(t, sent, protocol.TypeTaskResult, time.Second)
-	assert.Equal(t, []string{"/srv", mountPath}, runnerConfig.BackupDirs)
+	assert.Equal(t, []string{"/srv", mountPath}, filterManifestBackupDirs(runnerConfig.BackupDirs))
 	payload, err := protocol.ParsePayload[protocol.TaskResultPayload](&result)
 	require.NoError(t, err)
 	require.NotNil(t, payload.Docker)
@@ -2866,7 +2976,37 @@ func (s *sentMessages) messagesOfType(msgType string) []protocol.Message {
 
 func withoutTaskLog(cfg executor.ExecutorConfig) executor.ExecutorConfig {
 	cfg.TaskLog = nil
+	cfg.BackupDirs = filterManifestBackupDirs(cfg.BackupDirs)
+	cfg.ExtraArchiveFiles = filterManifestExtraArchiveFiles(cfg.ExtraArchiveFiles)
 	return cfg
+}
+
+func filterManifestBackupDirs(paths []string) []string {
+	filtered := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if filepath.Base(path) == protocol.BackupContentManifestName && strings.Contains(path, "backup-manifest-") {
+			continue
+		}
+		filtered = append(filtered, path)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
+}
+
+func filterManifestExtraArchiveFiles(files []executor.ArchiveExtraFile) []executor.ArchiveExtraFile {
+	filtered := make([]executor.ArchiveExtraFile, 0, len(files))
+	for _, file := range files {
+		if file.Name == protocol.BackupContentManifestName {
+			continue
+		}
+		filtered = append(filtered, file)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }
 
 func waitForMessageType(t *testing.T, sent *sentMessages, msgType string, timeout time.Duration) protocol.Message {

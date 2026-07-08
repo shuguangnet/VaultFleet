@@ -494,6 +494,48 @@ func TestTaskResultPayloadWithDockerMetadata(t *testing.T) {
 	assert.Equal(t, []string{"compose file not found"}, parsed.Docker.Warnings)
 }
 
+func TestTaskResultPayloadWithBackupContentManifest(t *testing.T) {
+	generatedAt := time.Date(2026, 7, 8, 2, 30, 0, 0, time.UTC)
+	result := TaskResultPayload{
+		AgentID:    "agent-002",
+		TaskType:   "backup",
+		Status:     "success",
+		StartedAt:  generatedAt,
+		FinishedAt: generatedAt.Add(time.Minute),
+		Manifest: &BackupContentManifest{
+			Version:       BackupContentManifestVersion,
+			GeneratedAt:   generatedAt,
+			BackupMode:    BackupModeArchive,
+			ArchiveFormat: ArchiveFormatZip,
+			Agent:         ManifestAgent{ID: "agent-002", Version: "1.0.0", Hostname: "node-1"},
+			Policy:        ManifestPolicy{BackupMode: BackupModeArchive, ArchiveFormat: ArchiveFormatZip, StorageType: "s3", Repository: "tenant/node-1"},
+			Sources: ManifestSources{
+				Paths:     []ManifestPathSource{{Path: "/srv/site", Kind: "path"}},
+				Docker:    []ManifestDockerSource{{Name: "web", Image: "nginx", ComposeProject: "site", ComposeService: "web"}},
+				Databases: []ManifestDatabaseDump{{Engine: DatabaseEngineMySQL, Database: "app", OutputName: "mysql-app.sql.gz", Compressed: true}},
+			},
+			ExcludePatterns: []string{"*.log"},
+			Artifact:        &ManifestArtifact{Name: "backup.zip", Path: "artifacts/backup.zip", Format: ArchiveFormatZip, ContentType: "application/zip", Size: 2048},
+			Warnings:        []ManifestWarning{{Code: "docker_warning", Message: "compose file missing", Source: "docker"}},
+		},
+	}
+
+	_, parsed := roundTripPayload[TaskResultPayload](t, TypeTaskResult, result)
+	require.NotNil(t, parsed.Manifest)
+	assert.Equal(t, BackupContentManifestVersion, parsed.Manifest.Version)
+	assert.True(t, parsed.Manifest.GeneratedAt.Equal(generatedAt))
+	assert.Equal(t, "node-1", parsed.Manifest.Agent.Hostname)
+	assert.Equal(t, "tenant/node-1", parsed.Manifest.Policy.Repository)
+	require.Len(t, parsed.Manifest.Sources.Paths, 1)
+	assert.Equal(t, "/srv/site", parsed.Manifest.Sources.Paths[0].Path)
+	require.Len(t, parsed.Manifest.Sources.Docker, 1)
+	assert.Equal(t, "web", parsed.Manifest.Sources.Docker[0].Name)
+	require.Len(t, parsed.Manifest.Sources.Databases, 1)
+	assert.Equal(t, "mysql-app.sql.gz", parsed.Manifest.Sources.Databases[0].OutputName)
+	require.NotNil(t, parsed.Manifest.Artifact)
+	assert.Equal(t, int64(2048), parsed.Manifest.Artifact.Size)
+}
+
 func TestDirBrowseRoundTrip(t *testing.T) {
 	reqPayload := DirBrowseReqPayload{Path: "/home", Depth: 2}
 

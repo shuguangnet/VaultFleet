@@ -185,6 +185,7 @@ type TaskHistory struct {
 	Docker              string     `gorm:"type:text" json:"docker,omitempty"`
 	Database            string     `gorm:"type:text" json:"database,omitempty"`
 	Verification        string     `gorm:"type:text" json:"verification,omitempty"`
+	Manifest            string     `gorm:"type:text" json:"manifest,omitempty"`
 	StartedAt           *time.Time `json:"started_at"`
 	FinishedAt          *time.Time `json:"finished_at"`
 	DurationMs          int64      `json:"duration_ms"`

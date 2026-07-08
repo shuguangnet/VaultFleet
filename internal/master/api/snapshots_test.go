@@ -163,6 +163,50 @@ func TestTaskResultProcessorPersistsDockerMetadataForDirectBackupResult(t *testi
 	assert.Equal(t, "container-1", body[0].Docker.Sources[0].ContainerID)
 }
 
+func TestTaskResultProcessorPersistsBackupContentManifest(t *testing.T) {
+	database, err := db.New(t.TempDir())
+	require.NoError(t, err)
+	agent := createSnapshotTestAgent(t, database, "online")
+	finishedAt := time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC)
+	manifest := &protocol.BackupContentManifest{
+		Version:     protocol.BackupContentManifestVersion,
+		GeneratedAt: finishedAt.Add(-time.Minute),
+		BackupMode:  protocol.BackupModeSnapshot,
+		Agent:       protocol.ManifestAgent{ID: agent.ID, Version: "1.0.0", Hostname: "node-1"},
+		Sources: protocol.ManifestSources{
+			Paths: []protocol.ManifestPathSource{{Path: "/srv/site", Kind: "path"}},
+		},
+		ExcludePatterns: []string{"*.log"},
+	}
+	msg, err := protocol.NewMessage(protocol.TypeTaskResult, protocol.TaskResultPayload{
+		AgentID:    agent.ID,
+		TaskType:   "backup",
+		Status:     "success",
+		SnapshotID: "snap-manifest",
+		DurationMs: 1500,
+		StartedAt:  finishedAt.Add(-1500 * time.Millisecond),
+		FinishedAt: finishedAt,
+		Snapshots: []protocol.SnapshotInfo{
+			{ID: "snap-manifest", Time: finishedAt, Paths: []string{"/srv/site"}, Size: 1024},
+		},
+		Manifest: manifest,
+	})
+	require.NoError(t, err)
+
+	processor := NewTaskResultProcessor(database)
+	require.NoError(t, processor(agent.ID, *msg))
+
+	var history db.TaskHistory
+	require.NoError(t, database.DB.First(&history, "agent_id = ? AND snapshot_id = ?", agent.ID, "snap-manifest").Error)
+	require.NotEmpty(t, history.Manifest)
+	var stored protocol.BackupContentManifest
+	require.NoError(t, json.Unmarshal([]byte(history.Manifest), &stored))
+	assert.Equal(t, protocol.BackupContentManifestVersion, stored.Version)
+	assert.Equal(t, "node-1", stored.Agent.Hostname)
+	require.Len(t, stored.Sources.Paths, 1)
+	assert.Equal(t, "/srv/site", stored.Sources.Paths[0].Path)
+}
+
 func TestTaskResultProcessorCopiesArchiveArtifactIntoMasterDataDir(t *testing.T) {
 	database, err := db.New(t.TempDir())
 	require.NoError(t, err)

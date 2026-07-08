@@ -35,8 +35,96 @@ export interface TaskHistory {
   docker?: DockerBackupMetadata;
   database?: DatabaseBackupMetadata;
   verification?: BackupVerificationResult;
+  manifest?: BackupContentManifest;
   created_at: string;
   updated_at?: string;
+}
+
+export interface BackupContentManifest {
+  version: number;
+  generated_at: string;
+  backup_mode?: "snapshot" | "archive" | string;
+  archive_format?: "tar.gz" | "zip" | string;
+  agent: ManifestAgent;
+  policy?: ManifestPolicy;
+  sources: ManifestSources;
+  exclude_patterns?: string[];
+  artifact?: ManifestArtifact;
+  warnings?: ManifestWarning[];
+  context_name?: string;
+  site_name?: string;
+  integrity?: ManifestIntegrity;
+}
+
+export interface ManifestAgent {
+  id?: string;
+  version?: string;
+  hostname?: string;
+}
+
+export interface ManifestPolicy {
+  backup_mode?: string;
+  archive_format?: string;
+  storage_type?: string;
+  repository?: string;
+}
+
+export interface ManifestSources {
+  paths?: ManifestPathSource[];
+  docker?: ManifestDockerSource[];
+  databases?: ManifestDatabaseDump[];
+}
+
+export interface ManifestPathSource {
+  path: string;
+  kind?: string;
+  origin?: string;
+}
+
+export interface ManifestDockerSource {
+  container_id?: string;
+  name?: string;
+  image?: string;
+  compose_project?: string;
+  compose_service?: string;
+  compose_working_dir?: string;
+  compose_config_files?: string[];
+  mounts?: DockerResolvedSource["mounts"];
+  resolved_paths?: string[];
+  warnings?: ManifestWarning[];
+}
+
+export interface ManifestDatabaseDump {
+  engine?: "postgresql" | "mysql" | string;
+  execution_mode?: "host" | "docker" | string;
+  database?: string;
+  all_databases?: boolean;
+  container_name?: string;
+  output_name?: string;
+  size?: number;
+  compressed?: boolean;
+  warnings?: ManifestWarning[];
+}
+
+export interface ManifestArtifact {
+  name?: string;
+  path?: string;
+  format?: string;
+  content_type?: string;
+  size?: number;
+}
+
+export interface ManifestWarning {
+  code?: string;
+  message: string;
+  source?: string;
+}
+
+export interface ManifestIntegrity {
+  file_count?: number;
+  total_size?: number;
+  checksum?: string;
+  algorithm?: string;
 }
 
 export interface BackupVerificationResult {

@@ -16,6 +16,7 @@ import (
 	agentdocker "vaultfleet/internal/agent/docker"
 	"vaultfleet/internal/agent/executor"
 	"vaultfleet/internal/agent/filebrowse"
+	agentmanifest "vaultfleet/internal/agent/manifest"
 	"vaultfleet/internal/agent/policy"
 	"vaultfleet/internal/agent/scheduler"
 	"vaultfleet/pkg/protocol"
@@ -804,6 +805,20 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 		cfg.BackupDirs = appendUniqueStrings(cfg.BackupDirs, databaseResult.Paths...)
 		taskLogs.Info("database-dump", "prepared database dump files")
 	}
+	manifestDoc, manifestCleanup, err := h.prepareBackupManifest(startedAt, agentID, resolvedPolicy, cfg, dockerMetadata, databaseResult.Metadata)
+	if manifestCleanup != nil {
+		defer manifestCleanup()
+	}
+	if err != nil {
+		log.Printf("prepare backup manifest failed: %v", err)
+		taskLogs.Error("manifest", "prepare backup manifest failed: "+err.Error())
+		h.sendTaskResultWithID(messageID, h.failedTaskResult(agentID, "manifest: "+err.Error(), startedAt))
+		return
+	}
+	if manifestDoc != nil {
+		cfg = applyManifestToExecutorConfig(cfg, manifestDoc)
+		taskLogs.Info("manifest", "prepared backup content manifest")
+	}
 	taskLogs.Info("backup", "starting backup")
 	result := h.backupRunnerWithProgress(ctx, cfg, h.backupProgressCallback(messageID, agentID, taskLogs))
 	if dockerMetadata != nil {
@@ -811,6 +826,10 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 	}
 	if databaseResult.Metadata != nil && len(databaseResult.Metadata.Dumps) > 0 {
 		result.Database = databaseResult.Metadata
+	}
+	if manifestDoc != nil {
+		attachArtifactToManifest(manifestDoc, result)
+		result.Manifest = manifestDoc
 	}
 	if ctx.Err() == context.Canceled {
 		result.Status = "cancelled"
@@ -835,6 +854,87 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 	if result.Status == "success" && len(result.Snapshots) > 0 {
 		go h.warmSnapshotCache(context.Background(), cfg, result.Snapshots)
 	}
+}
+
+func (h *Handler) prepareBackupManifest(startedAt time.Time, agentID string, policyPayload *protocol.PolicyPushPayload, cfg executor.ExecutorConfig, dockerMetadata *protocol.DockerBackupMetadata, databaseMetadata *protocol.DatabaseBackupMetadata) (*protocol.BackupContentManifest, func(), error) {
+	stageDir, err := os.MkdirTemp(h.configDir, "backup-manifest-*")
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(stageDir) }
+	manifestPath := filepath.Join(stageDir, protocol.BackupContentManifestName)
+	backupDirs := append([]string(nil), cfg.BackupDirs...)
+	if !strings.EqualFold(strings.TrimSpace(cfg.BackupMode), protocol.BackupModeArchive) {
+		backupDirs = appendUniqueStrings(backupDirs, manifestPath)
+	}
+	manifestDoc := agentmanifest.Build(agentmanifest.BuildInput{
+		AgentID:       agentID,
+		AgentVersion:  h.agentVersion,
+		GeneratedAt:   startedAt,
+		Policy:        policyPayload,
+		BackupMode:    cfg.BackupMode,
+		ArchiveFormat: cfg.ArchiveFormat,
+		BackupDirs:    backupDirs,
+		Excludes:      cfg.Excludes,
+		Docker:        dockerMetadata,
+		Database:      databaseMetadata,
+	})
+	raw, err := json.MarshalIndent(manifestDoc, "", "  ")
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	raw = append(raw, '\n')
+	if err := os.WriteFile(manifestPath, raw, 0o600); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	manifestDoc.Artifact = &protocol.ManifestArtifact{
+		Name: protocol.BackupContentManifestName,
+		Path: manifestPath,
+	}
+	return manifestDoc, cleanup, nil
+}
+
+func applyManifestToExecutorConfig(cfg executor.ExecutorConfig, manifestDoc *protocol.BackupContentManifest) executor.ExecutorConfig {
+	if manifestDoc == nil || manifestDoc.Artifact == nil || manifestDoc.Artifact.Path == "" {
+		return cfg
+	}
+	if strings.EqualFold(strings.TrimSpace(cfg.BackupMode), protocol.BackupModeArchive) {
+		archiveManifest := *manifestDoc
+		archiveManifest.Artifact = nil
+		raw, err := json.MarshalIndent(archiveManifest, "", "  ")
+		if err == nil {
+			raw = append(raw, '\n')
+			cfg.ExtraArchiveFiles = append(cfg.ExtraArchiveFiles, executor.ArchiveExtraFile{
+				Name: protocol.BackupContentManifestName,
+				Data: raw,
+			})
+		}
+		return cfg
+	}
+	cfg.BackupDirs = appendUniqueStrings(cfg.BackupDirs, manifestDoc.Artifact.Path)
+	return cfg
+}
+
+func attachArtifactToManifest(manifestDoc *protocol.BackupContentManifest, result executor.TaskResult) {
+	if manifestDoc == nil {
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(result.BackupMode), protocol.BackupModeArchive) {
+		manifestDoc.Artifact = &protocol.ManifestArtifact{
+			Name:        result.ArtifactName,
+			Path:        result.ArtifactPath,
+			Format:      result.ArchiveFormat,
+			ContentType: result.ArtifactContentType,
+			Size:        result.ArtifactSize,
+		}
+		return
+	}
+	if manifestDoc.Artifact == nil {
+		manifestDoc.Artifact = &protocol.ManifestArtifact{Name: protocol.BackupContentManifestName}
+	}
+	manifestDoc.Artifact.Format = protocol.BackupModeSnapshot
 }
 
 func (h *Handler) resolvePolicyBackupSources(ctx context.Context, policyPayload *protocol.PolicyPushPayload) (*protocol.PolicyPushPayload, *protocol.DockerBackupMetadata, error) {

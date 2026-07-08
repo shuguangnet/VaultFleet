@@ -8,6 +8,7 @@ import {
   formatSpeed,
   formatTaskLogLine,
   renderTaskMetricContent,
+  renderTaskManifestSummary,
   taskLogStatusText,
 } from "./tasks-page";
 
@@ -192,6 +193,65 @@ describe("task progress helpers", () => {
         line: "uploaded file",
       }),
     ).toContain("info backup stdout uploaded file");
+  });
+
+  it("renders backup manifest summary", () => {
+    render(
+      <>
+        {renderTaskManifestSummary(
+          task({
+            backup_mode: "archive",
+            manifest: {
+              version: 1,
+              generated_at: "2026-07-08T10:00:00Z",
+              backup_mode: "archive",
+              agent: { id: "agent-1", hostname: "node-1" },
+              sources: {
+                paths: [{ path: "/srv/site", kind: "path" }],
+                docker: [{ name: "web", image: "nginx:latest", compose_project: "site", compose_service: "web" }],
+                databases: [{ engine: "mysql", database: "app", output_name: "mysql-app.sql.gz", size: 2048 }],
+              },
+              exclude_patterns: ["*.log"],
+              artifact: {
+                name: "backup.zip",
+                path: "artifacts/backup.zip",
+                format: "zip",
+                content_type: "application/zip",
+                size: 4096,
+              },
+              warnings: [{ source: "docker", message: "compose file missing" }],
+            },
+          }),
+        )}
+      </>,
+    );
+
+    expect(screen.getByText("备份内容清单")).toBeInTheDocument();
+    expect(screen.getByText("v1")).toBeInTheDocument();
+    expect(screen.getByText("path: /srv/site")).toBeInTheDocument();
+    expect(screen.getByText("site / web · nginx:latest")).toBeInTheDocument();
+    expect(screen.getByText("mysql:app · mysql-app.sql.gz · 2.0 KB")).toBeInTheDocument();
+    expect(screen.getByText("*.log")).toBeInTheDocument();
+    expect(screen.getByText("backup.zip")).toBeInTheDocument();
+    expect(screen.getByText("docker: compose file missing")).toBeInTheDocument();
+  });
+
+  it("renders missing manifest fallback with legacy metadata", () => {
+    render(
+      <>
+        {renderTaskManifestSummary(
+          task({
+            docker: { sources: [{ name: "web", image: "nginx:latest" }] },
+            database: { dumps: [{ engine: "postgresql", execution_mode: "host", database: "app", output_name: "pg-app.sql" }] },
+          }),
+        )}
+      </>,
+    );
+
+    expect(screen.getByText("旧备份无清单")).toBeInTheDocument();
+    expect(screen.getByText(/VAULTFLEET-MANIFEST\.json/)).toBeInTheDocument();
+    expect(screen.getByText("web · nginx:latest")).toBeInTheDocument();
+    expect(screen.getByText("postgresql:app · pg-app.sql")).toBeInTheDocument();
   });
 });
 
