@@ -116,12 +116,16 @@ func TestResolveDockerSources(t *testing.T) {
 }
 
 func TestRestoreDockerSourceUsesComposeWhenMetadataAvailable(t *testing.T) {
+	dir := t.TempDir()
+	composePath := filepath.Join(dir, "compose.yml")
+	require.NoError(t, os.WriteFile(composePath, []byte("services:\n  db:\n    image: postgres:16\n"), 0o644))
+
 	var calls []string
 	err := Restore(context.Background(), protocol.DockerRestoreRequest{
 		Sources: []protocol.DockerResolvedSource{
 			{
 				Name:    "db",
-				Compose: protocol.DockerComposeInfo{Project: "app", Service: "db", WorkingDir: "/srv/app", ConfigFiles: []string{"compose.yml"}},
+				Compose: protocol.DockerComposeInfo{Project: "app", Service: "db", WorkingDir: dir, ConfigFiles: []string{"compose.yml"}},
 			},
 		},
 	}, func(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -131,7 +135,38 @@ func TestRestoreDockerSourceUsesComposeWhenMetadataAvailable(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, calls, 1)
-	assert.Equal(t, "docker compose -f /srv/app/compose.yml up -d db", calls[0])
+	assert.Equal(t, "docker compose -f "+composePath+" up -d db", calls[0])
+}
+
+func TestRestoreDockerSourceFallsBackWhenComposeFileMissing(t *testing.T) {
+	dir := t.TempDir()
+	missingComposePath := filepath.Join(dir, "compose.yml")
+
+	var calls []string
+	err := Restore(context.Background(), protocol.DockerRestoreRequest{
+		Sources: []protocol.DockerResolvedSource{
+			{
+				Name:    "db",
+				Image:   "postgres:16",
+				Compose: protocol.DockerComposeInfo{Project: "app", Service: "db", WorkingDir: dir, ConfigFiles: []string{"compose.yml"}},
+				Mounts: []protocol.DockerMount{
+					{Type: "bind", Source: "/srv/db", Destination: "/var/lib/postgresql/data", RW: true},
+				},
+			},
+		},
+	}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		if len(calls) == 1 {
+			return []byte("not found"), errors.New("start failed")
+		}
+		return nil, nil
+	})
+
+	require.NoError(t, err)
+	require.Len(t, calls, 2)
+	assert.Equal(t, "docker start db", calls[0])
+	assert.Equal(t, "docker run -d --name db -v /srv/db:/var/lib/postgresql/data postgres:16", calls[1])
+	assert.NoFileExists(t, missingComposePath)
 }
 
 func TestRestoreDockerSourceRunsContainerWithRecordedMounts(t *testing.T) {

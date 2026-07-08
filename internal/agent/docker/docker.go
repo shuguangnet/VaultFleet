@@ -551,11 +551,13 @@ func preflightCheck(code string, severity string, message string, detail string)
 }
 
 func restoreSource(ctx context.Context, source protocol.DockerResolvedSource, runner CommandRunner) error {
-	if args, ok := composeRestoreArgs(source); ok {
-		if output, err := runner(ctx, "docker", args...); err != nil {
-			return commandError("restore docker compose service", output, err)
+	if args, configFiles, ok := composeRestoreArgs(source); ok {
+		if len(unusableComposeConfigFiles(configFiles)) == 0 {
+			if output, err := runner(ctx, "docker", args...); err != nil {
+				return commandError("restore docker compose service", output, err)
+			}
+			return nil
 		}
-		return nil
 	}
 
 	name := strings.TrimSpace(source.Name)
@@ -633,7 +635,7 @@ func restoreSource(ctx context.Context, source protocol.DockerResolvedSource, ru
 	return nil
 }
 
-func composeRestoreArgs(source protocol.DockerResolvedSource) ([]string, bool) {
+func composeRestoreArgs(source protocol.DockerResolvedSource) ([]string, []string, bool) {
 	compose := source.Compose
 	if compose.WorkingDir == "" {
 		compose.WorkingDir = source.Selection.ComposeWorkingDir
@@ -646,10 +648,11 @@ func composeRestoreArgs(source protocol.DockerResolvedSource) ([]string, bool) {
 		service = strings.TrimSpace(source.Selection.ComposeService)
 	}
 	if len(compose.ConfigFiles) == 0 || service == "" {
-		return nil, false
+		return nil, nil, false
 	}
 
 	args := []string{"compose"}
+	configFiles := make([]string, 0, len(compose.ConfigFiles))
 	for _, configFile := range compose.ConfigFiles {
 		configFile = strings.TrimSpace(configFile)
 		if configFile == "" {
@@ -659,12 +662,32 @@ func composeRestoreArgs(source protocol.DockerResolvedSource) ([]string, bool) {
 			configFile = filepath.Join(compose.WorkingDir, configFile)
 		}
 		args = append(args, "-f", configFile)
+		configFiles = append(configFiles, configFile)
 	}
 	if len(args) == 1 {
-		return nil, false
+		return nil, nil, false
 	}
 	args = append(args, "up", "-d", service)
-	return args, true
+	return args, configFiles, true
+}
+
+func unusableComposeConfigFiles(configFiles []string) []string {
+	var unusable []string
+	for _, configFile := range configFiles {
+		configFile = strings.TrimSpace(configFile)
+		if configFile == "" {
+			continue
+		}
+		info, err := os.Stat(configFile)
+		if err != nil {
+			unusable = append(unusable, configFile)
+			continue
+		}
+		if info.IsDir() {
+			unusable = append(unusable, configFile)
+		}
+	}
+	return unusable
 }
 
 func selectedMounts(mounts []Mount, source protocol.DockerContainerBackupSource) []protocol.DockerMount {
