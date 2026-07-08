@@ -564,6 +564,11 @@ func restoreSource(ctx context.Context, source protocol.DockerResolvedSource, ru
 	if name == "" {
 		name = strings.TrimSpace(source.ContainerID)
 	}
+	if network := strings.TrimSpace(source.NetworkMode); network != "" && network != "default" && creatableDockerNetworkMode(network) {
+		if err := ensureDockerNetwork(ctx, runner, network); err != nil {
+			return err
+		}
+	}
 	if name != "" {
 		if _, err := runner(ctx, "docker", "start", name); err == nil {
 			return nil
@@ -576,6 +581,9 @@ func restoreSource(ctx context.Context, source protocol.DockerResolvedSource, ru
 	}
 	args := []string{"run", "-d"}
 	if name != "" {
+		if err := removeExistingDockerContainer(ctx, runner, name); err != nil {
+			return err
+		}
 		args = append(args, "--name", name)
 	}
 	for _, mount := range source.Mounts {
@@ -616,11 +624,6 @@ func restoreSource(ctx context.Context, source protocol.DockerResolvedSource, ru
 		args = append(args, "--restart", restart)
 	}
 	if network := strings.TrimSpace(source.NetworkMode); network != "" && network != "default" {
-		if creatableDockerNetworkMode(network) {
-			if err := ensureDockerNetwork(ctx, runner, network); err != nil {
-				return err
-			}
-		}
 		args = append(args, "--network", network)
 	}
 	if workdir := strings.TrimSpace(source.WorkingDir); workdir != "" {
@@ -636,6 +639,16 @@ func restoreSource(ctx context.Context, source protocol.DockerResolvedSource, ru
 	args = append(args, source.Cmd...)
 	if output, err := runner(ctx, "docker", args...); err != nil {
 		return commandError("restore docker container", output, err)
+	}
+	return nil
+}
+
+func removeExistingDockerContainer(ctx context.Context, runner CommandRunner, name string) error {
+	if _, err := runner(ctx, "docker", "container", "inspect", name); err != nil {
+		return nil
+	}
+	if output, err := runner(ctx, "docker", "rm", "-f", name); err != nil {
+		return commandError("remove existing docker container "+name, output, err)
 	}
 	return nil
 }

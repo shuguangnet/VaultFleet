@@ -155,18 +155,50 @@ func TestRestoreDockerSourceFallsBackWhenComposeFileMissing(t *testing.T) {
 			},
 		},
 	}, func(_ context.Context, name string, args ...string) ([]byte, error) {
-		calls = append(calls, name+" "+strings.Join(args, " "))
-		if len(calls) == 1 {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		switch call {
+		case "docker start db", "docker container inspect db":
 			return []byte("not found"), errors.New("start failed")
+		default:
+			return nil, nil
 		}
-		return nil, nil
 	})
 
 	require.NoError(t, err)
-	require.Len(t, calls, 2)
+	require.Len(t, calls, 3)
 	assert.Equal(t, "docker start db", calls[0])
-	assert.Equal(t, "docker run -d --name db -v /srv/db:/var/lib/postgresql/data postgres:16", calls[1])
+	assert.Equal(t, "docker container inspect db", calls[1])
+	assert.Equal(t, "docker run -d --name db -v /srv/db:/var/lib/postgresql/data postgres:16", calls[2])
 	assert.NoFileExists(t, missingComposePath)
+}
+
+func TestRestoreDockerSourceRemovesExistingContainerBeforeRecreate(t *testing.T) {
+	var calls []string
+	err := Restore(context.Background(), protocol.DockerRestoreRequest{
+		Sources: []protocol.DockerResolvedSource{
+			{
+				Name:  "api",
+				Image: "cliproxyapi:latest",
+			},
+		},
+	}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		switch call {
+		case "docker start api":
+			return []byte("start failed"), errors.New("start failed")
+		default:
+			return nil, nil
+		}
+	})
+
+	require.NoError(t, err)
+	require.Len(t, calls, 4)
+	assert.Equal(t, "docker start api", calls[0])
+	assert.Equal(t, "docker container inspect api", calls[1])
+	assert.Equal(t, "docker rm -f api", calls[2])
+	assert.Equal(t, "docker run -d --name api cliproxyapi:latest", calls[3])
 }
 
 func TestRestoreDockerSourceCreatesMissingCustomNetwork(t *testing.T) {
@@ -187,17 +219,20 @@ func TestRestoreDockerSourceCreatesMissingCustomNetwork(t *testing.T) {
 			return []byte("not found"), errors.New("start failed")
 		case "docker network inspect cliproxyapi_default":
 			return []byte("not found"), errors.New("network not found")
+		case "docker container inspect api":
+			return []byte("not found"), errors.New("container not found")
 		default:
 			return nil, nil
 		}
 	})
 
 	require.NoError(t, err)
-	require.Len(t, calls, 4)
-	assert.Equal(t, "docker start api", calls[0])
-	assert.Equal(t, "docker network inspect cliproxyapi_default", calls[1])
-	assert.Equal(t, "docker network create cliproxyapi_default", calls[2])
-	assert.Equal(t, "docker run -d --name api --network cliproxyapi_default cliproxyapi:latest", calls[3])
+	require.Len(t, calls, 5)
+	assert.Equal(t, "docker network inspect cliproxyapi_default", calls[0])
+	assert.Equal(t, "docker network create cliproxyapi_default", calls[1])
+	assert.Equal(t, "docker start api", calls[2])
+	assert.Equal(t, "docker container inspect api", calls[3])
+	assert.Equal(t, "docker run -d --name api --network cliproxyapi_default cliproxyapi:latest", calls[4])
 }
 
 func TestRestoreDockerSourceRunsContainerWithRecordedMounts(t *testing.T) {
@@ -223,17 +258,21 @@ func TestRestoreDockerSourceRunsContainerWithRecordedMounts(t *testing.T) {
 			},
 		},
 	}, func(_ context.Context, name string, args ...string) ([]byte, error) {
-		calls = append(calls, name+" "+strings.Join(args, " "))
-		if len(calls) == 1 {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		switch call {
+		case "docker start db", "docker container inspect db":
 			return []byte("not found"), errors.New("start failed")
+		default:
+			return nil, nil
 		}
-		return nil, nil
 	})
 
 	require.NoError(t, err)
-	require.Len(t, calls, 2)
+	require.Len(t, calls, 3)
 	assert.Equal(t, "docker start db", calls[0])
-	assert.Equal(t, "docker run -d --name db -v /srv/db:/var/lib/postgresql/data -v /srv/config:/config:ro -e POSTGRES_DB=app --label app=vaultfleet -p 15432:5432 --restart unless-stopped -w /var/lib/postgresql -u 999:999 postgres:16 postgres -c config_file=/config/postgresql.conf", calls[1])
+	assert.Equal(t, "docker container inspect db", calls[1])
+	assert.Equal(t, "docker run -d --name db -v /srv/db:/var/lib/postgresql/data -v /srv/config:/config:ro -e POSTGRES_DB=app --label app=vaultfleet -p 15432:5432 --restart unless-stopped -w /var/lib/postgresql -u 999:999 postgres:16 postgres -c config_file=/config/postgresql.conf", calls[2])
 }
 
 func TestPreflightRestoreReportsMissingSources(t *testing.T) {
