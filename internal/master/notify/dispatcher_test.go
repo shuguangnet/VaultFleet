@@ -157,6 +157,98 @@ func TestDispatcherDerivesBackupFailedFromFailedBackupTaskResult(t *testing.T) {
 	assert.Contains(t, msg.Body, "repository locked")
 }
 
+func TestDispatcherDerivesBackupSucceededFromSuccessfulBackupTaskResult(t *testing.T) {
+	database := setupNotifyTestDB(t)
+	agent := createNotifyAgent(t, database, "agent-success", "Prod-DB")
+	bus := events.NewBus()
+	notifier := &recordingNotifier{}
+	dispatcher := NewDispatcher(database, bus, WithNotifierFactory(func(string, json.RawMessage) (Notifier, error) {
+		return notifier, nil
+	}))
+	createNotifyConfig(t, database, "webhook", `{"url":"https://success.example.test"}`, []string{EventBackupSucceeded})
+	createNotifyConfig(t, database, "webhook", `{"url":"https://failed.example.test"}`, []string{EventBackupFailed})
+
+	dispatcher.Start()
+	publishTaskResult(t, bus, protocol.TaskResultPayload{
+		AgentID:      "agent-success",
+		TaskType:     "backup",
+		Status:       "success",
+		SnapshotID:   "snap-1",
+		ArtifactName: "prod-db.tar.gz",
+		ArtifactPath: "vaultfleet/prod-db.tar.gz",
+		ArtifactSize: 2048,
+		DurationMs:   1250,
+		RepoSize:     4096,
+	})
+
+	msg := requireRecordedMessage(t, notifier)
+	assert.Equal(t, "Backup Succeeded", msg.Title)
+	assert.Equal(t, LevelInfo, msg.Level)
+	assert.Equal(t, agent.Name, msg.AgentName)
+	assert.Contains(t, msg.Body, "Status: success")
+	assert.Contains(t, msg.Body, "Snapshot: snap-1")
+	assert.Contains(t, msg.Body, "Artifact: prod-db.tar.gz")
+	assert.Contains(t, msg.Body, "Artifact path: vaultfleet/prod-db.tar.gz")
+	assert.Contains(t, msg.Body, "Artifact size: 2048 bytes")
+	assert.Contains(t, msg.Body, "Repository size: 4096 bytes")
+	assert.Contains(t, msg.Body, "Duration: 1.25s")
+}
+
+func TestDispatcherDerivesVerificationNotificationsFromTaskResults(t *testing.T) {
+	database := setupNotifyTestDB(t)
+	bus := events.NewBus()
+	notifier := &recordingNotifier{}
+	dispatcher := NewDispatcher(database, bus, WithNotifierFactory(func(string, json.RawMessage) (Notifier, error) {
+		return notifier, nil
+	}))
+	createNotifyConfig(t, database, "webhook", `{"url":"https://verify-success.example.test"}`, []string{EventBackupVerificationSucceeded})
+	createNotifyConfig(t, database, "webhook", `{"url":"https://verify-failed.example.test"}`, []string{EventBackupVerificationFailed})
+
+	dispatcher.Start()
+	publishTaskResult(t, bus, protocol.TaskResultPayload{AgentID: "agent-1", TaskType: "verify", Status: "success", DurationMs: 2000})
+	first := requireRecordedMessage(t, notifier)
+	assert.Equal(t, "Backup Verification Succeeded", first.Title)
+	assert.Equal(t, LevelInfo, first.Level)
+	assert.Contains(t, first.Body, "Status: success")
+
+	publishTaskResult(t, bus, protocol.TaskResultPayload{AgentID: "agent-1", TaskType: "verify", Status: "timeout", ErrorLog: "restic check timed out"})
+	require.Eventually(t, func() bool {
+		return len(notifier.snapshot()) == 2
+	}, time.Second, 10*time.Millisecond)
+	second := notifier.snapshot()[1]
+	assert.Equal(t, "Backup Verification Failed", second.Title)
+	assert.Equal(t, LevelError, second.Level)
+	assert.Contains(t, second.Body, "Status: timeout")
+	assert.Contains(t, second.Body, "Error: restic check timed out")
+}
+
+func TestDispatcherRoutesVerificationFailureToCompatibilityBackupFailedWithoutDuplicates(t *testing.T) {
+	database := setupNotifyTestDB(t)
+	bus := events.NewBus()
+	notifier := &recordingNotifier{}
+	dispatcher := NewDispatcher(database, bus, WithNotifierFactory(func(string, json.RawMessage) (Notifier, error) {
+		return notifier, nil
+	}))
+	createNotifyConfig(t, database, "webhook", `{"url":"https://both.example.test"}`, []string{EventBackupFailed, EventBackupVerificationFailed})
+	createNotifyConfig(t, database, "webhook", `{"url":"https://backup-failed.example.test"}`, []string{EventBackupFailed})
+
+	dispatcher.Start()
+	publishTaskResult(t, bus, protocol.TaskResultPayload{
+		AgentID:  "agent-1",
+		TaskType: "verify",
+		Status:   "failed",
+		ErrorLog: "snapshot missing",
+	})
+
+	require.Eventually(t, func() bool {
+		return len(notifier.snapshot()) == 2
+	}, time.Second, 10*time.Millisecond)
+	for _, msg := range notifier.snapshot() {
+		assert.Equal(t, "Backup Verification Failed", msg.Title)
+		assert.Contains(t, msg.Body, "snapshot missing")
+	}
+}
+
 func TestDispatcherSendsDirectBackupFailedEventOnlyToMatchingConfigs(t *testing.T) {
 	database := setupNotifyTestDB(t)
 	bus := events.NewBus()
@@ -184,7 +276,7 @@ func TestDispatcherSendsDirectBackupFailedEventOnlyToMatchingConfigs(t *testing.
 	assert.False(t, msg.Timestamp.IsZero())
 }
 
-func TestDispatcherIgnoresSuccessfulOrNonBackupTaskResults(t *testing.T) {
+func TestDispatcherIgnoresUnsubscribedSuccessNonTerminalAndNonBackupTaskResults(t *testing.T) {
 	database := setupNotifyTestDB(t)
 	bus := events.NewBus()
 	notifier := &recordingNotifier{}
@@ -195,6 +287,7 @@ func TestDispatcherIgnoresSuccessfulOrNonBackupTaskResults(t *testing.T) {
 
 	dispatcher.Start()
 	publishTaskResult(t, bus, protocol.TaskResultPayload{AgentID: "agent-1", TaskType: "backup", Status: "success"})
+	publishTaskResult(t, bus, protocol.TaskResultPayload{AgentID: "agent-1", TaskType: "backup", Status: "running"})
 	publishTaskResult(t, bus, protocol.TaskResultPayload{AgentID: "agent-1", TaskType: "restore", Status: "failed", ErrorLog: "restore failed"})
 
 	assert.Empty(t, notifier.snapshot())

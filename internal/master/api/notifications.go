@@ -492,7 +492,11 @@ func validateNotificationEvents(c *gin.Context, rawEvents string) bool {
 	}
 	for _, eventName := range events {
 		switch eventName {
-		case notify.EventBackupFailed, notify.EventAgentOffline:
+		case notify.EventBackupSucceeded,
+			notify.EventBackupFailed,
+			notify.EventBackupVerificationSucceeded,
+			notify.EventBackupVerificationFailed,
+			notify.EventAgentOffline:
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid event"})
 			return false

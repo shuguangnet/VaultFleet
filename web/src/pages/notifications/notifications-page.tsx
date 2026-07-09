@@ -46,7 +46,10 @@ import { useAuth } from "@/contexts/auth-context";
 import { permissions } from "@/services/identity";
 
 const EVENT_OPTIONS = [
+  { id: "backup_succeeded", label: "备份成功" },
   { id: "backup_failed", label: "备份失败" },
+  { id: "backup_verification_succeeded", label: "验证成功" },
+  { id: "backup_verification_failed", label: "验证失败" },
   { id: "agent_offline", label: "节点离线" },
 ];
 

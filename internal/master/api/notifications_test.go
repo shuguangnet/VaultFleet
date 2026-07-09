@@ -82,6 +82,34 @@ func TestCreateNotificationConfig(t *testing.T) {
 	assert.JSONEq(t, `{"url":"https://hooks.example.test/notify","headers":{"Authorization":"Bearer secret","X-Trace":"trace-id"}}`, plaintext)
 }
 
+func TestCreateNotificationConfigAcceptsBackupSuccessAndVerificationEvents(t *testing.T) {
+	setup := setupNotificationAPI(t)
+
+	w := postAnyJSON(t, setup.router, "/api/notifications", map[string]any{
+		"name":   "Ops Webhook",
+		"type":   "webhook",
+		"config": map[string]any{"url": "https://hooks.example.test/notify"},
+		"events": []string{
+			notify.EventBackupSucceeded,
+			notify.EventBackupVerificationSucceeded,
+			notify.EventBackupVerificationFailed,
+		},
+	})
+
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	envelope := parseJSON(t, w)
+	body := requireMap(t, envelope["data"])
+	assertJSONList(t, body["events"], []string{
+		notify.EventBackupSucceeded,
+		notify.EventBackupVerificationSucceeded,
+		notify.EventBackupVerificationFailed,
+	})
+
+	var stored db.NotificationConfig
+	require.NoError(t, setup.database.DB.First(&stored, "id = ?", body["id"]).Error)
+	assert.JSONEq(t, `["backup_succeeded","backup_verification_succeeded","backup_verification_failed"]`, stored.Events)
+}
+
 func TestTelegramNotificationConfigEncryptsAndRedactsBotToken(t *testing.T) {
 	setup := setupNotificationAPI(t)
 
@@ -188,6 +216,14 @@ func TestCreateNotificationConfigValidatesTypeAndRequiredConfig(t *testing.T) {
 			body: map[string]any{
 				"type":   "webhook",
 				"config": map[string]any{"url": "https://hooks.example.test"},
+			},
+		},
+		{
+			name: "unknown event",
+			body: map[string]any{
+				"type":   "webhook",
+				"config": map[string]any{"url": "https://hooks.example.test"},
+				"events": []string{"backup_finished"},
 			},
 		},
 		{
@@ -371,6 +407,34 @@ func TestUpdateNotificationConfigCanUpdateOnlyEvents(t *testing.T) {
 	plaintext, err := db.Decrypt(stored.Config, setup.database.MasterKey)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"url":"https://hooks.example.test","headers":{"Authorization":"Bearer old-secret","X-Trace":"trace-id"}}`, plaintext)
+}
+
+func TestUpdateNotificationConfigCanUseNewNotificationEvents(t *testing.T) {
+	setup := setupNotificationAPI(t)
+	created := createNotificationConfigViaAPI(t, setup.router, "webhook", map[string]any{
+		"url": "https://hooks.example.test",
+	}, []string{"backup_failed"})
+	id := created["id"].(string)
+
+	w := putJSON(t, setup.router, "/api/notifications/"+id, map[string]any{
+		"events": []string{
+			notify.EventBackupSucceeded,
+			notify.EventBackupVerificationSucceeded,
+			notify.EventBackupVerificationFailed,
+		},
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	assertJSONList(t, body["events"], []string{
+		notify.EventBackupSucceeded,
+		notify.EventBackupVerificationSucceeded,
+		notify.EventBackupVerificationFailed,
+	})
+
+	var stored db.NotificationConfig
+	require.NoError(t, setup.database.DB.First(&stored, "id = ?", id).Error)
+	assert.JSONEq(t, `["backup_succeeded","backup_verification_succeeded","backup_verification_failed"]`, stored.Events)
 }
 
 func TestUpdateNotificationConfigPreservesRedactedSecrets(t *testing.T) {

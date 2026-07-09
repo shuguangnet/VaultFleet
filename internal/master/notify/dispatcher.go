@@ -17,8 +17,11 @@ import (
 )
 
 const (
-	EventBackupFailed = "backup_failed"
-	EventAgentOffline = "agent_offline"
+	EventBackupSucceeded             = "backup_succeeded"
+	EventBackupFailed                = "backup_failed"
+	EventBackupVerificationSucceeded = "backup_verification_succeeded"
+	EventBackupVerificationFailed    = "backup_verification_failed"
+	EventAgentOffline                = "agent_offline"
 
 	defaultHTTPTimeout = 10 * time.Second
 	defaultSendTimeout = 10 * time.Second
@@ -67,19 +70,19 @@ func (d *Dispatcher) Start() {
 }
 
 func (d *Dispatcher) handleEvent(event events.Event) {
-	msg, eventName, ok := d.notificationForEvent(event)
+	msg, eventNames, ok := d.notificationForEvent(event)
 	if !ok {
 		return
 	}
 
 	go func() {
-		if err := d.dispatch(context.Background(), eventName, msg); err != nil {
-			log.Printf("dispatch notification %s failed: %v", eventName, err)
+		if err := d.dispatch(context.Background(), eventNames, msg); err != nil {
+			log.Printf("dispatch notification %s failed: %v", strings.Join(eventNames, ","), err)
 		}
 	}()
 }
 
-func (d *Dispatcher) dispatch(ctx context.Context, eventName string, msg NotifyMessage) error {
+func (d *Dispatcher) dispatch(ctx context.Context, eventNames []string, msg NotifyMessage) error {
 	if d == nil || d.db == nil || d.db.DB == nil {
 		return errors.New("notification database not configured")
 	}
@@ -91,7 +94,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, eventName string, msg NotifyM
 
 	var errs []error
 	for _, config := range configs {
-		if !configMatchesEvent(config.Events, eventName) {
+		if !configMatchesAnyEvent(config.Events, eventNames) {
 			continue
 		}
 
@@ -121,12 +124,12 @@ func (d *Dispatcher) send(parent context.Context, notifier Notifier, configID st
 	}
 }
 
-func (d *Dispatcher) notificationForEvent(event events.Event) (NotifyMessage, string, bool) {
+func (d *Dispatcher) notificationForEvent(event events.Event) (NotifyMessage, []string, bool) {
 	switch event.Type {
 	case events.AgentOffline:
 		agentName := d.displayAgentName(payloadAgentName(event.Payload))
 		if agentName == "" {
-			return NotifyMessage{}, "", false
+			return NotifyMessage{}, nil, false
 		}
 		return NotifyMessage{
 			Title:     "Agent Offline",
@@ -134,17 +137,17 @@ func (d *Dispatcher) notificationForEvent(event events.Event) (NotifyMessage, st
 			Level:     LevelWarning,
 			AgentName: agentName,
 			Timestamp: d.now().UTC(),
-		}, EventAgentOffline, true
+		}, []string{EventAgentOffline}, true
 	case events.TaskResult:
-		return d.backupFailedMessage(event.Payload)
+		return d.taskResultMessage(event.Payload)
 	case events.EventType(EventBackupFailed):
 		return d.directBackupFailedMessage(event.Payload)
 	default:
-		return NotifyMessage{}, "", false
+		return NotifyMessage{}, nil, false
 	}
 }
 
-func (d *Dispatcher) directBackupFailedMessage(payload any) (NotifyMessage, string, bool) {
+func (d *Dispatcher) directBackupFailedMessage(payload any) (NotifyMessage, []string, bool) {
 	agentName := d.displayAgentName(payloadAgentName(payload))
 	if agentName == "" {
 		agentName = "unknown"
@@ -166,25 +169,47 @@ func (d *Dispatcher) directBackupFailedMessage(payload any) (NotifyMessage, stri
 		Level:     LevelError,
 		AgentName: agentName,
 		Timestamp: timestamp.UTC(),
-	}, EventBackupFailed, true
+	}, []string{EventBackupFailed}, true
 }
 
-func (d *Dispatcher) backupFailedMessage(payload any) (NotifyMessage, string, bool) {
+func (d *Dispatcher) taskResultMessage(payload any) (NotifyMessage, []string, bool) {
 	result, fallbackAgentID, ok := parseTaskResultPayload(payload)
 	if !ok {
-		return NotifyMessage{}, "", false
+		return NotifyMessage{}, nil, false
 	}
-	if (result.TaskType != "backup" && result.TaskType != "verify") || !isFailureStatus(result.Status) {
-		return NotifyMessage{}, "", false
+	taskType := strings.ToLower(strings.TrimSpace(result.TaskType))
+	if taskType != "backup" && taskType != "verify" {
+		return NotifyMessage{}, nil, false
+	}
+
+	success := isSuccessStatus(result.Status)
+	failure := isFailureStatus(result.Status)
+	if !success && !failure {
+		return NotifyMessage{}, nil, false
+	}
+
+	var eventNames []string
+	level := LevelInfo
+	outcome := "Succeeded"
+	if taskType == "verify" {
+		if success {
+			eventNames = []string{EventBackupVerificationSucceeded}
+		} else {
+			eventNames = []string{EventBackupVerificationFailed, EventBackupFailed}
+		}
+	} else if success {
+		eventNames = []string{EventBackupSucceeded}
+	} else {
+		eventNames = []string{EventBackupFailed}
+	}
+	if failure {
+		level = LevelError
+		outcome = "Failed"
 	}
 
 	agentName := d.displayAgentName(result.AgentID)
 	if agentName == "" {
 		agentName = d.displayAgentName(fallbackAgentID)
-	}
-	body := result.ErrorLog
-	if body == "" {
-		body = fmt.Sprintf("%s task failed with status %q.", taskResultDisplayName(result.TaskType), result.Status)
 	}
 	timestamp := result.FinishedAt
 	if timestamp.IsZero() {
@@ -192,12 +217,12 @@ func (d *Dispatcher) backupFailedMessage(payload any) (NotifyMessage, string, bo
 	}
 
 	return NotifyMessage{
-		Title:     taskResultDisplayName(result.TaskType) + " Failed",
-		Body:      body,
-		Level:     LevelError,
+		Title:     taskResultDisplayName(taskType) + " " + outcome,
+		Body:      taskResultNotificationBody(result),
+		Level:     level,
 		AgentName: agentName,
 		Timestamp: timestamp.UTC(),
-	}, EventBackupFailed, true
+	}, eventNames, true
 }
 
 func taskResultDisplayName(taskType string) string {
@@ -293,13 +318,17 @@ func decryptNotificationConfig(rawConfig string, key []byte) (string, error) {
 	return "", err
 }
 
-func configMatchesEvent(rawEvents string, eventName string) bool {
-	var eventNames []string
-	if err := json.Unmarshal([]byte(rawEvents), &eventNames); err != nil {
+func configMatchesAnyEvent(rawEvents string, wantedEvents []string) bool {
+	var configuredEvents []string
+	if err := json.Unmarshal([]byte(rawEvents), &configuredEvents); err != nil {
 		return false
 	}
-	for _, name := range eventNames {
-		if name == eventName {
+	wanted := make(map[string]struct{}, len(wantedEvents))
+	for _, name := range wantedEvents {
+		wanted[name] = struct{}{}
+	}
+	for _, name := range configuredEvents {
+		if _, ok := wanted[name]; ok {
 			return true
 		}
 	}
@@ -408,9 +437,62 @@ func payloadTimestamp(payload any) time.Time {
 
 func isFailureStatus(status string) bool {
 	switch strings.ToLower(status) {
-	case "failed", "failure", "error":
+	case "failed", "failure", "error", "timeout", "timed_out", "cancelled", "canceled":
 		return true
 	default:
 		return false
 	}
+}
+
+func isSuccessStatus(status string) bool {
+	switch strings.ToLower(status) {
+	case "success", "succeeded", "ok":
+		return true
+	default:
+		return false
+	}
+}
+
+func taskResultNotificationBody(result protocol.TaskResultPayload) string {
+	lines := []string{
+		fmt.Sprintf("Status: %s", fallbackText(result.Status, "unknown")),
+	}
+	if result.DurationMs > 0 {
+		lines = append(lines, fmt.Sprintf("Duration: %s", formatDurationMs(result.DurationMs)))
+	}
+	if result.SnapshotID != "" {
+		lines = append(lines, "Snapshot: "+result.SnapshotID)
+	}
+	if result.ArtifactName != "" {
+		lines = append(lines, "Artifact: "+result.ArtifactName)
+	}
+	if result.ArtifactPath != "" {
+		lines = append(lines, "Artifact path: "+result.ArtifactPath)
+	}
+	if result.ArtifactSize > 0 {
+		lines = append(lines, fmt.Sprintf("Artifact size: %d bytes", result.ArtifactSize))
+	}
+	if result.RepoSize > 0 {
+		lines = append(lines, fmt.Sprintf("Repository size: %d bytes", result.RepoSize))
+	}
+	if strings.TrimSpace(result.ErrorLog) != "" {
+		lines = append(lines, "Error: "+strings.TrimSpace(result.ErrorLog))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func fallbackText(value string, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func formatDurationMs(durationMs int64) string {
+	duration := time.Duration(durationMs) * time.Millisecond
+	if duration < time.Second {
+		return duration.String()
+	}
+	return duration.Round(time.Millisecond).String()
 }
