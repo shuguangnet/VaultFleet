@@ -204,7 +204,7 @@ export function SnapshotTreeBrowser({
 
   if (!expanded) {
     return (
-      <div style={{ border: "1px solid #f0f0f0", borderRadius: 6, padding: 12, background: "#fff" }}>
+      <div style={{ border: "1px solid #e2e8f0", borderRadius: 6, padding: 12, background: "#fff" }}>
         <Button
           block
           icon={<SearchOutlined />}
@@ -221,7 +221,7 @@ export function SnapshotTreeBrowser({
     <div
       style={{
         overflow: "hidden",
-        border: "1px solid #f0f0f0",
+        border: "1px solid #e2e8f0",
         borderRadius: 6,
         background: "#fff",
       }}
@@ -233,7 +233,7 @@ export function SnapshotTreeBrowser({
           alignItems: "center",
           padding: "4px 12px",
           background: "#fafafa",
-          borderBottom: "1px solid #f0f0f0",
+          borderBottom: "1px solid #e2e8f0",
         }}
       >
         <Typography.Text style={{ fontSize: 12, fontWeight: 500 }}>
@@ -315,7 +315,7 @@ export function SnapshotTreeBrowser({
             gap: 12,
             padding: "4px 12px",
             background: "#fafafa",
-            borderTop: "1px solid #f0f0f0",
+            borderTop: "1px solid #e2e8f0",
           }}
         >
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -452,7 +452,7 @@ function TreeNodeRow({
                 padding: "2px 8px",
                 paddingLeft: padLeft,
                 fontSize: 10,
-                color: "#c53030",
+                color: "#ef4444",
               }}
             >
               {node.error}

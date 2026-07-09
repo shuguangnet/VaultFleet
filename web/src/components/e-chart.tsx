@@ -9,6 +9,7 @@ import {
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import type { EChartsOption } from "echarts";
+import { colors } from "@/styles/theme-tokens";
 
 use([
   BarChart,
@@ -71,8 +72,8 @@ export function EChart({
     if (loading) {
       chart.showLoading("default", {
         text: "加载中",
-        color: "#1f4f8f",
-        textColor: "rgba(0, 0, 0, 0.45)",
+        color: colors.primary,
+        textColor: colors.textSecondary,
         maskColor: "rgba(255, 255, 255, 0.6)",
       });
     } else {

@@ -6,6 +6,7 @@ import {
 } from "antd";
 import { CheckOutlined, CopyOutlined } from "@ant-design/icons";
 import { copyToClipboard } from "@/lib/utils";
+import { colors } from "@/styles/theme-tokens";
 
 type ScriptSource = "github" | "github-proxy" | "master";
 
@@ -26,23 +27,23 @@ export function InstallCommand({ enrollToken }: InstallCommandProps) {
     switch (scriptSource) {
       case "github":
         return [
-          `curl -fsSL ${GITHUB_RAW_URL} | bash -s -- \\`,
-          `  --server ${masterHost} \\`,
+          `curl -fsSL ${GITHUB_RAW_URL} | bash -s -- \\\n`,
+          `  --server ${masterHost} \\\n`,
           `  --token ${enrollToken}`,
-        ].join("\n");
+        ].join("");
       case "github-proxy":
         return [
-          `curl -fsSL ${githubProxy}${GITHUB_RAW_URL} | bash -s -- \\`,
-          `  --server ${masterHost} \\`,
-          `  --token ${enrollToken} \\`,
+          `curl -fsSL ${githubProxy}${GITHUB_RAW_URL} | bash -s -- \\\n`,
+          `  --server ${masterHost} \\\n`,
+          `  --token ${enrollToken} \\\n`,
           `  --github-proxy ${githubProxy}`,
-        ].join("\n");
+        ].join("");
       case "master":
         return [
-          `curl -fsSL ${masterHost}/install.sh | bash -s -- \\`,
-          `  --server ${masterHost} \\`,
+          `curl -fsSL ${masterHost}/install.sh | bash -s -- \\\n`,
+          `  --server ${masterHost} \\\n`,
           `  --token ${enrollToken}`,
-        ].join("\n");
+        ].join("");
     }
   };
 
@@ -80,10 +81,10 @@ export function InstallCommand({ enrollToken }: InstallCommandProps) {
                 padding: "10px 12px",
                 borderRadius: 6,
                 border: `1px solid ${
-                  scriptSource === option.value ? "#1f4f8f" : "#f0f0f0"
+                  scriptSource === option.value ? colors.primary : colors.border
                 }`,
                 background:
-                  scriptSource === option.value ? "rgba(22,104,220,0.04)" : "transparent",
+                  scriptSource === option.value ? "rgba(15, 76, 129, 0.04)" : "transparent",
                 cursor: "pointer",
               }}
             >
@@ -93,7 +94,7 @@ export function InstallCommand({ enrollToken }: InstallCommandProps) {
                 value={option.value}
                 checked={scriptSource === option.value}
                 onChange={() => setScriptSource(option.value)}
-                style={{ marginTop: 2, accentColor: "#1f4f8f" }}
+                style={{ marginTop: 2, accentColor: colors.primary }}
               />
               <span>
                 <div style={{ fontSize: 13, fontWeight: 500 }}>{option.label}</div>
@@ -136,7 +137,7 @@ export function InstallCommand({ enrollToken }: InstallCommandProps) {
         <div style={{ position: "relative", marginTop: 6 }}>
           <pre
             style={{
-              background: "#f5f7fa",
+              background: colors.background,
               padding: 16,
               paddingRight: 48,
               borderRadius: 6,
@@ -146,15 +147,15 @@ export function InstallCommand({ enrollToken }: InstallCommandProps) {
               whiteSpace: "pre-wrap",
               wordBreak: "break-all",
               fontFamily:
-                "JetBrains Mono, Fira Code, SFMono-Regular, Menlo, Consolas, monospace",
-              border: "1px solid #f0f0f0",
+                'JetBrains Mono, Fira Code, SFMono-Regular, Menlo, Consolas, monospace',
+              border: `1px solid ${colors.border}`,
             }}
           >
             {command}
           </pre>
           <Button
             type="text"
-            icon={copied ? <CheckOutlined style={{ color: "#2f855a" }} /> : <CopyOutlined />}
+            icon={copied ? <CheckOutlined style={{ color: colors.success }} /> : <CopyOutlined />}
             onClick={handleCopy}
             className="vf-icon-button"
             style={{ position: "absolute", top: 8, right: 8 }}

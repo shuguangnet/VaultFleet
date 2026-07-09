@@ -340,7 +340,7 @@ export function NodesPage() {
               canWriteNodes ? { type: "divider" as const } : null,
               canWriteNodes ? {
                 key: "delete",
-                icon: <WarningOutlined style={{ color: "#c53030" }} />,
+                icon: <WarningOutlined style={{ color: "#ef4444" }} />,
                 label: (
                   <Popconfirm
                     title="确认删除节点？"
@@ -350,7 +350,7 @@ export function NodesPage() {
                     cancelText="取消"
                     onConfirm={() => deleteMutation.mutate(record.id)}
                   >
-                    <span style={{ color: "#c53030" }}>删除</span>
+                    <span style={{ color: "#ef4444" }}>删除</span>
                   </Popconfirm>
                 ),
               } : null,

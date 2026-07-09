@@ -35,6 +35,7 @@ import { listAgents } from "@/services/agents";
 import { listPolicies } from "@/services/policies";
 import { listStorage } from "@/services/storage";
 import { listTasks } from "@/services/tasks";
+import { chartColors, colors } from "@/styles/theme-tokens";
 import type { TaskHistory } from "@/types/task";
 
 dayjs.extend(relativeTime);
@@ -48,16 +49,6 @@ interface DashboardTaskRow {
   status: string;
   created_at: string;
 }
-
-const chartColors = {
-  primary: "#1f4f8f",
-  success: "#2f855a",
-  warning: "#b7791f",
-  error: "#c53030",
-  cyan: "#3b6978",
-  purple: "#6b5f89",
-  slate: "#667085",
-};
 
 const taskStatusMeta: Record<
   TaskHistory["status"],
@@ -116,6 +107,8 @@ export function DashboardPage() {
 
   const latestTasks = tasksList.slice(0, 10);
 
+  const lastRefreshed = useMemo(() => dayjs().format("HH:mm:ss"), [tasksList.length]);
+
   const taskTrendOption = useMemo<EChartsOption>(() => {
     const days = Array.from({ length: 7 }, (_, index) =>
       dayjs().subtract(6 - index, "day")
@@ -148,22 +141,22 @@ export function DashboardPage() {
         right: 0,
         itemWidth: 10,
         itemHeight: 10,
-        textStyle: { color: "rgba(0, 0, 0, 0.55)" },
+        textStyle: { color: colors.textSecondary },
       },
       grid: { top: 42, right: 18, bottom: 24, left: 34 },
       xAxis: {
         type: "category",
         boundaryGap: false,
         data: labels,
-        axisLine: { lineStyle: { color: "#d9e0ea" } },
+        axisLine: { lineStyle: { color: colors.border } },
         axisTick: { show: false },
-        axisLabel: { color: "rgba(0, 0, 0, 0.45)" },
+        axisLabel: { color: colors.textTertiary },
       },
       yAxis: {
         type: "value",
         minInterval: 1,
-        splitLine: { lineStyle: { color: "#edf1f7" } },
-        axisLabel: { color: "rgba(0, 0, 0, 0.45)" },
+        splitLine: { lineStyle: { color: colors.borderSecondary } },
+        axisLabel: { color: colors.textTertiary },
       },
       series: [
         {
@@ -171,7 +164,21 @@ export function DashboardPage() {
           type: "line",
           smooth: true,
           symbolSize: 6,
-          areaStyle: { opacity: 0.08 },
+          lineStyle: { width: 2 },
+          areaStyle: {
+            opacity: 0.12,
+            color: {
+              type: "linear",
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [
+                { offset: 0, color: chartColors.primary },
+                { offset: 1, color: "rgba(15, 76, 129, 0.05)" },
+              ],
+            },
+          },
           data: totals,
         },
         {
@@ -179,6 +186,7 @@ export function DashboardPage() {
           type: "line",
           smooth: true,
           symbolSize: 6,
+          lineStyle: { width: 2 },
           data: successes,
         },
         {
@@ -186,6 +194,7 @@ export function DashboardPage() {
           type: "line",
           smooth: true,
           symbolSize: 6,
+          lineStyle: { width: 2 },
           data: failures,
         },
       ],
@@ -208,7 +217,7 @@ export function DashboardPage() {
               text: "暂无任务",
               left: "center",
               top: "42%",
-              textStyle: { color: "rgba(0, 0, 0, 0.35)", fontSize: 14 },
+              textStyle: { color: colors.textTertiary, fontSize: 14 },
             }
           : undefined,
       tooltip: { trigger: "item" },
@@ -217,7 +226,7 @@ export function DashboardPage() {
         left: "center",
         itemWidth: 10,
         itemHeight: 10,
-        textStyle: { color: "rgba(0, 0, 0, 0.55)" },
+        textStyle: { color: colors.textSecondary },
       },
       series: [
         {
@@ -228,7 +237,7 @@ export function DashboardPage() {
           avoidLabelOverlap: true,
           label: {
             formatter: "{b}\n{c}",
-            color: "rgba(0, 0, 0, 0.65)",
+            color: colors.text,
           },
           labelLine: { length: 10, length2: 8 },
           data,
@@ -260,15 +269,15 @@ export function DashboardPage() {
       xAxis: {
         type: "value",
         minInterval: 1,
-        splitLine: { lineStyle: { color: "#edf1f7" } },
-        axisLabel: { color: "rgba(0, 0, 0, 0.45)" },
+        splitLine: { lineStyle: { color: colors.borderSecondary } },
+        axisLabel: { color: colors.textTertiary },
       },
       yAxis: {
         type: "category",
         data: categories,
         axisTick: { show: false },
-        axisLine: { lineStyle: { color: "#d9e0ea" } },
-        axisLabel: { color: "rgba(0, 0, 0, 0.65)" },
+        axisLine: { lineStyle: { color: colors.border } },
+        axisLabel: { color: colors.text },
       },
       series: [
         {
@@ -324,7 +333,7 @@ export function DashboardPage() {
               text: "暂无存储",
               left: "center",
               top: "42%",
-              textStyle: { color: "rgba(0, 0, 0, 0.35)", fontSize: 14 },
+              textStyle: { color: colors.textTertiary, fontSize: 14 },
             }
           : undefined,
       tooltip: { trigger: "item" },
@@ -333,7 +342,7 @@ export function DashboardPage() {
         left: "center",
         itemWidth: 10,
         itemHeight: 10,
-        textStyle: { color: "rgba(0, 0, 0, 0.55)" },
+        textStyle: { color: colors.textSecondary },
       },
       series: [
         {
@@ -341,7 +350,7 @@ export function DashboardPage() {
           type: "pie",
           radius: ["0%", "68%"],
           center: ["50%", "42%"],
-          label: { formatter: "{b}: {c}", color: "rgba(0, 0, 0, 0.65)" },
+          label: { formatter: "{b}: {c}", color: colors.text },
           data,
         },
       ],
@@ -413,6 +422,9 @@ export function DashboardPage() {
           <Typography.Text className="vf-dashboard-subtitle">
             集中查看节点健康、策略同步、存储配置与备份任务执行趋势。
           </Typography.Text>
+          <Typography.Text style={{ display: "block", marginTop: 10, color: "rgba(255,255,255,0.55)", fontSize: 12 }}>
+            最后刷新：{lastRefreshed}
+          </Typography.Text>
         </div>
         <Space wrap className="vf-dashboard-hero-actions">
           <Tag
@@ -439,7 +451,7 @@ export function DashboardPage() {
         </Space>
       </section>
 
-      <Row gutter={[16, 16]}>
+      <Row gutter={[20, 20]}>
         <Col xs={24} sm={12} lg={8} xl={6}>
           <MetricCard
             label="系统状态"
@@ -482,7 +494,7 @@ export function DashboardPage() {
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]}>
+      <Row gutter={[20, 20]}>
         <Col xs={24} xl={14}>
           <Card
             className="vf-dashboard-card"
@@ -504,7 +516,7 @@ export function DashboardPage() {
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]}>
+      <Row gutter={[20, 20]}>
         <Col xs={24} lg={14}>
           <Card className="vf-dashboard-card" title="资产健康视图">
             <EChart
@@ -576,6 +588,7 @@ export function DashboardPage() {
     </div>
   );
 }
+
 function MetricCard({
   label,
   value,
@@ -620,8 +633,12 @@ function DashboardAction({
     <Link to={to} className="vf-dashboard-action">
       <span className="vf-dashboard-action-icon">{icon}</span>
       <span>
-        <Typography.Text strong>{title}</Typography.Text>
-        <Typography.Text type="secondary">{description}</Typography.Text>
+        <Typography.Text strong style={{ fontSize: 14, color: colors.text }}>
+          {title}
+        </Typography.Text>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {description}
+        </Typography.Text>
       </span>
     </Link>
   );

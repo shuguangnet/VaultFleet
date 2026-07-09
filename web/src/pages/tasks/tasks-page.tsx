@@ -91,7 +91,7 @@ export function renderTaskManifestSummary(task: TaskHistory) {
         marginTop: 12,
         padding: "10px 12px",
         background: "#fff",
-        border: "1px solid #f0f0f0",
+        border: "1px solid #e2e8f0",
         borderRadius: 6,
       }}
     >
@@ -552,7 +552,7 @@ export function TasksPage() {
                 style={{
                   padding: "8px 10px",
                   background: "#fff",
-                  border: "1px solid #f0f0f0",
+                  border: "1px solid #e2e8f0",
                   borderRadius: 6,
                 }}
               >

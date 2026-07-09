@@ -837,7 +837,7 @@ export function PoliciesPage() {
                     cancelText="取消"
                     onConfirm={() => deleteMutation.mutate(record.id)}
                   >
-                    <span style={{ color: "#c53030" }}>删除</span>
+                    <span style={{ color: "#ef4444" }}>删除</span>
                   </Popconfirm>
                 ),
               } : null,
@@ -906,7 +906,7 @@ export function PoliciesPage() {
             style={{
               padding: "10px 16px",
               background: "#fff",
-              borderTop: "1px solid #f0f0f0",
+              borderTop: "1px solid #e2e8f0",
             }}
           >
             <Button
@@ -1021,7 +1021,7 @@ export function PoliciesPage() {
 
           <div
             style={{
-              border: "1px solid #f0f0f0",
+              border: "1px solid #e2e8f0",
               borderRadius: 6,
               padding: 12,
             }}
@@ -1044,12 +1044,12 @@ export function PoliciesPage() {
                     borderRadius: 6,
                     border: `1px solid ${
                       formData.backup_mode === "snapshot"
-                        ? "#1f4f8f"
-                        : "#f0f0f0"
+                        ? "#0f4c81"
+                        : "#e2e8f0"
                     }`,
                     background:
                       formData.backup_mode === "snapshot"
-                        ? "rgba(22,104,220,0.05)"
+                        ? "rgba(15,76,129,0.05)"
                         : "transparent",
                     cursor: "pointer",
                   }}
@@ -1073,12 +1073,12 @@ export function PoliciesPage() {
                     borderRadius: 6,
                     border: `1px solid ${
                       formData.backup_mode === "archive"
-                        ? "#1f4f8f"
-                        : "#f0f0f0"
+                        ? "#0f4c81"
+                        : "#e2e8f0"
                     }`,
                     background:
                       formData.backup_mode === "archive"
-                        ? "rgba(22,104,220,0.05)"
+                        ? "rgba(15,76,129,0.05)"
                         : "transparent",
                     cursor: "pointer",
                   }}
@@ -1116,7 +1116,7 @@ export function PoliciesPage() {
 
           <div
             style={{
-              border: "1px solid #f0f0f0",
+              border: "1px solid #e2e8f0",
               borderRadius: 6,
               padding: 12,
             }}
@@ -1244,7 +1244,7 @@ export function PoliciesPage() {
 
           <div
             style={{
-              borderTop: "1px solid #f0f0f0",
+              borderTop: "1px solid #e2e8f0",
               paddingTop: 12,
             }}
           >
@@ -1396,7 +1396,7 @@ export function PoliciesPage() {
           {formData.agent_id && (
             <div
               style={{
-                border: "1px solid #f0f0f0",
+                border: "1px solid #e2e8f0",
                 borderRadius: 6,
                 padding: 12,
               }}
@@ -1478,7 +1478,7 @@ export function PoliciesPage() {
                               alignItems: "flex-start",
                               padding: 10,
                               marginBottom: 6,
-                              border: "1px solid #f0f0f0",
+                              border: "1px solid #e2e8f0",
                               borderRadius: 6,
                               opacity: c.selectable ? 1 : 0.5,
                               cursor: c.selectable ? "pointer" : "default",
@@ -1550,7 +1550,7 @@ export function PoliciesPage() {
 
           <div
             style={{
-              border: "1px solid #f0f0f0",
+              border: "1px solid #e2e8f0",
               borderRadius: 6,
               padding: 12,
             }}
@@ -1596,7 +1596,7 @@ export function PoliciesPage() {
 	                  return (
                     <div
                       key={index}
-                      style={{ border: "1px solid #f0f0f0", borderRadius: 6, padding: 12 }}
+                      style={{ border: "1px solid #e2e8f0", borderRadius: 6, padding: 12 }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                         <Typography.Text strong>{databaseSourceLabel(db)}</Typography.Text>
@@ -1870,7 +1870,7 @@ export function PoliciesPage() {
                 </Typography.Paragraph>
                 <Row gutter={[8, 8]}>
                   <Col xs={24} sm={12}>
-                    <div style={{ padding: 8, border: "1px solid #f0f0f0", borderRadius: 4, background: "#fafafa" }}>
+                    <div style={{ padding: 8, border: "1px solid #e2e8f0", borderRadius: 4, background: "#fafafa" }}>
                       <Typography.Text strong style={{ fontSize: 12 }}>
                         推荐路径示例
                       </Typography.Text>
@@ -1886,7 +1886,7 @@ export function PoliciesPage() {
                     </div>
                   </Col>
                   <Col xs={24} sm={12}>
-                    <div style={{ padding: 8, border: "1px solid #f0f0f0", borderRadius: 4, background: "#fafafa" }}>
+                    <div style={{ padding: 8, border: "1px solid #e2e8f0", borderRadius: 4, background: "#fafafa" }}>
                       <Typography.Text strong style={{ fontSize: 12 }}>
                         一致性示例
                       </Typography.Text>
@@ -1908,7 +1908,7 @@ export function PoliciesPage() {
 
           <div
             style={{
-              border: "1px solid #f0f0f0",
+              border: "1px solid #e2e8f0",
               borderRadius: 6,
               padding: 12,
             }}
@@ -2034,7 +2034,7 @@ export function PoliciesPage() {
 
           <div
             style={{
-              borderTop: "1px solid #f0f0f0",
+              borderTop: "1px solid #e2e8f0",
               paddingTop: 12,
             }}
           >
@@ -2062,11 +2062,11 @@ export function PoliciesPage() {
                       padding: 10,
                       borderRadius: 6,
                       border: `1px solid ${
-                        retentionPreset === key ? "#1f4f8f" : "#f0f0f0"
+                        retentionPreset === key ? "#0f4c81" : "#e2e8f0"
                       }`,
                       background:
                         retentionPreset === key
-                          ? "rgba(22,104,220,0.05)"
+                          ? "rgba(15,76,129,0.05)"
                           : "transparent",
                       cursor: "pointer",
                     }}
@@ -2130,7 +2130,7 @@ export function PoliciesPage() {
 
           <div
             style={{
-              borderTop: "1px solid #f0f0f0",
+              borderTop: "1px solid #e2e8f0",
               paddingTop: 12,
             }}
           >
@@ -2299,7 +2299,7 @@ export function PoliciesPage() {
                       justifyContent: "space-between",
                       gap: 12,
                       padding: "8px 10px",
-                      border: "1px solid #f0f0f0",
+                      border: "1px solid #e2e8f0",
                       borderRadius: 6,
                     }}
                   >

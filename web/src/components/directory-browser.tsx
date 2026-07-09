@@ -200,7 +200,7 @@ export function DirectoryBrowser({
   return (
     <div
       style={{
-        border: "1px solid #f0f0f0",
+        border: "1px solid #e2e8f0",
         borderRadius: 6,
         background: "#fff",
         overflow: "hidden",
@@ -210,7 +210,7 @@ export function DirectoryBrowser({
         style={{
           padding: 8,
           background: "#fafafa",
-          borderBottom: "1px solid #f0f0f0",
+          borderBottom: "1px solid #e2e8f0",
         }}
       >
         <Space>
@@ -228,7 +228,7 @@ export function DirectoryBrowser({
               fontSize: 12,
               fontFamily: "monospace",
               background: "#fff",
-              border: "1px solid #f0f0f0",
+              border: "1px solid #e2e8f0",
               borderRadius: 4,
             }}
           >
@@ -425,7 +425,7 @@ function TreeNodeRow({
             padding: "2px 8px",
             paddingLeft: (depth + 1) * 20 + 8,
             fontSize: 12,
-            color: "#c53030",
+            color: "#ef4444",
           }}
         >
           {node.error}

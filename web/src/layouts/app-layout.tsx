@@ -17,22 +17,25 @@ import {
 import {
   BellOutlined,
   CameraOutlined,
-  DatabaseOutlined,
   DashboardOutlined,
+  DatabaseOutlined,
   DesktopOutlined,
   HistoryOutlined,
+  HomeOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  MoonOutlined,
   ReloadOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
+  SunOutlined,
   UserOutlined,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { listAgents } from "@/services/agents";
 import { logout } from "@/services/auth";
-import { antdTheme } from "@/styles/antd-theme";
+import { colors } from "@/styles/theme-tokens";
 import type { AuthUser } from "@/types/api";
 import { AuthProvider } from "@/contexts/auth-context";
 
@@ -70,6 +73,27 @@ function findActiveLabel(pathname: string): string {
   return matched?.label ?? "页面";
 }
 
+function useThemeToggle() {
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    if (typeof window === "undefined") return "light";
+    return document.documentElement.classList.contains("dark") ? "dark" : "light";
+  });
+
+  const toggle = () => {
+    setTheme((prev) => {
+      const next = prev === "light" ? "dark" : "light";
+      if (next === "dark") {
+        document.documentElement.classList.add("dark");
+      } else {
+        document.documentElement.classList.remove("dark");
+      }
+      return next;
+    });
+  };
+
+  return { theme, toggle };
+}
+
 export function AppLayout({ user }: AppLayoutProps) {
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -77,6 +101,7 @@ export function AppLayout({ user }: AppLayoutProps) {
   const isMobile = !screens.md;
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const { theme, toggle: toggleTheme } = useThemeToggle();
 
   const { data: agents } = useQuery({
     queryKey: ["agents"],
@@ -145,16 +170,14 @@ export function AppLayout({ user }: AppLayoutProps) {
     .join(" ");
 
   const brand = (
-    <div
-      className={brandClassName}
-    >
+    <div className={brandClassName}>
       <span className="vf-app-brand-icon">
         <SafetyCertificateOutlined />
       </span>
       {(!collapsed || isMobile) && (
         <span className="vf-app-brand-copy">
           <span className="vf-app-brand-name">VaultFleet</span>
-          <span className="vf-app-brand-subtitle">云备份控制台</span>
+          <span className="vf-app-brand-subtitle">企业云备份控制台</span>
         </span>
       )}
     </div>
@@ -162,21 +185,47 @@ export function AppLayout({ user }: AppLayoutProps) {
 
   return (
     <AuthProvider user={user}>
-    <Layout className="vf-app-shell">
-      {!isMobile && (
-        <Sider
-          collapsible
-          collapsed={collapsed}
-          onCollapse={setCollapsed}
-          width={220}
-          collapsedWidth={64}
-          trigger={null}
-          theme="dark"
-          style={{
-            position: "sticky",
-            top: 0,
-            height: "100vh",
-            overflow: "auto",
+      <Layout className="vf-app-shell">
+        {!isMobile && (
+          <Sider
+            collapsible
+            collapsed={collapsed}
+            onCollapse={setCollapsed}
+            width={240}
+            collapsedWidth={64}
+            trigger={null}
+            theme="dark"
+            style={{
+              position: "sticky",
+              top: 0,
+              height: "100vh",
+              overflow: "auto",
+            }}
+          >
+            {brand}
+            <Menu
+              theme="dark"
+              mode="inline"
+              selectedKeys={[selectedKey]}
+              items={menuItems}
+              style={{
+                marginTop: 8,
+                borderInlineEnd: "none",
+              }}
+            />
+          </Sider>
+        )}
+
+        <Drawer
+          title={null}
+          placement="left"
+          open={mobileNavOpen}
+          onClose={() => setMobileNavOpen(false)}
+          width="min(86vw, 320px)"
+          className="vf-mobile-nav-drawer"
+          styles={{
+            body: { padding: 0, background: colors.siderBg },
+            header: { display: "none" },
           }}
         >
           {brand}
@@ -185,124 +234,116 @@ export function AppLayout({ user }: AppLayoutProps) {
             mode="inline"
             selectedKeys={[selectedKey]}
             items={menuItems}
+            onClick={() => setMobileNavOpen(false)}
             style={{
               marginTop: 8,
               borderInlineEnd: "none",
+              background: "transparent",
             }}
           />
-        </Sider>
-      )}
+        </Drawer>
 
-      <Drawer
-        title={null}
-        placement="left"
-        open={mobileNavOpen}
-        onClose={() => setMobileNavOpen(false)}
-        width="min(86vw, 320px)"
-        className="vf-mobile-nav-drawer"
-        styles={{
-          body: { padding: 0, background: "#172033" },
-          header: { display: "none" },
-        }}
-      >
-        {brand}
-        <Menu
-          theme="dark"
-          mode="inline"
-          selectedKeys={[selectedKey]}
-          items={menuItems}
-          onClick={() => setMobileNavOpen(false)}
-          style={{
-            marginTop: 8,
-            borderInlineEnd: "none",
-            background: "transparent",
-          }}
-        />
-      </Drawer>
+        <Layout>
+          <Header
+            className="vf-app-header"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "0 20px",
+              background: colors.card,
+              borderBottom: `1px solid ${colors.border}`,
+              position: "sticky",
+              top: 0,
+              zIndex: 10,
+            }}
+          >
+            <Space size="middle" align="center">
+              <button
+                type="button"
+                onClick={() =>
+                  isMobile
+                    ? setMobileNavOpen(true)
+                    : setCollapsed((c) => !c)
+                }
+                aria-label={isMobile ? "打开导航" : "切换侧栏"}
+                className="vf-icon-button"
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: 16,
+                  color: "rgba(0,0,0,0.65)",
+                }}
+              >
+                {isMobile || collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              </button>
+              <Breadcrumb
+                className="vf-app-breadcrumb"
+                items={[
+                  ...(!isMobile ? [{ title: <HomeOutlined /> }] : []),
+                  { title: <span style={{ fontWeight: 600, color: colors.text }}>{activeLabel}</span> },
+                ]}
+              />
+            </Space>
 
-      <Layout>
-        <Header
-          className="vf-app-header"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "0 20px",
-            background: "#ffffff",
-            borderBottom: "1px solid #e7ebf0",
-            position: "sticky",
-            top: 0,
-            zIndex: 10,
-          }}
-        >
-          <Space size="middle" align="center">
-            <button
-              type="button"
-              onClick={() =>
-                isMobile
-                  ? setMobileNavOpen(true)
-                  : setCollapsed((c) => !c)
-              }
-              aria-label={isMobile ? "打开导航" : "切换侧栏"}
-              className="vf-icon-button"
-              style={{
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                fontSize: 16,
-                color: "rgba(0,0,0,0.65)",
-              }}
-            >
-              {isMobile || collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-            </button>
-            <Breadcrumb
-              className="vf-app-breadcrumb"
-              items={[
-                ...(!isMobile ? [{ title: "控制台" }] : []),
-                { title: <strong>{activeLabel}</strong> },
-              ]}
-            />
-          </Space>
+            <Space size={isMobile ? "middle" : "large"} align="center">
+              <Tooltip title={`${onlineCount} / ${totalCount} 节点在线`}>
+                <Space size={6}>
+                  <Badge
+                    status={onlineCount > 0 ? "success" : "error"}
+                    showZero
+                  />
+                  <Typography.Text className="vf-header-online-text" style={{ fontSize: 13 }}>
+                    {onlineCount} / {totalCount} 节点在线
+                  </Typography.Text>
+                </Space>
+              </Tooltip>
 
-          <Space size={isMobile ? "middle" : "large"} align="center">
-            <Tooltip title={`${onlineCount} / ${totalCount} 节点在线`}>
-              <Space size={6}>
-                <Badge
-                  status={onlineCount > 0 ? "success" : "error"}
-                  showZero
-                />
-                <Typography.Text className="vf-header-online-text" style={{ fontSize: 13 }}>
-                  {onlineCount} / {totalCount} 节点在线
-                </Typography.Text>
-              </Space>
-            </Tooltip>
+              <Tooltip title={theme === "light" ? "切换深色模式" : "切换浅色模式"}>
+                <button
+                  type="button"
+                  onClick={toggleTheme}
+                  aria-label={theme === "light" ? "切换深色模式" : "切换浅色模式"}
+                  className="vf-icon-button"
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: 16,
+                    color: "rgba(0,0,0,0.65)",
+                  }}
+                >
+                  {theme === "light" ? <MoonOutlined /> : <SunOutlined />}
+                </button>
+              </Tooltip>
 
-            <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
-              <Space style={{ cursor: "pointer" }}>
-                <Avatar
-                  size={32}
-                  icon={<UserOutlined />}
-                  style={{ background: antdTheme.token?.colorPrimary }}
-                />
-                <Typography.Text className="vf-header-username" style={{ fontSize: 13 }}>
-                  {user.username}
-                </Typography.Text>
-              </Space>
-            </Dropdown>
-          </Space>
-        </Header>
+              <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
+                <Space style={{ cursor: "pointer" }}>
+                  <Avatar
+                    size={32}
+                    icon={<UserOutlined />}
+                    style={{ background: colors.primary }}
+                  />
+                  <Typography.Text className="vf-header-username" style={{ fontSize: 13 }}>
+                    {user.username}
+                  </Typography.Text>
+                </Space>
+              </Dropdown>
+            </Space>
+          </Header>
 
-        <Content
-          className="vf-app-content"
-          style={{
-            background: "#f6f7f9",
-            overflow: "auto",
-          }}
-        >
-          <Outlet />
-        </Content>
+          <Content
+            className="vf-app-content"
+            style={{
+              background: colors.background,
+              overflow: "auto",
+            }}
+          >
+            <Outlet />
+          </Content>
+        </Layout>
       </Layout>
-    </Layout>
     </AuthProvider>
   );
 }

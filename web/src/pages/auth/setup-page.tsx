@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { Alert, Button, Card, Form, Input, Typography } from "antd";
 import { SafetyCertificateOutlined } from "@ant-design/icons";
 import { initAdmin } from "@/services/auth";
+import { colors } from "@/styles/theme-tokens";
 
 interface SetupPageProps {
   onComplete: () => void;
@@ -47,8 +48,6 @@ export function SetupPage({ onComplete }: SetupPageProps) {
         style={{
           width: "100%",
           maxWidth: 460,
-          boxShadow: "0 16px 40px rgba(15, 23, 42, 0.18)",
-          borderRadius: 4,
         }}
         styles={{ body: { padding: "32px 32px 24px" } }}
       >
@@ -56,19 +55,36 @@ export function SetupPage({ onComplete }: SetupPageProps) {
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 10,
+            gap: 12,
             marginBottom: 8,
           }}
         >
-          <SafetyCertificateOutlined
-            style={{ fontSize: 28, color: "#1f4f8f" }}
-          />
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            初始化管理员
-          </Typography.Title>
+          <span
+            style={{
+              display: "inline-flex",
+              width: 40,
+              height: 40,
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#e2e8f0",
+              background: `linear-gradient(135deg, ${colors.primary} 0%, ${colors.info} 100%)`,
+              borderRadius: 10,
+              fontSize: 22,
+            }}
+          >
+            <SafetyCertificateOutlined />
+          </span>
+          <div>
+            <Typography.Title level={4} style={{ margin: 0, fontWeight: 700 }}>
+              VaultFleet
+            </Typography.Title>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              企业云备份控制台
+            </Typography.Text>
+          </div>
         </div>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 24 }}>
-          欢迎使用 云备份。请设置首个管理员账户。
+          欢迎使用 VaultFleet。请设置首个管理员账户。
         </Typography.Paragraph>
 
         {error && (

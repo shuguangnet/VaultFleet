@@ -254,7 +254,7 @@ export function NotificationsPage() {
             type="text"
             icon={
               testSuccessId === record.id ? (
-                <CheckOutlined style={{ color: "#2f855a" }} />
+                <CheckOutlined style={{ color: "#10b981" }} />
               ) : (
                 <SendOutlined />
               )
@@ -285,7 +285,7 @@ export function NotificationsPage() {
                       cancelText="取消"
                       onConfirm={() => deleteMutation.mutate(record.id)}
                     >
-                      <span style={{ color: "#c53030" }}>删除</span>
+                      <span style={{ color: "#ef4444" }}>删除</span>
                     </Popconfirm>
                   ),
                 },
@@ -355,7 +355,7 @@ export function NotificationsPage() {
             style={{
               padding: "10px 16px",
               background: "#fff",
-              borderTop: "1px solid #f0f0f0",
+              borderTop: "1px solid #e2e8f0",
             }}
           >
             <Row gutter={[8, 8]}>
@@ -420,7 +420,7 @@ export function NotificationsPage() {
 
           <div
             style={{
-              border: "1px solid #f0f0f0",
+              border: "1px solid #e2e8f0",
               borderRadius: 6,
               padding: 12,
               background: "#fafafa",
