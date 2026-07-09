@@ -15,6 +15,7 @@ import {
   createPolicy,
   deletePolicy,
   listPolicies,
+  previewArtifactNaming,
   updatePolicy,
 } from "@/services/policies";
 import { listStorage } from "@/services/storage";
@@ -33,6 +34,7 @@ vi.mock("@/services/policies", () => ({
   createPolicy: vi.fn(),
   deletePolicy: vi.fn(),
   listPolicies: vi.fn(),
+  previewArtifactNaming: vi.fn(),
   updatePolicy: vi.fn(),
 }));
 
@@ -85,6 +87,10 @@ beforeEach(() => {
     created_count: 0,
     failed_count: 0,
     results: [],
+  });
+  vi.mocked(previewArtifactNaming).mockResolvedValue({
+    context_name: "node-1",
+    source_type: "path",
   });
 });
 

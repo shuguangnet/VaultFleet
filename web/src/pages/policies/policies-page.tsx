@@ -198,6 +198,54 @@ export function submitRcloneArgs(
   return {};
 }
 
+function addUniqueSuggestion(suggestions: string[], value: string | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed) return;
+  if (!suggestions.includes(trimmed)) suggestions.push(trimmed);
+}
+
+function pathBaseName(path: string) {
+  const normalized = path.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  if (!normalized || normalized === ".") return "";
+  const parts = normalized.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? "";
+}
+
+export function buildArtifactContextOptions(
+  input: Pick<PolicyInput, "backup_dirs" | "backup_sources" | "repo_path">,
+  previewContextName?: string,
+) {
+  const suggestions: string[] = [];
+  addUniqueSuggestion(suggestions, previewContextName);
+
+  for (const source of buildBackupSources(input)) {
+    if (source.type === "path") {
+      addUniqueSuggestion(suggestions, pathBaseName(source.path ?? ""));
+      continue;
+    }
+    if (source.type === "docker_container" && source.docker_container) {
+      addUniqueSuggestion(suggestions, source.docker_container.compose_project);
+      addUniqueSuggestion(suggestions, source.docker_container.compose_service);
+      addUniqueSuggestion(suggestions, source.docker_container.name);
+      continue;
+    }
+    if (source.type === "database" && source.database) {
+      const db = source.database;
+      addUniqueSuggestion(suggestions, db.connection_name);
+      addUniqueSuggestion(
+        suggestions,
+        db.all_databases ? `${db.engine}-all-databases` : db.database,
+      );
+      if (db.database && !db.all_databases) {
+        addUniqueSuggestion(suggestions, `${db.engine}-${db.database}`);
+      }
+    }
+  }
+
+  addUniqueSuggestion(suggestions, pathBaseName(input.repo_path));
+  return suggestions.map((value) => ({ value, label: value }));
+}
+
 function dockerSourcesFromPolicy(policy: BackupPolicy): BackupSource[] {
   return (policy.backup_sources ?? []).filter(
     (s) => s.type === "docker_container"
@@ -217,7 +265,7 @@ function verificationLabel(policy: BackupPolicy) {
   return { text: "失败", status: "error" as const };
 }
 
-function buildBackupSources(input: PolicyInput): BackupSource[] {
+function buildBackupSources(input: Pick<PolicyInput, "backup_dirs" | "backup_sources">): BackupSource[] {
   const pathSources = input.backup_dirs
     .map((p) => p.trim())
     .filter(Boolean)
@@ -590,6 +638,10 @@ export function PoliciesPage() {
     retry: false,
   });
   const artifactNamingPreview = artifactNamingPreviewQuery.data;
+  const artifactContextOptions = buildArtifactContextOptions(
+    formData,
+    artifactNamingPreview?.context_name,
+  );
 
   const setDatabaseSources = (databaseSources: BackupSource[]) => {
     setFormData({
@@ -1073,17 +1125,38 @@ export function PoliciesPage() {
             <Row gutter={[8, 8]} style={{ marginTop: 8 }}>
               <Col xs={24}>
                 <label htmlFor="artifact-context-name" style={{ display: "block", fontWeight: 500, marginBottom: 4 }}>业务 / 站点名称</label>
-                <Input
-                  id="artifact-context-name"
-                  value={formData.artifact_context_name}
-                  placeholder={artifactNamingPreview?.context_name || "自动推断"}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      artifact_context_name: e.target.value,
-                    })
-                  }
-                />
+                <Space.Compact style={{ width: "100%" }}>
+                  <AutoComplete
+                    id="artifact-context-name"
+                    style={{ width: "100%" }}
+                    value={formData.artifact_context_name}
+                    options={artifactContextOptions}
+                    placeholder={artifactNamingPreview?.context_name || "自动推断"}
+                    filterOption={(input, option) =>
+                      (option?.value ?? "").toLowerCase().includes(input.toLowerCase())
+                    }
+                    onChange={(value) =>
+                      setFormData({
+                        ...formData,
+                        artifact_context_name: value,
+                      })
+                    }
+                  />
+                  <Button
+                    disabled={!artifactNamingPreview?.context_name}
+                    onClick={() =>
+                      setFormData({
+                        ...formData,
+                        artifact_context_name: artifactNamingPreview?.context_name ?? "",
+                      })
+                    }
+                  >
+                    使用推断
+                  </Button>
+                </Space.Compact>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  可留空使用自动推断，也可以选择建议值或手工覆盖。
+                </Typography.Text>
               </Col>
               {formData.backup_mode === "archive" && (
                 <>

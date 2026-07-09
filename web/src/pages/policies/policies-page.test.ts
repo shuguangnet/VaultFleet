@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildArtifactContextOptions,
   cleanRcloneArgs,
   defaultPolicyInput,
   defaultRcloneArgs,
@@ -81,5 +82,49 @@ describe("policy rclone args helpers", () => {
     ).toEqual({
       command: "docker exec db pg_dump",
     });
+  });
+
+  it("builds artifact context suggestions from selected backup sources", () => {
+    expect(
+      buildArtifactContextOptions(
+        {
+          repo_path: "vaultfleet/node-1",
+          backup_dirs: ["/var/www/example.com"],
+          backup_sources: [
+            {
+              type: "docker_container",
+              docker_container: {
+                name: "web",
+                compose_project: "cliproxyapi",
+                compose_service: "api",
+                include_bind_mounts: true,
+                include_volumes: true,
+                include_compose_files: true,
+              },
+            },
+            {
+              type: "database",
+              database: {
+                engine: "mysql",
+                execution_mode: "host",
+                username: "root",
+                database: "wordpress",
+                all_databases: false,
+              },
+            },
+          ],
+        },
+        "example-site",
+      ).map((option) => option.value),
+    ).toEqual([
+      "example-site",
+      "example.com",
+      "cliproxyapi",
+      "api",
+      "web",
+      "wordpress",
+      "mysql-wordpress",
+      "node-1",
+    ]);
   });
 });
