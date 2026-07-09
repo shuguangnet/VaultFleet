@@ -189,6 +189,11 @@ func permissionForRoute(method string, path string) string {
 		return PermissionAdminTokens
 	case strings.HasPrefix(path, "/api/audit-events"):
 		return PermissionReadAudit
+	case strings.HasPrefix(path, "/api/agent-upgrade-rollouts"):
+		if method == http.MethodGet {
+			return PermissionReadOperational
+		}
+		return PermissionWriteNodes
 	case strings.HasPrefix(path, "/api/system/import"), path == "/api/system/export":
 		return PermissionAdminSystem
 	case strings.HasPrefix(path, "/api/system/diagnostics"):

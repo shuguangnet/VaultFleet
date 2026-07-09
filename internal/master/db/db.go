@@ -42,6 +42,8 @@ func New(dataDir string) (*Database, error) {
 		&StorageConfig{},
 		&BackupPolicy{},
 		&AgentCommand{},
+		&AgentUpgradeRollout{},
+		&AgentUpgradeRolloutItem{},
 		&TaskHistory{},
 		&Snapshot{},
 		&NotificationConfig{},
@@ -74,6 +76,9 @@ func New(dataDir string) (*Database, error) {
 	}
 	if err := ensureTaskHistoryIndexes(gormDB); err != nil {
 		return nil, fmt.Errorf("ensure task history indexes: %w", err)
+	}
+	if err := ensureAgentUpgradeRolloutIndexes(gormDB); err != nil {
+		return nil, fmt.Errorf("ensure agent upgrade rollout indexes: %w", err)
 	}
 
 	masterKey, err := InitMasterKey(dataDir)
@@ -248,6 +253,25 @@ func ensureTaskHistoryIndexes(gormDB *gorm.DB) error {
 	statements := []string{
 		`CREATE INDEX IF NOT EXISTS idx_task_histories_type_status_created_at ON task_histories(type, status, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_task_histories_artifact_name ON task_histories(artifact_name)`,
+	}
+	for _, stmt := range statements {
+		if err := gormDB.Exec(stmt).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureAgentUpgradeRolloutIndexes(gormDB *gorm.DB) error {
+	if !gormDB.Migrator().HasTable(&AgentUpgradeRollout{}) || !gormDB.Migrator().HasTable(&AgentUpgradeRolloutItem{}) {
+		return nil
+	}
+
+	statements := []string{
+		`CREATE INDEX IF NOT EXISTS idx_agent_upgrade_rollouts_status_created_at ON agent_upgrade_rollouts(status, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_upgrade_rollout_items_rollout_status ON agent_upgrade_rollout_items(rollout_id, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_upgrade_rollout_items_agent_status ON agent_upgrade_rollout_items(agent_id, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_upgrade_rollout_items_message ON agent_upgrade_rollout_items(message_id)`,
 	}
 	for _, stmt := range statements {
 		if err := gormDB.Exec(stmt).Error; err != nil {

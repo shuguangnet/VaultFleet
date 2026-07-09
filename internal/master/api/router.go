@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"vaultfleet/internal/master/agentrollout"
 	"vaultfleet/internal/master/commands"
 	"vaultfleet/internal/master/db"
 	"vaultfleet/internal/master/events"
@@ -33,6 +34,7 @@ type RouterConfig struct {
 	Database           *db.Database
 	Hub                RouterHub
 	CommandService     *commands.Service
+	RolloutService     *agentrollout.Service
 	EventBus           *events.Bus
 	AgentWebSocket     gin.HandlerFunc
 	TaskProgressGetter func(agentID string, messageID string) *protocol.BackupProgressPayload
@@ -135,6 +137,13 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	agentHandler.Hub = cfg.Hub
 	agentHandler.Version = cfg.Version
 	agentHandler.GitHubRepo = cfg.GitHubRepo
+	rolloutService := cfg.RolloutService
+	if rolloutService == nil {
+		rolloutService = agentrollout.NewService(cfg.Database, cfg.Hub)
+	}
+	rolloutHandler := NewAgentRolloutHandler(cfg.Database, rolloutService)
+	rolloutHandler.Version = cfg.Version
+	rolloutHandler.GitHubRepo = cfg.GitHubRepo
 	storageHandler := NewConfigHandler(cfg.Database)
 	storageHandler.EventBus = cfg.EventBus
 	storageHandler.ProviderLoader = storagecheck.NewProviderLoader()
@@ -185,6 +194,7 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	protected.POST("/agents/:id/regenerate-token", agentHandler.RegenerateToken)
 	protected.POST("/agents/:id/update-agent", agentHandler.UpdateAgent)
 	protected.GET("/agents/:id/install-token", agentHandler.GetInstallToken)
+	RegisterAgentRolloutRoutes(protected, rolloutHandler)
 	RegisterStorageRoutes(protected, storageHandler)
 	RegisterPolicyRoutes(protected, policyHandler)
 	RegisterBrowseRoutes(protected, browseHandler)

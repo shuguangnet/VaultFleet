@@ -27,7 +27,7 @@ Backup data does not pass through the Master. The Master manages the control pla
 - **Snapshot browsing, preflight, and selective restore** for cross-node restore, whole snapshots, or selected paths, with a Web UI preflight gate before execution.
 - **Backup recoverability verification** can periodically run restic check, snapshot listing, sampled listing, and optional temporary small-file restore tests. See [Backup Recoverability Verification](docs/recoverability-verification.md).
 - **Diagnostics and notifications** through Telegram, Webhook, health checks, diagnostic bundles, and Agent log collection.
-- **Agent version reporting and self-update** through GitHub Release assets.
+- **Agent version reporting and controlled rollout upgrades** with tag targeting, canary validation, and batched progression. See [Agent rollout upgrades](docs/agent-rollout-upgrades.md).
 
 ## Requirements
 
@@ -128,6 +128,7 @@ This stops the service and removes `vaultfleet-agent`, `restic`, `rclone`, and A
 8. Track manual backups, scheduled backups, restore jobs, and running backup progress from task history; cancel running jobs when needed.
 9. Browse snapshots, select the source node and snapshot, choose a target node, restore mode, target path or Docker source, run restore preflight, then confirm the restore task.
 10. For cross-node migration, make sure the new Agent is online and can access the same storage; select that node as the target in the restore drawer instead of creating a matching policy just to reveal old snapshots.
+11. To upgrade multiple Agents, create a batch upgrade task from **Nodes**, target by tags or explicit nodes, validate canaries first, then continue in batches.
 
 ## Docker Workload Backup Notes
 
@@ -305,6 +306,7 @@ npm run test
 - [中文 README](README.md)
 - [Protocol reference](docs/protocol.md)
 - [Multi-user, RBAC, and API Token guide](docs/identity-access-control.md)
+- [Agent rollout upgrades](docs/agent-rollout-upgrades.md)
 - [Release guide](docs/release.md)
 - [Support and log collection guide](docs/support.md)
 - [Contributing guide](CONTRIBUTING.md)

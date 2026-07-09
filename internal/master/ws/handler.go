@@ -27,6 +27,8 @@ type TaskResultProcessorFunc func(agentID string, msg protocol.Message) error
 type PolicyAckProcessorFunc func(agentID string, msg protocol.Message) error
 type SnapshotListResponseProcessorFunc func(agentID string, msg protocol.Message) error
 type PendingCommandDispatcherFunc func(agentID string) error
+type AgentVersionObserverFunc func(agentID string, version string) error
+type AgentVersionUpdateGateFunc func(agentID string) (bool, error)
 type Handler struct {
 	hub                           *Hub
 	eventBus                      *events.Bus
@@ -38,6 +40,8 @@ type Handler struct {
 	PendingCommandDispatcher      PendingCommandDispatcherFunc
 	AgentStateUpdater             func(agentID string, status string, lastSeenAt *time.Time) error
 	HeartbeatStateUpdater         func(agentID string, status string, lastSeenAt *time.Time, heartbeat *protocol.HeartbeatPayload) error
+	AgentVersionObserver          AgentVersionObserverFunc
+	AgentVersionUpdateGate        AgentVersionUpdateGateFunc
 	upgrader                      websocket.Upgrader
 	capabilityDispatchMu          sync.Mutex
 	capabilityDispatches          map[string]struct{}
@@ -200,8 +204,25 @@ func (h *Handler) dispatch(agentID string, msg protocol.Message) {
 					}
 				}
 			}
-			if heartbeat.AgentVersion != "" && isAgentReleaseVersion(h.MasterVersion) && heartbeat.AgentVersion != h.MasterVersion {
-				h.notifyVersionIfCooldown(agentID)
+			if heartbeat.AgentVersion != "" {
+				if h.AgentVersionObserver != nil {
+					if err := h.AgentVersionObserver(agentID, heartbeat.AgentVersion); err != nil {
+						log.Printf("process agent %s version heartbeat failed: %v", agentID, err)
+					}
+				}
+				if isAgentReleaseVersion(h.MasterVersion) && heartbeat.AgentVersion != h.MasterVersion {
+					gated := false
+					if h.AgentVersionUpdateGate != nil {
+						var err error
+						gated, err = h.AgentVersionUpdateGate(agentID)
+						if err != nil {
+							log.Printf("check agent %s version update gate failed: %v", agentID, err)
+						}
+					}
+					if !gated {
+						h.notifyVersionIfCooldown(agentID)
+					}
+				}
 			}
 		}
 	case protocol.TypePolicyAck:

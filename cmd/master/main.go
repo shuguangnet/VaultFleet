@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"vaultfleet/internal/master/agentrollout"
 	"vaultfleet/internal/master/api"
 	"vaultfleet/internal/master/backup"
 	"vaultfleet/internal/master/commands"
@@ -117,6 +118,7 @@ func buildRuntimeWithOptions(ctx context.Context, database *db.Database, options
 	progressCache := ws.NewBackupProgressCache()
 	taskLogBuffer := tasklogs.NewBuffer()
 	commandService := commands.NewService(database, hub)
+	rolloutService := agentrollout.NewService(database, hub)
 	api.SubscribeAgentStateEvents(database, bus)
 	notify.NewDispatcher(database, bus).Start()
 	policyLookup := api.CurrentPolicyLookup(database)
@@ -140,6 +142,12 @@ func buildRuntimeWithOptions(ctx context.Context, database *db.Database, options
 	}
 	wsHandler.AgentStateUpdater = api.NewAgentStateUpdater(database)
 	wsHandler.HeartbeatStateUpdater = api.NewHeartbeatStateUpdater(database)
+	wsHandler.AgentVersionObserver = func(agentID string, agentVersion string) error {
+		return rolloutService.HandleHeartbeat(context.Background(), agentID, agentVersion)
+	}
+	wsHandler.AgentVersionUpdateGate = func(agentID string) (bool, error) {
+		return rolloutService.HasActiveItem(context.Background(), agentID)
+	}
 	githubRepo := "shuguangnet/VaultFleet"
 	wsHandler.MasterVersion = version
 	wsHandler.GitHubRepo = githubRepo
@@ -149,6 +157,7 @@ func buildRuntimeWithOptions(ctx context.Context, database *db.Database, options
 		Database:           database,
 		Hub:                hub,
 		CommandService:     commandService,
+		RolloutService:     rolloutService,
 		EventBus:           bus,
 		AgentWebSocket:     wsHandler.HandleWebSocket,
 		TaskProgressGetter: progressCache.Get,

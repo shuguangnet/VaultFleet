@@ -169,6 +169,60 @@ func (c *AgentCommand) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
+type AgentUpgradeRollout struct {
+	ID             string     `gorm:"type:text;primaryKey" json:"id"`
+	TargetVersion  string     `gorm:"type:text;index;not null" json:"target_version"`
+	GitHubRepo     string     `gorm:"type:text" json:"github_repo"`
+	TargetTags     string     `gorm:"type:text" json:"target_tags"`
+	TargetAgentIDs string     `gorm:"type:text" json:"target_agent_ids"`
+	CanaryCount    int        `json:"canary_count"`
+	BatchSize      int        `json:"batch_size"`
+	Status         string     `gorm:"type:text;index;not null" json:"status"`
+	FailureReason  string     `gorm:"type:text" json:"failure_reason,omitempty"`
+	CreatedByType  string     `gorm:"type:text" json:"created_by_type,omitempty"`
+	CreatedByID    string     `gorm:"type:text" json:"created_by_id,omitempty"`
+	CreatedByName  string     `gorm:"type:text" json:"created_by_name,omitempty"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+func (r *AgentUpgradeRollout) BeforeCreate(tx *gorm.DB) error {
+	if r.ID == "" {
+		r.ID = uuid.NewString()
+	}
+	return nil
+}
+
+type AgentUpgradeRolloutItem struct {
+	ID              string     `gorm:"type:text;primaryKey" json:"id"`
+	RolloutID       string     `gorm:"type:text;index;not null" json:"rollout_id"`
+	AgentID         string     `gorm:"type:text;index;not null" json:"agent_id"`
+	Phase           string     `gorm:"type:text;index" json:"phase"`
+	BatchIndex      int        `gorm:"index" json:"batch_index"`
+	Status          string     `gorm:"type:text;index;not null" json:"status"`
+	CurrentVersion  string     `gorm:"type:text" json:"current_version"`
+	TargetVersion   string     `gorm:"type:text;index;not null" json:"target_version"`
+	Architecture    string     `gorm:"type:text" json:"architecture"`
+	MessageID       string     `gorm:"type:text;index" json:"message_id,omitempty"`
+	Error           string     `gorm:"type:text" json:"error,omitempty"`
+	SkipReason      string     `gorm:"type:text" json:"skip_reason,omitempty"`
+	LastSeenVersion string     `gorm:"type:text" json:"last_seen_version,omitempty"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+	DeadlineAt      *time.Time `json:"deadline_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+func (i *AgentUpgradeRolloutItem) BeforeCreate(tx *gorm.DB) error {
+	if i.ID == "" {
+		i.ID = uuid.NewString()
+	}
+	return nil
+}
+
 type TaskHistory struct {
 	ID                  string     `gorm:"type:text;primaryKey" json:"id"`
 	AgentID             string     `gorm:"type:text;index;not null" json:"agent_id"`

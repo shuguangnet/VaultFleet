@@ -1107,6 +1107,70 @@ func TestHandlerHeartbeatSendsVersionInfoWhenMismatch(t *testing.T) {
 	assert.Equal(t, "shuguangnet/VaultFleet", payload.GitHubRepo)
 }
 
+func TestHandlerHeartbeatReportsAgentVersionToObserver(t *testing.T) {
+	hub := NewHub()
+	handler := NewHandler(hub, events.NewBus(), validTestAuth, noPolicy, nil)
+	handler.MasterVersion = "v1.0.0"
+	handler.HeartbeatStateUpdater = func(string, string, *time.Time, *protocol.HeartbeatPayload) error {
+		return nil
+	}
+	observed := make(chan string, 1)
+	handler.AgentVersionObserver = func(agentID string, version string) error {
+		observed <- agentID + ":" + version
+		return nil
+	}
+
+	msg, err := protocol.NewMessage(protocol.TypeHeartbeat, protocol.HeartbeatPayload{
+		AgentVersion: "v1.0.0",
+		Capabilities: []string{protocol.CapabilitySnapshotBrowse},
+	})
+	require.NoError(t, err)
+
+	handler.dispatch("agent-1", *msg)
+
+	select {
+	case value := <-observed:
+		assert.Equal(t, "agent-1:v1.0.0", value)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for version observer")
+	}
+}
+
+func TestHandlerHeartbeatSkipsVersionInfoWhenRolloutGateActive(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	hub := NewHub()
+	handler := NewHandler(hub, events.NewBus(), validTestAuth, noPolicy, nil)
+	handler.MasterVersion = "v2.0.0"
+	handler.GitHubRepo = "shuguangnet/VaultFleet"
+	handler.HeartbeatStateUpdater = func(string, string, *time.Time, *protocol.HeartbeatPayload) error {
+		return nil
+	}
+	handler.AgentVersionUpdateGate = func(agentID string) (bool, error) {
+		return agentID == "agent-1", nil
+	}
+
+	router := gin.New()
+	router.GET("/ws", handler.HandleWebSocket)
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+
+	conn, _, err := websocket.DefaultDialer.Dial(websocketURL(server.URL, "/ws", url.Values{"token": []string{"valid-token"}}), nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	heartbeat, err := protocol.NewMessage(protocol.TypeHeartbeat, protocol.HeartbeatPayload{
+		AgentVersion: "v1.0.0",
+		Capabilities: []string{protocol.CapabilitySnapshotBrowse},
+	})
+	require.NoError(t, err)
+	require.NoError(t, conn.WriteJSON(heartbeat))
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(200*time.Millisecond)))
+	var msg protocol.Message
+	err = conn.ReadJSON(&msg)
+	assert.Error(t, err)
+}
+
 func TestHandlerHeartbeatSkipsVersionInfoWhenMatch(t *testing.T) {
 	hub := NewHub()
 	handler := NewHandler(hub, events.NewBus(), validTestAuth, noPolicy, nil)

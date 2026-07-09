@@ -118,6 +118,8 @@ func auditActionForRoute(method string, path string) (string, string) {
 		return "user." + routeVerb(method, path), "user"
 	case strings.HasPrefix(path, "/api/api-tokens"):
 		return "api_token." + routeVerb(method, path), "api_token"
+	case strings.HasPrefix(path, "/api/agent-upgrade-rollouts"):
+		return "agent_rollout." + routeVerb(method, path), "agent_rollout"
 	case strings.HasPrefix(path, "/api/storage"):
 		return "storage." + routeVerb(method, path), "storage"
 	case strings.HasPrefix(path, "/api/policies"):
@@ -152,6 +154,9 @@ func auditActionForRoute(method string, path string) (string, string) {
 func routeVerb(method string, path string) string {
 	switch method {
 	case http.MethodPost:
+		if strings.Contains(path, "cancel") {
+			return "cancel"
+		}
 		if strings.Contains(path, "revoke") {
 			return "revoke"
 		}
