@@ -22,7 +22,8 @@ export const dirSizeAgent = (id: string, body: DirSizeRequest) => apiPost<DirSiz
 export const discoverDockerAgent = (id: string) => apiPost<DockerDiscoveryResponse>(`/api/agents/${id}/docker/discover`);
 export const discoverDatabaseAgent = (id: string, source: DatabaseBackupSource) =>
   apiPost<DatabaseDiscoveryResponse>(`/api/agents/${id}/database/discover`, { source });
-export const backupNow = (id: string) => apiPost<{ command_id: string; message_id: string }>(`/api/agents/${id}/backup-now`);
+export const backupNow = (id: string, body?: { policy_id?: string }) =>
+  apiPost<{ command_id: string; message_id: string }>(`/api/agents/${id}/backup-now`, body);
 export const updateAgent = (id: string, body: { version?: string; github_repo?: string } = {}) =>
   apiPost<{ accepted: boolean; message_id: string; version: string; github_repo?: string }>(`/api/agents/${id}/update-agent`, body);
 

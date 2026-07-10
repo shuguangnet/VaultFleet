@@ -111,6 +111,7 @@ func (s *StorageConfig) BeforeCreate(tx *gorm.DB) error {
 
 type BackupPolicy struct {
 	ID                       string    `gorm:"type:text;primaryKey" json:"id"`
+	Name                     string    `gorm:"type:text" json:"name"`
 	AgentID                  string    `gorm:"type:text;index;not null" json:"agent_id"`
 	StorageID                string    `gorm:"type:text;not null" json:"storage_id"`
 	BackupMode               string    `gorm:"type:text;default:snapshot" json:"backup_mode"`
@@ -238,6 +239,7 @@ type TaskHistory struct {
 	MessageID           string     `gorm:"type:text;index" json:"message_id,omitempty"`
 	CommandID           string     `gorm:"type:text;index" json:"command_id,omitempty"`
 	PolicyID            string     `gorm:"type:text;index" json:"policy_id,omitempty"`
+	PolicyName          string     `gorm:"type:text" json:"policy_name,omitempty"`
 	StorageID           string     `gorm:"type:text;index" json:"storage_id,omitempty"`
 	Docker              string     `gorm:"type:text" json:"docker,omitempty"`
 	Database            string     `gorm:"type:text" json:"database,omitempty"`

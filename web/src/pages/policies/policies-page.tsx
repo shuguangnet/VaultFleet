@@ -120,6 +120,7 @@ const RCLONE_ARG_FIELDS = [
 
 export function defaultPolicyInput(): PolicyInput {
   return {
+    name: "",
     agent_id: "",
     storage_id: "",
     backup_mode: "snapshot",
@@ -360,9 +361,8 @@ export function PoliciesPage() {
   const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [confirmBackupAgentId, setConfirmBackupAgentId] = useState<
-    string | null
-  >(null);
+  const [confirmBackupPolicy, setConfirmBackupPolicy] =
+    useState<BackupPolicy | null>(null);
   const [bulkSourcePolicy, setBulkSourcePolicy] = useState<BackupPolicy | null>(
     null,
   );
@@ -451,10 +451,11 @@ export function PoliciesPage() {
   });
 
   const backupMutation = useMutation({
-    mutationFn: (agentId: string) => backupNow(agentId),
+    mutationFn: (policy: BackupPolicy) =>
+      backupNow(policy.agent_id, { policy_id: policy.id }),
     onSuccess: (data) => {
-      setConfirmBackupAgentId(null);
-      const agent = agents?.find((a) => a.id === confirmBackupAgentId);
+      const agent = agents?.find((a) => a.id === confirmBackupPolicy?.agent_id);
+      setConfirmBackupPolicy(null);
       if (agent?.status === "online") {
         message.success(`备份命令已下发 (Message ID: ${data.message_id})`);
       } else {
@@ -491,6 +492,7 @@ export function PoliciesPage() {
       ? policy.repo_path.slice("vaultfleet/".length)
       : policy.repo_path;
     setFormData({
+      name: policy.name ?? "",
       agent_id: policy.agent_id,
       storage_id: policy.storage_id,
       backup_mode: policy.backup_mode ?? "snapshot",
@@ -561,8 +563,9 @@ export function PoliciesPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const submitData = {
+      const submitData = {
       ...formData,
+      name: formData.name?.trim(),
       repo_path: "vaultfleet/" + formData.repo_path,
       backup_sources: buildBackupSources(formData),
       rclone_args: submitRcloneArgs(formData.rclone_args, !!editingId),
@@ -718,6 +721,21 @@ export function PoliciesPage() {
 
   const columns: ColumnsType<BackupPolicy> = [
     {
+      title: "任务名称",
+      dataIndex: "name",
+      key: "name",
+      render: (name: string | undefined, record) => (
+        <div>
+          <Typography.Text strong>{name || "未命名备份"}</Typography.Text>
+          <div>
+            <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+              {record.backup_mode === "archive" ? "压缩包归档" : "快照仓库"}
+            </Typography.Text>
+          </div>
+        </div>
+      ),
+    },
+    {
       title: "节点",
       dataIndex: "agent_id",
       key: "agent_id",
@@ -811,7 +829,7 @@ export function PoliciesPage() {
                 key: "backup",
                 icon: <PlayCircleOutlined />,
                 label: "立即备份",
-                onClick: () => setConfirmBackupAgentId(record.agent_id),
+                onClick: () => setConfirmBackupPolicy(record),
               } : null,
               canRunBackup ? {
                 key: "verify",
@@ -925,6 +943,21 @@ export function PoliciesPage() {
           <ErrorPanel
             error={(createMutation.error || updateMutation.error) as any}
           />
+          <div>
+            <Typography.Text strong>任务名称</Typography.Text>
+            <Input
+              style={{ marginTop: 4 }}
+              value={formData.name}
+              maxLength={120}
+              onChange={(e) =>
+                setFormData({ ...formData, name: e.target.value })
+              }
+              placeholder="例如：Emby 媒体库、数据库每日备份"
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              用于区分同一节点上的不同备份策略和任务历史。
+            </Typography.Text>
+          </div>
           <Row gutter={[12, 12]}>
             <Col xs={24} sm={12}>
               <Typography.Text strong>选择节点</Typography.Text>
@@ -2322,17 +2355,17 @@ export function PoliciesPage() {
       </Drawer>
 
       <ConfirmDialog
-        open={!!confirmBackupAgentId}
-        onOpenChange={(open) => !open && setConfirmBackupAgentId(null)}
+        open={!!confirmBackupPolicy}
+        onOpenChange={(open) => !open && setConfirmBackupPolicy(null)}
         title="确认立即备份"
-        description={`将对节点 ${
-          agents?.find((a) => a.id === confirmBackupAgentId)?.name ||
-          confirmBackupAgentId
+        description={`将按策略「${confirmBackupPolicy?.name || "未命名备份"}」对节点 ${
+          agents?.find((a) => a.id === confirmBackupPolicy?.agent_id)?.name ||
+          confirmBackupPolicy?.agent_id
         } 发起立即备份请求。`}
         confirmText="立即备份"
         variant="default"
         onConfirm={() =>
-          confirmBackupAgentId && backupMutation.mutate(confirmBackupAgentId)
+          confirmBackupPolicy && backupMutation.mutate(confirmBackupPolicy)
         }
         loading={backupMutation.isPending}
       />

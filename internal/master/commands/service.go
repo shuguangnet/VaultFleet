@@ -55,6 +55,7 @@ type CreateCommandInput struct {
 	TaskState       string
 	SnapshotID      string
 	PolicyID        string
+	PolicyName      string
 	PolicyUpdatedAt *time.Time
 	StorageID       string
 	TimeoutHours    int
@@ -131,6 +132,7 @@ func (s *Service) CreateCommand(ctx context.Context, input CreateCommandInput) (
 			MessageID:  input.Message.ID,
 			CommandID:  command.ID,
 			PolicyID:   input.PolicyID,
+			PolicyName: input.PolicyName,
 			StorageID:  input.StorageID,
 		}
 		return tx.Create(&history).Error
@@ -336,6 +338,9 @@ func (s *Service) CompleteTaskResultWith(ctx context.Context, agentID string, me
 			"error_log":             result.ErrorLog,
 			"finished_at":           finishedAt,
 			"updated_at":            now,
+		}
+		if result.PolicyName != "" {
+			taskUpdates["policy_name"] = result.PolicyName
 		}
 		if result.Docker != nil {
 			rawDocker, err := json.Marshal(result.Docker)

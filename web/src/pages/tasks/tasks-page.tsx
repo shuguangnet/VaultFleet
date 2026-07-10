@@ -381,6 +381,24 @@ export function TasksPage() {
         agents?.find((a) => a.id === v)?.name || v,
     },
     {
+      title: "任务",
+      key: "policy_name",
+      render: (_: unknown, record: TaskHistory) => (
+        <div>
+          <Typography.Text strong>
+            {record.policy_name || record.manifest?.policy?.name || taskTypeLabel(record.type)}
+          </Typography.Text>
+          {record.policy_id && (
+            <div>
+              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                {record.policy_id.slice(0, 8)}
+              </Typography.Text>
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
       title: "类型",
       dataIndex: "type",
       key: "type",
@@ -452,6 +470,18 @@ export function TasksPage() {
             <div>
               <Typography.Text code copyable style={{ fontSize: 12 }}>
                 {task.command_id}
+              </Typography.Text>
+            </div>
+          </Col>
+        )}
+        {task.policy_id && (
+          <Col xs={24} md={8}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              策略
+            </Typography.Text>
+            <div>
+              <Typography.Text style={{ fontSize: 12 }}>
+                {task.policy_name || task.manifest?.policy?.name || task.policy_id}
               </Typography.Text>
             </div>
           </Col>

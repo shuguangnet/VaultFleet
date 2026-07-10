@@ -444,6 +444,7 @@ func policyPushPayload(database *db.Database, policy db.BackupPolicy, storage db
 		BackupMode:               normalizeBackupMode(policy.BackupMode),
 		ArchiveFormat:            normalizeArchiveFormat(policy.ArchiveFormat),
 		PolicyID:                 policy.ID,
+		PolicyName:               normalizedPolicyName(policy.Name, normalizeBackupMode(policy.BackupMode), backupSources),
 		ArtifactContextName:      policy.ArtifactContextName,
 		ArchiveRemoteDirTemplate: policy.ArchiveRemoteDirTemplate,
 		ArchiveNameTemplate:      policy.ArchiveNameTemplate,

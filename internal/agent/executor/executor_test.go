@@ -408,6 +408,66 @@ func TestRunArchiveJobWritesManifestAtZipRoot(t *testing.T) {
 	}
 }
 
+func TestRunArchiveJobSkipsUnreadableFilesAndRecordsManifestWarning(t *testing.T) {
+	configDir, backupDir := setupArchiveTestDirs(t)
+	badPath := filepath.Join(backupDir, "bad.mov")
+	if err := os.WriteFile(badPath, []byte("unreadable movie"), 0o644); err != nil {
+		t.Fatalf("seed unreadable file: %v", err)
+	}
+	setupFakeRclone(t)
+
+	originalOpen := openArchiveSourceFile
+	t.Cleanup(func() { openArchiveSourceFile = originalOpen })
+	openArchiveSourceFile = func(path string) (io.ReadCloser, error) {
+		if path == badPath {
+			return readErrorCloser{err: errors.New("input/output error")}, nil
+		}
+		return os.Open(path)
+	}
+
+	result := RunArchiveJob(context.Background(), ExecutorConfig{
+		ConfigDir:     configDir,
+		RepoPath:      "tenant/agent-1",
+		BackupDirs:    []string{backupDir},
+		ArchiveFormat: protocol.ArchiveFormatZip,
+		ExtraArchiveFiles: []ArchiveExtraFile{{
+			Name: protocol.BackupContentManifestName,
+			Data: []byte(`{"version":1}`),
+		}},
+	})
+
+	if result.Status != "success" {
+		t.Fatalf("Status = %q, want success; error log: %q", result.Status, result.ErrorLog)
+	}
+	if len(result.ManifestWarnings) != 1 {
+		t.Fatalf("ManifestWarnings = %#v, want one skipped-file warning", result.ManifestWarnings)
+	}
+	warning := result.ManifestWarnings[0]
+	if warning.Code != "archive_file_skipped" || warning.Source != badPath || !strings.Contains(warning.Message, "input/output error") {
+		t.Fatalf("warning = %+v, want skipped bad.mov read error", warning)
+	}
+
+	archivePath := filepath.Join(configDir, "artifacts", result.ArtifactName)
+	if !zipEntryExists(t, archivePath, archiveEntryName(filepath.Join(backupDir, "hello.txt"))) {
+		t.Fatalf("archive missing readable hello.txt")
+	}
+	if zipEntryExists(t, archivePath, archiveEntryName(badPath)) {
+		t.Fatalf("archive contains unreadable bad.mov")
+	}
+
+	content := readZipEntry(t, archivePath, protocol.BackupContentManifestName)
+	var manifest protocol.BackupContentManifest
+	if err := json.Unmarshal(content, &manifest); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if len(manifest.Warnings) != 1 {
+		t.Fatalf("manifest warnings = %#v, want one skipped-file warning", manifest.Warnings)
+	}
+	if manifest.Warnings[0].Source != badPath {
+		t.Fatalf("manifest warning source = %q, want %q", manifest.Warnings[0].Source, badPath)
+	}
+}
+
 func TestRunBackupJobWithProgressReportsPhasesAndUsesProgressRunner(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	runner := &recordingRunner{
@@ -849,5 +909,36 @@ func readZipEntry(t *testing.T, archivePath string, entryName string) []byte {
 		return data
 	}
 	t.Fatalf("entry %q not found in %s", entryName, archivePath)
+	return nil
+}
+
+func zipEntryExists(t *testing.T, archivePath string, entryName string) bool {
+	t.Helper()
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	defer reader.Close()
+	for _, file := range reader.File {
+		if file.Name == entryName {
+			return true
+		}
+	}
+	return false
+}
+
+func archiveEntryName(path string) string {
+	return strings.TrimPrefix(filepath.ToSlash(path), "/")
+}
+
+type readErrorCloser struct {
+	err error
+}
+
+func (r readErrorCloser) Read([]byte) (int, error) {
+	return 0, r.err
+}
+
+func (r readErrorCloser) Close() error {
 	return nil
 }

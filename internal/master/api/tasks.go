@@ -41,6 +41,10 @@ type CommandHub interface {
 	Send(agentID string, msg interface{}) error
 }
 
+type backupNowRequest struct {
+	PolicyID string `json:"policy_id"`
+}
+
 type taskResponse struct {
 	ID                  string                             `json:"id"`
 	AgentID             string                             `json:"agent_id"`
@@ -56,6 +60,7 @@ type taskResponse struct {
 	MessageID           string                             `json:"message_id,omitempty"`
 	CommandID           string                             `json:"command_id,omitempty"`
 	PolicyID            string                             `json:"policy_id,omitempty"`
+	PolicyName          string                             `json:"policy_name,omitempty"`
 	StorageID           string                             `json:"storage_id,omitempty"`
 	StartedAt           *time.Time                         `json:"started_at"`
 	FinishedAt          *time.Time                         `json:"finished_at"`
@@ -140,6 +145,7 @@ func (h *TaskHandler) VerifyPolicyNow(c *gin.Context) {
 		TaskType:     "verify",
 		TaskState:    commands.TaskStatusPending,
 		PolicyID:     policy.ID,
+		PolicyName:   normalizedPolicyNameFromPolicy(policy),
 		StorageID:    policy.StorageID,
 		TimeoutHours: verificationTimeoutHours(settings.TimeoutMinutes),
 	})
@@ -170,13 +176,27 @@ func (h *TaskHandler) BackupNow(c *gin.Context) {
 	}
 	commandService := h.commandService()
 
+	var request backupNowRequest
+	if c.Request != nil && c.Request.Body != nil && c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "invalid request"})
+			return
+		}
+	}
+
 	var timeoutHours int
 	var policyID, storageID string
+	var policyName string
 	var policy db.BackupPolicy
+	policyQuery := h.DB.DB.Where("agent_id = ?", agentID)
+	if strings.TrimSpace(request.PolicyID) != "" {
+		policyQuery = policyQuery.Where("id = ?", strings.TrimSpace(request.PolicyID))
+	}
 	var backupPolicyPayload *protocol.PolicyPushPayload
-	if err := h.DB.DB.Where("agent_id = ?", agentID).Order("updated_at DESC").First(&policy).Error; err == nil {
+	if err := policyQuery.Order("updated_at DESC").First(&policy).Error; err == nil {
 		timeoutHours = normalizedPolicyTimeoutHours(policy.TimeoutHours)
 		policyID = policy.ID
+		policyName = normalizedPolicyNameFromPolicy(policy)
 		storageID = policy.StorageID
 		var storage db.StorageConfig
 		if err := h.DB.DB.First(&storage, "id = ?", policy.StorageID).Error; err != nil {
@@ -189,6 +209,9 @@ func (h *TaskHandler) BackupNow(c *gin.Context) {
 			return
 		}
 		backupPolicyPayload = &payload
+	} else if strings.TrimSpace(request.PolicyID) != "" {
+		c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "policy not found"})
+		return
 	}
 
 	msg, err := protocol.NewMessage(protocol.TypeBackupNow, protocol.BackupNowPayload{AgentID: agentID, Policy: backupPolicyPayload})
@@ -204,6 +227,7 @@ func (h *TaskHandler) BackupNow(c *gin.Context) {
 		TaskType:     "backup",
 		TaskState:    commands.TaskStatusPending,
 		PolicyID:     policyID,
+		PolicyName:   policyName,
 		StorageID:    storageID,
 		TimeoutHours: timeoutHours,
 	})
@@ -632,6 +656,7 @@ func newTaskResponse(history db.TaskHistory) taskResponse {
 		MessageID:           history.MessageID,
 		CommandID:           history.CommandID,
 		PolicyID:            history.PolicyID,
+		PolicyName:          history.PolicyName,
 		StorageID:           history.StorageID,
 		StartedAt:           history.StartedAt,
 		FinishedAt:          history.FinishedAt,

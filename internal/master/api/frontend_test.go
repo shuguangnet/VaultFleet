@@ -17,7 +17,7 @@ func TestFrontendRootServesSPA(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
-	assert.Contains(t, w.Body.String(), "<title>云备份</title>")
+	assert.Contains(t, w.Body.String(), "<title>VaultFleet 企业云备份控制台</title>")
 	assert.Contains(t, w.Body.String(), "id=\"root\"")
 }
 

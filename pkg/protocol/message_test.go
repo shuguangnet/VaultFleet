@@ -99,7 +99,8 @@ func TestTaskLogPayloadRoundTrip(t *testing.T) {
 
 func TestPolicyPushPayload(t *testing.T) {
 	policy := PolicyPushPayload{
-		AgentID: "agent-001",
+		PolicyName: "系统配置",
+		AgentID:    "agent-001",
 		Storage: StorageConfig{
 			RcloneType:         "s3",
 			RclonePassObscured: true,
@@ -166,6 +167,7 @@ func TestPolicyPushPayload(t *testing.T) {
 
 	_, parsed := roundTripPayload[PolicyPushPayload](t, TypePolicyPush, policy)
 	assert.Equal(t, "agent-001", parsed.AgentID)
+	assert.Equal(t, "系统配置", parsed.PolicyName)
 	assert.Equal(t, "s3", parsed.Storage.RcloneType)
 	assert.Equal(t, "Cloudflare", parsed.Storage.RcloneConfig["provider"])
 	assert.Equal(t, "AKID", parsed.Storage.RcloneConfig["access_key_id"])

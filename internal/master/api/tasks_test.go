@@ -188,6 +188,7 @@ func TestVerifyPolicyNowCreatesAndDispatchesCommand(t *testing.T) {
 	})
 	require.NoError(t, err)
 	policy := db.BackupPolicy{
+		Name:            "可恢复性验证",
 		AgentID:         agent.ID,
 		StorageID:       storage.ID,
 		BackupMode:      protocol.BackupModeSnapshot,
@@ -224,6 +225,7 @@ func TestVerifyPolicyNowCreatesAndDispatchesCommand(t *testing.T) {
 	require.NoError(t, setup.database.DB.First(&history, "command_id = ?", command.ID).Error)
 	assert.Equal(t, "verify", history.Type)
 	assert.Equal(t, commands.TaskStatusRunning, history.Status)
+	assert.Equal(t, "可恢复性验证", history.PolicyName)
 }
 
 func TestVerifyPolicyNowRejectsArchivePolicy(t *testing.T) {
@@ -233,6 +235,7 @@ func TestVerifyPolicyNowRejectsArchivePolicy(t *testing.T) {
 	storage := db.StorageConfig{Name: "Archive Storage", RcloneType: "s3"}
 	require.NoError(t, setup.database.DB.Create(&storage).Error)
 	policy := db.BackupPolicy{
+		Name:            "短超时备份",
 		AgentID:         agent.ID,
 		StorageID:       storage.ID,
 		BackupMode:      protocol.BackupModeArchive,
@@ -256,6 +259,7 @@ func TestBackupNowUsesPolicyTimeoutHours(t *testing.T) {
 	storage := db.StorageConfig{Name: "Timeout Storage", RcloneType: "s3"}
 	require.NoError(t, setup.database.DB.Create(&storage).Error)
 	policy := db.BackupPolicy{
+		Name:            "短超时备份",
 		AgentID:         agent.ID,
 		StorageID:       storage.ID,
 		RepoPath:        "vaultfleet/" + agent.ID,
@@ -280,6 +284,9 @@ func TestBackupNowUsesPolicyTimeoutHours(t *testing.T) {
 	assert.Equal(t, now.Add(2*time.Hour), command.DeadlineAt.UTC())
 	assert.Equal(t, policy.ID, command.PolicyID)
 	assert.Equal(t, storage.ID, command.StorageID)
+	var history db.TaskHistory
+	require.NoError(t, setup.database.DB.First(&history, "command_id = ?", command.ID).Error)
+	assert.Equal(t, "短超时备份", history.PolicyName)
 }
 
 func TestBackupNowUsesLatestPolicyForAgent(t *testing.T) {
@@ -291,6 +298,7 @@ func TestBackupNowUsesLatestPolicyForAgent(t *testing.T) {
 	require.NoError(t, setup.database.DB.Create(&archiveStorage).Error)
 
 	older := db.BackupPolicy{
+		Name:            "旧策略",
 		AgentID:         agent.ID,
 		StorageID:       snapshotStorage.ID,
 		BackupMode:      protocol.BackupModeSnapshot,
@@ -304,6 +312,7 @@ func TestBackupNowUsesLatestPolicyForAgent(t *testing.T) {
 	}
 	require.NoError(t, setup.database.DB.Create(&older).Error)
 	newer := db.BackupPolicy{
+		Name:            "新策略",
 		AgentID:         agent.ID,
 		StorageID:       archiveStorage.ID,
 		BackupMode:      protocol.BackupModeArchive,
@@ -330,7 +339,53 @@ func TestBackupNowUsesLatestPolicyForAgent(t *testing.T) {
 	var history db.TaskHistory
 	require.NoError(t, setup.database.DB.First(&history, "command_id = ?", command.ID).Error)
 	assert.Equal(t, newer.ID, history.PolicyID)
+	assert.Equal(t, "新策略", history.PolicyName)
 	assert.Equal(t, archiveStorage.ID, history.StorageID)
+}
+
+func TestBackupNowCanUseSpecifiedPolicyForAgent(t *testing.T) {
+	setup := setupTasksAPI(t)
+	agent := createTasksTestAgent(t, setup.database, "offline")
+	storage := db.StorageConfig{Name: "Storage", RcloneType: "s3"}
+	require.NoError(t, setup.database.DB.Create(&storage).Error)
+
+	first := db.BackupPolicy{
+		Name:            "媒体库",
+		AgentID:         agent.ID,
+		StorageID:       storage.ID,
+		RepoPath:        "vaultfleet/media",
+		BackupDirs:      `["/srv/media"]`,
+		ExcludePatterns: `[]`,
+		Schedule:        "0 2 * * *",
+		Retention:       `{"keep_last":3}`,
+	}
+	second := db.BackupPolicy{
+		Name:            "数据库",
+		AgentID:         agent.ID,
+		StorageID:       storage.ID,
+		RepoPath:        "vaultfleet/db",
+		BackupDirs:      `["/srv/db"]`,
+		ExcludePatterns: `[]`,
+		Schedule:        "0 3 * * *",
+		Retention:       `{"keep_last":3}`,
+	}
+	require.NoError(t, setup.database.DB.Create(&first).Error)
+	require.NoError(t, setup.database.DB.Create(&second).Error)
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/backup-now", map[string]any{
+		"policy_id": first.ID,
+	})
+
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	body := parseJSON(t, w)
+	data := requireMap(t, body["data"])
+	var command db.AgentCommand
+	require.NoError(t, setup.database.DB.First(&command, "id = ?", data["command_id"]).Error)
+	assert.Equal(t, first.ID, command.PolicyID)
+	var history db.TaskHistory
+	require.NoError(t, setup.database.DB.First(&history, "command_id = ?", command.ID).Error)
+	assert.Equal(t, first.ID, history.PolicyID)
+	assert.Equal(t, "媒体库", history.PolicyName)
 }
 
 func TestBackupNowIncludesLatestPolicyPayload(t *testing.T) {

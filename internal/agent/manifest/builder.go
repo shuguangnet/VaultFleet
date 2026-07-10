@@ -76,6 +76,7 @@ func buildPolicySummary(policy *protocol.PolicyPushPayload, backupMode string, a
 		return protocol.ManifestPolicy{BackupMode: backupMode, ArchiveFormat: archiveFormat}
 	}
 	return protocol.ManifestPolicy{
+		Name:          strings.TrimSpace(policy.PolicyName),
 		BackupMode:    backupMode,
 		ArchiveFormat: archiveFormat,
 		StorageType:   strings.TrimSpace(policy.Storage.RcloneType),

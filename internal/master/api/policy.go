@@ -39,6 +39,7 @@ func NewPolicyHandler(database *db.Database, eventBus *events.Bus) *PolicyHandle
 }
 
 type createPolicyRequest struct {
+	Name                     string                               `json:"name"`
 	AgentID                  string                               `json:"agent_id" binding:"required"`
 	StorageID                string                               `json:"storage_id" binding:"required"`
 	BackupMode               string                               `json:"backup_mode"`
@@ -61,6 +62,7 @@ type createPolicyRequest struct {
 }
 
 type updatePolicyRequest struct {
+	Name                     *string                              `json:"name"`
 	StorageID                string                               `json:"storage_id"`
 	BackupMode               string                               `json:"backup_mode"`
 	ArchiveFormat            string                               `json:"archive_format"`
@@ -100,6 +102,7 @@ type artifactNamingPreviewRequest struct {
 
 type policyResponse struct {
 	ID                       string                               `json:"id"`
+	Name                     string                               `json:"name"`
 	AgentID                  string                               `json:"agent_id"`
 	StorageID                string                               `json:"storage_id"`
 	BackupMode               string                               `json:"backup_mode"`
@@ -156,6 +159,7 @@ type policyHookInput struct {
 }
 
 const maxPolicyHookTimeoutSeconds = 3600
+const maxPolicyNameLength = 120
 
 func RegisterPolicyRoutes(rg *gin.RouterGroup, h *PolicyHandler) {
 	rg.POST("/policies", h.CreatePolicy)
@@ -274,8 +278,13 @@ func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
 	}
 	backupMode := normalizeBackupMode(request.BackupMode)
 	archiveFormat := normalizeArchiveFormat(request.ArchiveFormat)
+	name, ok := validatePolicyName(c, request.Name, backupMode, normalizedSources)
+	if !ok {
+		return
+	}
 	artifactContextName, archiveRemoteDirTemplate, archiveNameTemplate, ok := h.validateArtifactNaming(c, artifactNamingValidationInput{
 		AgentID:           request.AgentID,
+		PolicyName:        name,
 		BackupMode:        backupMode,
 		ArchiveFormat:     archiveFormat,
 		BackupDirs:        normalizedDirs,
@@ -313,6 +322,7 @@ func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
 	}
 
 	policy := db.BackupPolicy{
+		Name:                     name,
 		AgentID:                  request.AgentID,
 		StorageID:                request.StorageID,
 		BackupMode:               backupMode,
@@ -513,6 +523,7 @@ func (h *PolicyHandler) ListPolicies(c *gin.Context) {
 
 func clonePolicyForAgent(source db.BackupPolicy, agentID string) db.BackupPolicy {
 	return db.BackupPolicy{
+		Name:                     normalizedPolicyNameFromPolicy(source),
 		AgentID:                  agentID,
 		StorageID:                source.StorageID,
 		BackupMode:               normalizeBackupMode(source.BackupMode),
@@ -587,6 +598,13 @@ func (h *PolicyHandler) UpdatePolicy(c *gin.Context) {
 			return
 		}
 		policy.StorageID = request.StorageID
+	}
+	if request.Name != nil {
+		name, ok := validatePolicyName(c, *request.Name, normalizeBackupMode(policy.BackupMode), nil)
+		if !ok {
+			return
+		}
+		policy.Name = name
 	}
 	if request.BackupMode != "" {
 		policy.BackupMode = normalizeBackupMode(request.BackupMode)
@@ -721,9 +739,11 @@ func (h *PolicyHandler) UpdatePolicy(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "decode policy"})
 		return
 	}
+	policy.Name = normalizedPolicyName(policy.Name, normalizeBackupMode(policy.BackupMode), currentSources)
 	artifactContextName, archiveRemoteDirTemplate, archiveNameTemplate, ok := h.validateArtifactNaming(c, artifactNamingValidationInput{
 		AgentID:           policy.AgentID,
 		PolicyID:          policy.ID,
+		PolicyName:        policy.Name,
 		BackupMode:        normalizeBackupMode(policy.BackupMode),
 		ArchiveFormat:     normalizeArchiveFormat(policy.ArchiveFormat),
 		BackupDirs:        currentDirs,
@@ -854,6 +874,7 @@ func (h *PolicyHandler) latestPolicyVerification(policyID string) *policyVerific
 type artifactNamingValidationInput struct {
 	AgentID           string
 	PolicyID          string
+	PolicyName        string
 	BackupMode        string
 	ArchiveFormat     string
 	BackupDirs        []string
@@ -882,7 +903,7 @@ func (h *PolicyHandler) validateArtifactNaming(c *gin.Context, input artifactNam
 			AgentID:       input.AgentID,
 			AgentName:     agentName,
 			PolicyID:      firstPolicyNamingValue(input.PolicyID, "policy"),
-			PolicyName:    firstPolicyNamingValue(input.PolicyID, "policy"),
+			PolicyName:    firstPolicyNamingValue(input.PolicyName, input.PolicyID, "policy"),
 			ContextName:   firstPolicyNamingValue(contextName, "context"),
 			ArchiveFormat: input.ArchiveFormat,
 			Now:           time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
@@ -973,6 +994,7 @@ func newPolicyResponse(policy db.BackupPolicy) (policyResponse, error) {
 
 	return policyResponse{
 		ID:                       policy.ID,
+		Name:                     normalizedPolicyName(policy.Name, normalizeBackupMode(policy.BackupMode), backupSources),
 		AgentID:                  policy.AgentID,
 		StorageID:                policy.StorageID,
 		BackupMode:               normalizeBackupMode(policy.BackupMode),
@@ -1397,6 +1419,86 @@ func normalizedPolicyTimeoutHours(timeoutHours int) int {
 		return defaultPolicyTimeoutHours
 	}
 	return timeoutHours
+}
+
+func validatePolicyName(c *gin.Context, name string, backupMode string, sources []protocol.BackupSource) (string, bool) {
+	normalized := normalizedPolicyName(name, backupMode, sources)
+	if len([]rune(normalized)) > maxPolicyNameLength {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "policy name must be 120 characters or fewer"})
+		return "", false
+	}
+	return normalized, true
+}
+
+func normalizedPolicyName(name string, backupMode string, sources []protocol.BackupSource) string {
+	name = strings.TrimSpace(name)
+	if name != "" {
+		return name
+	}
+	if inferred := inferPolicyNameFromSources(sources); inferred != "" {
+		return inferred
+	}
+	if normalizeBackupMode(backupMode) == protocol.BackupModeArchive {
+		return "归档备份"
+	}
+	return "快照备份"
+}
+
+func normalizedPolicyNameFromPolicy(policy db.BackupPolicy) string {
+	sources, err := policyBackupSources(policy)
+	if err != nil {
+		sources = nil
+	}
+	return normalizedPolicyName(policy.Name, normalizeBackupMode(policy.BackupMode), sources)
+}
+
+func inferPolicyNameFromSources(sources []protocol.BackupSource) string {
+	for _, source := range sources {
+		switch source.Type {
+		case protocol.BackupSourceTypeDockerContainer:
+			if source.DockerContainer == nil {
+				continue
+			}
+			if source.DockerContainer.ComposeProject != "" && source.DockerContainer.ComposeService != "" {
+				return source.DockerContainer.ComposeProject + "/" + source.DockerContainer.ComposeService
+			}
+			if source.DockerContainer.Name != "" {
+				return source.DockerContainer.Name
+			}
+		case protocol.BackupSourceTypeDatabase:
+			if source.Database == nil {
+				continue
+			}
+			if source.Database.ConnectionName != "" {
+				return source.Database.ConnectionName
+			}
+			if source.Database.AllDatabases {
+				return source.Database.Engine + " 全库备份"
+			}
+			if source.Database.Database != "" {
+				return source.Database.Engine + "/" + source.Database.Database
+			}
+		case protocol.BackupSourceTypePath:
+			if base := pathBaseName(source.Path); base != "" {
+				return base
+			}
+		}
+	}
+	return ""
+}
+
+func pathBaseName(path string) string {
+	normalized := strings.TrimRight(strings.ReplaceAll(strings.TrimSpace(path), "\\", "/"), "/")
+	if normalized == "" || normalized == "." {
+		return ""
+	}
+	parts := strings.Split(normalized, "/")
+	for i := len(parts) - 1; i >= 0; i-- {
+		if parts[i] != "" {
+			return parts[i]
+		}
+	}
+	return ""
 }
 
 func normalizeBackupMode(mode string) string {

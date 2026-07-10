@@ -174,13 +174,16 @@ func TestDatabaseInit_AddsDockerBackupColumnsToLegacySchema(t *testing.T) {
 	assert.True(t, database.DB.Migrator().HasColumn(&BackupPolicy{}, "ArtifactContextName"))
 	assert.True(t, database.DB.Migrator().HasColumn(&BackupPolicy{}, "ArchiveRemoteDirTemplate"))
 	assert.True(t, database.DB.Migrator().HasColumn(&BackupPolicy{}, "ArchiveNameTemplate"))
+	assert.True(t, database.DB.Migrator().HasColumn(&BackupPolicy{}, "Name"))
 	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "Docker"))
 	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "Database"))
 	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "Verification"))
 	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "Manifest"))
 	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "ArtifactNaming"))
+	assert.True(t, database.DB.Migrator().HasColumn(&TaskHistory{}, "PolicyName"))
 
 	policy := BackupPolicy{
+		Name:                     "系统配置",
 		AgentID:                  "agent-001",
 		StorageID:                "storage-001",
 		BackupDirs:               `["/etc"]`,
@@ -198,6 +201,7 @@ func TestDatabaseInit_AddsDockerBackupColumnsToLegacySchema(t *testing.T) {
 		AgentID:        "agent-001",
 		Type:           "backup",
 		Status:         "success",
+		PolicyName:     "系统配置",
 		Docker:         `{"warnings":["compose file missing"]}`,
 		Manifest:       `{"version":1,"sources":{"paths":[{"path":"/etc","kind":"path"}]}}`,
 		ArtifactNaming: `{"context_name":"site-a","artifact_path":"archives/site-a/site-a.tar.gz"}`,

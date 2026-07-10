@@ -864,6 +864,11 @@ func TestRunBackupForPolicyAddsManifestToArchiveAndRecordsArtifact(t *testing.T)
 				ArtifactPath:        "artifacts/backup.zip",
 				ArtifactSize:        2048,
 				ArtifactContentType: "application/zip",
+				ManifestWarnings: []protocol.ManifestWarning{{
+					Code:    "archive_file_skipped",
+					Message: "skipped unreadable file: read /srv/site/bad.mov: input/output error",
+					Source:  "/srv/site/bad.mov",
+				}},
 			}
 		},
 	})
@@ -891,6 +896,9 @@ func TestRunBackupForPolicyAddsManifestToArchiveAndRecordsArtifact(t *testing.T)
 	assert.Equal(t, "artifacts/backup.zip", result.Manifest.Artifact.Path)
 	assert.Equal(t, int64(2048), result.Manifest.Artifact.Size)
 	assert.Equal(t, "application/zip", result.Manifest.Artifact.ContentType)
+	require.Len(t, result.Manifest.Warnings, 1)
+	assert.Equal(t, "archive_file_skipped", result.Manifest.Warnings[0].Code)
+	assert.Equal(t, "/srv/site/bad.mov", result.Manifest.Warnings[0].Source)
 }
 
 func TestHandleBackupNowUsesInlinePolicyPayloadForArchive(t *testing.T) {

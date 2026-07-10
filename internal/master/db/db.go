@@ -68,6 +68,9 @@ func New(dataDir string) (*Database, error) {
 	if err := ensureAgentTagsColumn(gormDB); err != nil {
 		return nil, fmt.Errorf("ensure agent tags column: %w", err)
 	}
+	if err := ensurePolicyTaskNameColumns(gormDB); err != nil {
+		return nil, fmt.Errorf("ensure policy task name columns: %w", err)
+	}
 	if err := backfillUserRoles(gormDB); err != nil {
 		return nil, fmt.Errorf("backfill user roles: %w", err)
 	}
@@ -109,6 +112,20 @@ func ensureIdentityAccessColumns(gormDB *gorm.DB) error {
 func ensureAgentTagsColumn(gormDB *gorm.DB) error {
 	if gormDB.Migrator().HasTable(&Agent{}) && !gormDB.Migrator().HasColumn(&Agent{}, "Tags") {
 		if err := gormDB.Migrator().AddColumn(&Agent{}, "Tags"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensurePolicyTaskNameColumns(gormDB *gorm.DB) error {
+	if gormDB.Migrator().HasTable(&BackupPolicy{}) && !gormDB.Migrator().HasColumn(&BackupPolicy{}, "Name") {
+		if err := gormDB.Migrator().AddColumn(&BackupPolicy{}, "Name"); err != nil {
+			return err
+		}
+	}
+	if gormDB.Migrator().HasTable(&TaskHistory{}) && !gormDB.Migrator().HasColumn(&TaskHistory{}, "PolicyName") {
+		if err := gormDB.Migrator().AddColumn(&TaskHistory{}, "PolicyName"); err != nil {
 			return err
 		}
 	}

@@ -66,6 +66,7 @@ func TestCreatePolicy(t *testing.T) {
 	body := parseJSON(t, w)
 	assert.NotEmpty(t, body["id"])
 	assert.Equal(t, agent.ID, body["agent_id"])
+	assert.Equal(t, "etc", body["name"])
 	assert.Equal(t, storage.ID, body["storage_id"])
 	assert.Equal(t, "vaultfleet/"+agent.ID, body["repo_path"])
 	assert.NotContains(t, body, "restic_password")
@@ -79,6 +80,7 @@ func TestCreatePolicy(t *testing.T) {
 	var stored db.BackupPolicy
 	require.NoError(t, setup.database.DB.First(&stored, "id = ?", body["id"]).Error)
 	assert.Equal(t, `["/etc","/home"]`, stored.BackupDirs)
+	assert.Equal(t, "etc", stored.Name)
 	assert.Equal(t, `["*.log","*.tmp"]`, stored.ExcludePatterns)
 	assert.JSONEq(t, `{"keep_last":3,"keep_daily":7,"keep_weekly":4,"keep_monthly":6}`, stored.Retention)
 	assert.NotEmpty(t, stored.ResticPassword)

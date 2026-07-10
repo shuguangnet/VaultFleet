@@ -654,7 +654,7 @@ func (h *Handler) handleBackupNow(msg protocol.Message) {
 		h.runBackupForPolicy(ctx, msg.ID, agentID, policyPayload)
 	})
 	if startErr != nil {
-		h.sendTaskResultWithID(msg.ID, h.failedTaskResult(agentID, startErr.Error(), time.Now()))
+		h.sendTaskResultWithID(msg.ID, h.failedPolicyTaskResult(agentID, startErr.Error(), time.Now(), policyPayload))
 	}
 }
 
@@ -770,7 +770,7 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 	if err := h.ensureRcloneConf(policyPayload); err != nil {
 		log.Printf("prepare rclone config failed: %v", err)
 		taskLogs.Error("init", "prepare rclone config failed: "+err.Error())
-		h.sendTaskResultWithID(messageID, h.failedTaskResult(agentID, "prepare rclone config: "+err.Error(), startedAt))
+		h.sendTaskResultWithID(messageID, h.failedPolicyTaskResult(agentID, "prepare rclone config: "+err.Error(), startedAt, policyPayload))
 		return
 	}
 	taskLogs.Info("sources", "resolving backup sources")
@@ -778,7 +778,7 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 	if err != nil {
 		log.Printf("resolve backup sources failed: %v", err)
 		taskLogs.Error("sources", "resolve backup sources failed: "+err.Error())
-		h.sendTaskResultWithID(messageID, h.failedTaskResult(agentID, "resolve backup sources: "+err.Error(), startedAt))
+		h.sendTaskResultWithID(messageID, h.failedPolicyTaskResult(agentID, "resolve backup sources: "+err.Error(), startedAt, policyPayload))
 		return
 	}
 	if dockerMetadata != nil {
@@ -789,7 +789,7 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 	if err := runPolicyHookWithLogs(ctx, h.configDir, cfg.PreBackupHook, "pre_backup_hook", taskLogs); err != nil {
 		log.Printf("pre-backup hook failed: %v", err)
 		taskLogs.Error("pre_backup_hook", "pre-backup hook failed: "+err.Error())
-		h.sendTaskResultWithID(messageID, h.failedTaskResult(agentID, "pre_backup_hook: "+err.Error(), startedAt))
+		h.sendTaskResultWithID(messageID, h.failedPolicyTaskResult(agentID, "pre_backup_hook: "+err.Error(), startedAt, resolvedPolicy))
 		return
 	}
 	databaseResult, databaseCleanup, err := h.prepareDatabaseBackupSources(ctx, resolvedPolicy.BackupSources, taskLogs)
@@ -799,7 +799,7 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 	if err != nil {
 		log.Printf("prepare database backup sources failed: %v", err)
 		taskLogs.Error("database-dump", "prepare database backup sources failed: "+err.Error())
-		h.sendTaskResultWithID(messageID, h.failedTaskResult(agentID, "database_dump: "+err.Error(), startedAt))
+		h.sendTaskResultWithID(messageID, h.failedPolicyTaskResult(agentID, "database_dump: "+err.Error(), startedAt, resolvedPolicy))
 		return
 	}
 	if len(databaseResult.Paths) > 0 {
@@ -810,6 +810,7 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 		cfg.ArtifactNamingContext = executor.ArtifactNamingContext{
 			AgentID:       resolvedPolicy.AgentID,
 			PolicyID:      resolvedPolicy.PolicyID,
+			PolicyName:    resolvedPolicy.PolicyName,
 			BackupSources: append([]protocol.BackupSource(nil), resolvedPolicy.BackupSources...),
 			Docker:        dockerMetadata,
 			Database:      databaseResult.Metadata,
@@ -822,7 +823,7 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 	if err != nil {
 		log.Printf("prepare backup manifest failed: %v", err)
 		taskLogs.Error("manifest", "prepare backup manifest failed: "+err.Error())
-		h.sendTaskResultWithID(messageID, h.failedTaskResult(agentID, "manifest: "+err.Error(), startedAt))
+		h.sendTaskResultWithID(messageID, h.failedPolicyTaskResult(agentID, "manifest: "+err.Error(), startedAt, resolvedPolicy))
 		return
 	}
 	if manifestDoc != nil {
@@ -831,6 +832,9 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 	}
 	taskLogs.Info("backup", "starting backup")
 	result := h.backupRunnerWithProgress(ctx, cfg, h.backupProgressCallback(messageID, agentID, taskLogs))
+	if result.PolicyName == "" && policyPayload != nil {
+		result.PolicyName = policyPayload.PolicyName
+	}
 	if dockerMetadata != nil {
 		result.Docker = dockerMetadata
 	}
@@ -839,6 +843,9 @@ func (h *Handler) runBackupForPolicy(ctx context.Context, messageID string, agen
 	}
 	if manifestDoc != nil {
 		attachArtifactToManifest(manifestDoc, result)
+		if len(result.ManifestWarnings) > 0 {
+			manifestDoc.Warnings = append(manifestDoc.Warnings, result.ManifestWarnings...)
+		}
 		if result.ArtifactNaming != nil {
 			manifestDoc.ArtifactNaming = result.ArtifactNaming
 			manifestDoc.ContextName = result.ArtifactNaming.ContextName
@@ -1194,6 +1201,14 @@ func (h *Handler) persistPendingResult(messageID string, result protocol.TaskRes
 
 func (h *Handler) failedTaskResult(agentID string, errorText string, startedAt time.Time) protocol.TaskResultPayload {
 	return h.failedTypedTaskResult(agentID, "backup", "", errorText, startedAt)
+}
+
+func (h *Handler) failedPolicyTaskResult(agentID string, errorText string, startedAt time.Time, policyPayload *protocol.PolicyPushPayload) protocol.TaskResultPayload {
+	result := h.failedTaskResult(agentID, errorText, startedAt)
+	if policyPayload != nil {
+		result.PolicyName = policyPayload.PolicyName
+	}
+	return result
 }
 
 func (h *Handler) failedTypedTaskResult(agentID string, taskType string, snapshotID string, errorText string, startedAt time.Time) protocol.TaskResultPayload {

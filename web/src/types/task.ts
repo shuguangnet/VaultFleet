@@ -19,6 +19,7 @@ export interface TaskHistory {
   snapshot_id?: string;
   command_id?: string;
   policy_id?: string;
+  policy_name?: string;
   storage_id?: string;
   backup_mode?: "snapshot" | "archive";
   archive_format?: "tar.gz" | "zip";
@@ -86,6 +87,7 @@ export interface ManifestAgent {
 }
 
 export interface ManifestPolicy {
+  name?: string;
   backup_mode?: string;
   archive_format?: string;
   storage_type?: string;

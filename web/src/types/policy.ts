@@ -8,6 +8,7 @@ export interface PolicyHook {
 
 export interface BackupPolicy {
   id: string;
+  name?: string;
   agent_id: string;
   storage_id: string;
   backup_mode: BackupMode;
@@ -66,6 +67,7 @@ export interface RetentionConfig {
 }
 
 export interface PolicyInput {
+  name?: string;
   agent_id: string;
   storage_id: string;
   backup_mode: BackupMode;

@@ -172,6 +172,7 @@ type TaskResultPayload struct {
 	TaskType            string                    `json:"task_type"`
 	Status              string                    `json:"status"`
 	SnapshotID          string                    `json:"snapshot_id,omitempty"`
+	PolicyName          string                    `json:"policy_name,omitempty"`
 	BackupMode          string                    `json:"backup_mode,omitempty"`
 	ArchiveFormat       string                    `json:"archive_format,omitempty"`
 	ArtifactPath        string                    `json:"artifact_path,omitempty"`
@@ -222,6 +223,7 @@ type ManifestAgent struct {
 }
 
 type ManifestPolicy struct {
+	Name          string `json:"name,omitempty"`
 	BackupMode    string `json:"backup_mode,omitempty"`
 	ArchiveFormat string `json:"archive_format,omitempty"`
 	StorageType   string `json:"storage_type,omitempty"`
@@ -570,6 +572,7 @@ type DirSizeRespPayload struct {
 // PolicyPushPayload contains the full backup policy sent from master to agent.
 type PolicyPushPayload struct {
 	PolicyID                 string                      `json:"policy_id,omitempty"`
+	PolicyName               string                      `json:"policy_name,omitempty"`
 	AgentID                  string                      `json:"agent_id"`
 	Storage                  StorageConfig               `json:"storage"`
 	ResticPassword           string                      `json:"restic_password"`

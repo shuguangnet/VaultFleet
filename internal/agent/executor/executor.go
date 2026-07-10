@@ -5,6 +5,8 @@ import (
 	"archive/zip"
 	"compress/gzip"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -21,6 +23,7 @@ type TaskResult struct {
 	Status              string                             `json:"status"`
 	DurationMs          int64                              `json:"duration_ms"`
 	SnapshotID          string                             `json:"snapshot_id,omitempty"`
+	PolicyName          string                             `json:"policy_name,omitempty"`
 	BackupMode          string                             `json:"backup_mode,omitempty"`
 	ArchiveFormat       string                             `json:"archive_format,omitempty"`
 	ArtifactPath        string                             `json:"artifact_path,omitempty"`
@@ -34,6 +37,7 @@ type TaskResult struct {
 	Database            *protocol.DatabaseBackupMetadata   `json:"database,omitempty"`
 	Verification        *protocol.BackupVerificationResult `json:"verification,omitempty"`
 	Manifest            *protocol.BackupContentManifest    `json:"manifest,omitempty"`
+	ManifestWarnings    []protocol.ManifestWarning         `json:"manifest_warnings,omitempty"`
 	ArtifactNaming      *protocol.ArtifactNamingMetadata   `json:"artifact_naming,omitempty"`
 }
 
@@ -53,6 +57,7 @@ func (r TaskResult) ToProtocol(agentID string, startedAt time.Time) protocol.Tas
 		TaskType:            r.Type,
 		Status:              r.Status,
 		SnapshotID:          r.SnapshotID,
+		PolicyName:          r.PolicyName,
 		BackupMode:          r.BackupMode,
 		ArchiveFormat:       r.ArchiveFormat,
 		ArtifactPath:        r.ArtifactPath,
@@ -76,6 +81,16 @@ func (r TaskResult) ToProtocol(agentID string, startedAt time.Time) protocol.Tas
 type ArchiveExtraFile struct {
 	Name string
 	Data []byte
+}
+
+type archiveFile struct {
+	Path string
+	Name string
+	Info os.FileInfo
+}
+
+var openArchiveSourceFile = func(path string) (io.ReadCloser, error) {
+	return os.Open(path)
 }
 
 type ExecutorConfig struct {
@@ -355,10 +370,14 @@ func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) 
 	artifactName := naming.ArtifactName
 	artifactPath := filepath.Join(artifactDir, artifactName)
 	emitTaskLog(cfg.TaskLog, "info", "archive", "system", "writing local archive "+artifactName)
-	if err := writeArchive(artifactPath, result.ArchiveFormat, cfg.BackupDirs, cfg.Excludes, cfg.ExtraArchiveFiles); err != nil {
+	warnings, err := writeArchive(artifactPath, result.ArchiveFormat, cfg.BackupDirs, cfg.Excludes, cfg.ExtraArchiveFiles)
+	if err != nil {
 		emitTaskLog(cfg.TaskLog, "error", "archive", "stderr", err.Error())
 		result.ErrorLog = "archive: " + err.Error()
 		return result
+	}
+	for _, warning := range warnings {
+		emitTaskLog(cfg.TaskLog, "warn", "archive", "stderr", warning.Message)
 	}
 	remoteArtifactPath := naming.ArtifactPath
 	runner := PlainRunner{
@@ -384,6 +403,7 @@ func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) 
 	result.ArtifactName = artifactName
 	result.ArtifactSize = info.Size()
 	result.ArtifactContentType = archiveContentType(result.ArchiveFormat)
+	result.ManifestWarnings = warnings
 	result.RepoSize = info.Size()
 	emitTaskLog(cfg.TaskLog, "info", "complete", "system", "archive backup completed")
 	return result
@@ -412,14 +432,94 @@ func archiveContentType(format string) string {
 	return "application/gzip"
 }
 
-func writeArchive(output string, format string, dirs []string, excludes []string, extraFiles []ArchiveExtraFile) error {
-	if normalizeArchiveFormat(format) == protocol.ArchiveFormatZip {
-		return writeZipArchive(output, dirs, excludes, extraFiles)
+func writeArchive(output string, format string, dirs []string, excludes []string, extraFiles []ArchiveExtraFile) ([]protocol.ManifestWarning, error) {
+	files, warnings, err := planArchiveFiles(dirs, excludes)
+	if err != nil {
+		return nil, err
 	}
-	return writeTarGzArchive(output, dirs, excludes, extraFiles)
+	extraFiles = appendManifestWarnings(extraFiles, warnings)
+	if normalizeArchiveFormat(format) == protocol.ArchiveFormatZip {
+		return warnings, writeZipArchive(output, files, extraFiles)
+	}
+	return warnings, writeTarGzArchive(output, files, extraFiles)
 }
 
-func writeTarGzArchive(output string, dirs []string, excludes []string, extraFiles []ArchiveExtraFile) error {
+func planArchiveFiles(dirs []string, excludes []string) ([]archiveFile, []protocol.ManifestWarning, error) {
+	files := make([]archiveFile, 0)
+	warnings := make([]protocol.ManifestWarning, 0)
+	for _, root := range dirs {
+		root = filepath.Clean(root)
+		if err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			for _, exclude := range excludes {
+				if exclude != "" && strings.Contains(path, exclude) {
+					if info.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+			}
+			if info.Mode().IsRegular() {
+				if err := verifyArchiveSourceReadable(path); err != nil {
+					warnings = append(warnings, protocol.ManifestWarning{
+						Code:    "archive_file_skipped",
+						Message: "skipped unreadable file: " + err.Error(),
+						Source:  path,
+					})
+					return nil
+				}
+			}
+			files = append(files, archiveFile{
+				Path: path,
+				Name: strings.TrimPrefix(filepath.ToSlash(path), "/"),
+				Info: info,
+			})
+			return nil
+		}); err != nil {
+			return nil, nil, err
+		}
+	}
+	return files, warnings, nil
+}
+
+func verifyArchiveSourceReadable(path string) error {
+	file, err := openArchiveSourceFile(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if _, err := io.Copy(io.Discard, file); err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	return nil
+}
+
+func appendManifestWarnings(extraFiles []ArchiveExtraFile, warnings []protocol.ManifestWarning) []ArchiveExtraFile {
+	if len(warnings) == 0 {
+		return extraFiles
+	}
+	result := append([]ArchiveExtraFile(nil), extraFiles...)
+	for i := range result {
+		if result[i].Name != protocol.BackupContentManifestName {
+			continue
+		}
+		var manifest protocol.BackupContentManifest
+		if err := json.Unmarshal(result[i].Data, &manifest); err != nil {
+			continue
+		}
+		manifest.Warnings = append(manifest.Warnings, warnings...)
+		raw, err := json.MarshalIndent(manifest, "", "  ")
+		if err != nil {
+			continue
+		}
+		result[i].Data = append(raw, '\n')
+	}
+	return result
+}
+
+func writeTarGzArchive(output string, files []archiveFile, extraFiles []ArchiveExtraFile) error {
 	file, err := os.Create(output)
 	if err != nil {
 		return err
@@ -450,46 +550,34 @@ func writeTarGzArchive(output string, dirs []string, excludes []string, extraFil
 		}
 	}
 
-	for _, root := range dirs {
-		root = filepath.Clean(root)
-		if err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			for _, exclude := range excludes {
-				if exclude != "" && strings.Contains(path, exclude) {
-					if info.IsDir() {
-						return filepath.SkipDir
-					}
-					return nil
-				}
-			}
-			header, err := tar.FileInfoHeader(info, "")
-			if err != nil {
-				return err
-			}
-			header.Name = strings.TrimPrefix(filepath.ToSlash(path), "/")
-			if err := writer.WriteHeader(header); err != nil {
-				return err
-			}
-			if !info.Mode().IsRegular() {
-				return nil
-			}
-			f, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-			_, err = io.Copy(writer, f)
+	for _, archiveFile := range files {
+		header, err := tar.FileInfoHeader(archiveFile.Info, "")
+		if err != nil {
 			return err
-		}); err != nil {
+		}
+		header.Name = archiveFile.Name
+		if err := writer.WriteHeader(header); err != nil {
+			return err
+		}
+		if !archiveFile.Info.Mode().IsRegular() {
+			continue
+		}
+		f, err := openArchiveSourceFile(archiveFile.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(writer, f); err != nil {
+			_ = f.Close()
+			return err
+		}
+		if err := f.Close(); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func writeZipArchive(output string, dirs []string, excludes []string, extraFiles []ArchiveExtraFile) error {
+func writeZipArchive(output string, files []archiveFile, extraFiles []ArchiveExtraFile) error {
 	file, err := os.Create(output)
 	if err != nil {
 		return err
@@ -513,35 +601,23 @@ func writeZipArchive(output string, dirs []string, excludes []string, extraFiles
 		}
 	}
 
-	for _, root := range dirs {
-		root = filepath.Clean(root)
-		if err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			for _, exclude := range excludes {
-				if exclude != "" && strings.Contains(path, exclude) {
-					if info.IsDir() {
-						return filepath.SkipDir
-					}
-					return nil
-				}
-			}
-			if info.IsDir() {
-				return nil
-			}
-			entry, err := writer.Create(strings.TrimPrefix(filepath.ToSlash(path), "/"))
-			if err != nil {
-				return err
-			}
-			f, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-			_, err = io.Copy(entry, f)
+	for _, archiveFile := range files {
+		if !archiveFile.Info.Mode().IsRegular() {
+			continue
+		}
+		entry, err := writer.Create(archiveFile.Name)
+		if err != nil {
 			return err
-		}); err != nil {
+		}
+		f, err := openArchiveSourceFile(archiveFile.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(entry, f); err != nil {
+			_ = f.Close()
+			return err
+		}
+		if err := f.Close(); err != nil {
 			return err
 		}
 	}
