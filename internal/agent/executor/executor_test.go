@@ -305,6 +305,9 @@ func TestRunArchiveJobUploadsArtifactToRemote(t *testing.T) {
 	if !strings.Contains(logLine, "copyto ") {
 		t.Fatalf("rclone log = %q, want copyto invocation", logLine)
 	}
+	if !strings.Contains(logLine, "--stats 2s --stats-one-line --stats-log-level NOTICE") {
+		t.Fatalf("rclone log = %q, want visible periodic upload stats", logLine)
+	}
 	if !strings.Contains(logLine, localArtifact) {
 		t.Fatalf("rclone log = %q, want local artifact path", logLine)
 	}

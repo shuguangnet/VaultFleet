@@ -170,7 +170,10 @@ func (r PlainRunner) CopyFileToRemote(ctx context.Context, localPath string, rem
 
 func (r PlainRunner) CopyFileToRemoteWithTaskLog(ctx context.Context, localPath string, remoteSubPath string, logFn TaskLogCallback) error {
 	args := r.rcloneBaseArgs()
-	args = append(args, "--stats", "2s", "--stats-one-line", "--progress", "copyto", localPath, r.remoteArg(remoteSubPath))
+	// rclone's default NOTICE log level can suppress periodic stats when stderr
+	// is a pipe (as it is under systemd). Keep stats at NOTICE so long uploads
+	// remain observable without requiring a terminal.
+	args = append(args, "--stats", "2s", "--stats-one-line", "--stats-log-level", "NOTICE", "copyto", localPath, r.remoteArg(remoteSubPath))
 	cmd := r.command(ctx, args...)
 	return runCommandWithTaskLog(cmd, "rclone copyto "+localPath, "archive-upload", logFn)
 }
