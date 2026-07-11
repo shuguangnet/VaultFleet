@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App as AntdApp } from "antd";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StoragePage } from "./storage-page";
-import { listProviders, listStorage } from "@/services/storage";
+import { listProviders, listStorage, updateStorage } from "@/services/storage";
 
 vi.mock("@/services/storage", () => ({
   createStorage: vi.fn(),
@@ -34,6 +34,8 @@ describe("StoragePage", () => {
           provider: "Alibaba",
           endpoint: "oss-cn-shanghai.aliyuncs.com",
           bucket: "backup-bucket",
+          access_key_id: "old-access-id",
+          secret_access_key: "old-secret-key",
         },
         created_at: "2026-07-12T00:00:00Z",
         updated_at: "2026-07-12T00:00:00Z",
@@ -55,6 +57,28 @@ describe("StoragePage", () => {
     expect(await screen.findByText("编辑存储")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Production OSS")).toBeInTheDocument();
     expect(screen.getByDisplayValue("oss-cn-shanghai.aliyuncs.com")).toBeInTheDocument();
+
+    const accessKeyID = screen.getByDisplayValue("old-access-id");
+    const secretAccessKey = screen.getByDisplayValue("old-secret-key");
+    await user.clear(accessKeyID);
+    await user.type(accessKeyID, "new-access-id");
+    await user.clear(secretAccessKey);
+    await user.type(secretAccessKey, "new-secret-key");
+
+    expect(screen.getByDisplayValue("new-access-id")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("new-secret-key")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "保存配置" }));
+    await waitFor(() =>
+      expect(updateStorage).toHaveBeenCalledWith(
+        "storage-1",
+        expect.objectContaining({
+          rclone_config: expect.objectContaining({
+            access_key_id: "new-access-id",
+            secret_access_key: "new-secret-key",
+          }),
+        }),
+      ),
+    );
   });
 });
 

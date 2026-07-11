@@ -131,6 +131,7 @@ export function StoragePage() {
   const [testResult, setTestResult] = useState<StorageTestResult | null>(null);
   const [form] = Form.useForm<StorageFormValues>();
   const rcloneType = Form.useWatch("rclone_type", form) || "s3";
+  const rcloneConfig = Form.useWatch("rclone_config", { form, preserve: true }) || {};
 
   const { data: storageList, isLoading } = useQuery({
     queryKey: ["storage"],
@@ -448,20 +449,12 @@ export function StoragePage() {
                     <Row gutter={[12, 12]}>
                       {currentTemplate.fields.map((f) => (
                         <Col span={24} key={f.key}>
-                          <Form.Item label={f.label}>
+                          <Form.Item label={f.label} name={["rclone_config", f.key]}>
                             {f.key === "provider" &&
                             rcloneType === "s3" &&
                             s3Providers &&
                             s3Providers.length > 0 ? (
                               <Select
-                                value={form.getFieldValue("rclone_config")?.[f.key] || ""}
-                                onChange={(val) => {
-                                  const cfg = form.getFieldValue("rclone_config");
-                                  form.setFieldValue("rclone_config", {
-                                    ...cfg,
-                                    [f.key]: val,
-                                  });
-                                }}
                                 options={s3Providers.map((p: any) => ({
                                   value: p.value,
                                   label: p.help
@@ -472,17 +465,8 @@ export function StoragePage() {
                             ) : (
                               <Input
                                 type={f.type || "text"}
-                                value={form.getFieldValue("rclone_config")?.[f.key] || ""}
-                                onChange={(e) => {
-                                  const cfg = form.getFieldValue("rclone_config");
-                                  form.setFieldValue("rclone_config", {
-                                    ...cfg,
-                                    [f.key]: e.target.value,
-                                  });
-                                }}
                                 placeholder={
-                                  form.getFieldValue("rclone_config")?.[f.key] ===
-                                  "[redacted]"
+                                  rcloneConfig[f.key] === "[redacted]"
                                     ? "已加密 (输入以修改)"
                                     : ""
                                 }
