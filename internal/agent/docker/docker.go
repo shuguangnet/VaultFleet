@@ -216,6 +216,16 @@ func Discover(ctx context.Context, client API) protocol.DockerDiscoveryRespPaylo
 }
 
 func Resolve(ctx context.Context, client API, sources []protocol.BackupSource) ([]string, *protocol.DockerBackupMetadata, error) {
+	hasDockerSource := false
+	for _, source := range sources {
+		if source.Type == protocol.BackupSourceTypeDockerContainer && source.DockerContainer != nil {
+			hasDockerSource = true
+			break
+		}
+	}
+	if !hasDockerSource {
+		return nil, nil, nil
+	}
 	if client == nil {
 		client = NewClient("")
 	}

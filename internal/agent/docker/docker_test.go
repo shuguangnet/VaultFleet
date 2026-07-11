@@ -115,6 +115,25 @@ func TestResolveDockerSources(t *testing.T) {
 	assert.Equal(t, "15432", metadata.Sources[0].Ports[0].HostPort)
 }
 
+func TestResolveNonDockerSourcesDoesNotCallDockerAPI(t *testing.T) {
+	paths, metadata, err := Resolve(context.Background(), fakeDockerAPI{
+		listErr: errors.New("docker must not be called"),
+	}, []protocol.BackupSource{
+		{Type: protocol.BackupSourceTypePath, Path: "/srv/data"},
+		{
+			Type: protocol.BackupSourceTypeDatabase,
+			Database: &protocol.DatabaseBackupSource{
+				Engine:        protocol.DatabaseEnginePostgreSQL,
+				ExecutionMode: protocol.DatabaseExecutionHost,
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Empty(t, paths)
+	assert.Nil(t, metadata)
+}
+
 func TestRestoreDockerSourceUsesComposeWhenMetadataAvailable(t *testing.T) {
 	dir := t.TempDir()
 	composePath := filepath.Join(dir, "compose.yml")
