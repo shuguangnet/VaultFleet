@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -29,6 +29,7 @@ import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import "dayjs/locale/zh-cn";
 import { StatusBadge } from "@/components/status-badge";
+import { EChart } from "@/components/e-chart";
 import { checkReady } from "@/services/health";
 import { listAgents } from "@/services/agents";
 import { listPolicies } from "@/services/policies";
@@ -40,10 +41,6 @@ import { useColorMode } from "@/contexts/theme-context";
 
 dayjs.extend(relativeTime);
 dayjs.locale("zh-cn");
-
-const EChart = lazy(() =>
-  import("@/components/e-chart").then((module) => ({ default: module.EChart }))
-);
 
 interface DashboardTaskRow {
   id: string;
@@ -617,20 +614,7 @@ export function DashboardPage() {
 }
 
 function DashboardChart({ children, height }: { children: ReactNode; height: number }) {
-  return (
-    <Suspense
-      fallback={
-        <div className="vf-chart-skeleton" style={{ height }} aria-label="图表加载中">
-          <span className="vf-chart-skeleton-bar" />
-          <span className="vf-chart-skeleton-bar" />
-          <span className="vf-chart-skeleton-bar" />
-          <span className="vf-chart-skeleton-bar" />
-        </div>
-      }
-    >
-      {children}
-    </Suspense>
-  );
+  return <div style={{ minHeight: height }}>{children}</div>;
 }
 
 function MetricCard({

@@ -1,8 +1,10 @@
 import { createBrowserRouter } from "react-router-dom";
+import { RouteErrorPage } from "./components/route-error-page";
 
 export const router = createBrowserRouter([
   {
     path: "/",
+    errorElement: <RouteErrorPage />,
     lazy: async () => {
       const { AuthGate } = await import("./pages/auth/auth-gate");
       return { Component: AuthGate };
@@ -75,6 +77,7 @@ export const router = createBrowserRouter([
   },
   {
     path: "/login",
+    errorElement: <RouteErrorPage />,
     lazy: async () => {
       const { AuthGate } = await import("./pages/auth/auth-gate");
       return { Component: AuthGate };
@@ -82,6 +85,7 @@ export const router = createBrowserRouter([
   },
   {
     path: "/setup",
+    errorElement: <RouteErrorPage />,
     lazy: async () => {
       const { AuthGate } = await import("./pages/auth/auth-gate");
       return { Component: AuthGate };

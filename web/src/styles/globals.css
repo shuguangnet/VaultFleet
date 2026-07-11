@@ -84,6 +84,14 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+.vf-route-error {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background: var(--vf-bg);
+}
+
 * {
   box-sizing: border-box;
 }
