@@ -165,3 +165,12 @@ jobs:
             dist/vaultfleet-agent-linux-arm64 \
             dist/checksums.txt \
             --clobber
+
+      - name: Point latest downloads at dispatched agent assets
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "${{ steps.release_tag.outputs.tag }}" \
+            --target "${{ github.sha }}" \
+            --latest
