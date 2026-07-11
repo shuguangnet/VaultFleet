@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -387,7 +388,7 @@ func RunArchiveJobWithProgress(ctx context.Context, cfg ExecutorConfig, progress
 	artifactPath := filepath.Join(artifactDir, artifactName)
 	emitProgress(progressFn, "archive", nil)
 	emitTaskLog(cfg.TaskLog, "info", "archive", "system", "writing local archive "+artifactName)
-	warnings, err := writeArchive(artifactPath, result.ArchiveFormat, cfg.BackupDirs, cfg.Excludes, cfg.ExtraArchiveFiles, func(progress BackupProgress) {
+	warnings, err := writeArchive(ctx, artifactPath, result.ArchiveFormat, cfg.BackupDirs, cfg.Excludes, cfg.ExtraArchiveFiles, func(progress BackupProgress) {
 		emitProgress(progressFn, "archive", &progress)
 	})
 	if err != nil {
@@ -468,25 +469,31 @@ func archiveContentType(format string) string {
 	return "application/gzip"
 }
 
-func writeArchive(output string, format string, dirs []string, excludes []string, extraFiles []ArchiveExtraFile, progressFn func(BackupProgress)) ([]protocol.ManifestWarning, error) {
-	files, warnings, err := planArchiveFiles(dirs, excludes)
+func writeArchive(ctx context.Context, output string, format string, dirs []string, excludes []string, extraFiles []ArchiveExtraFile, progressFn func(BackupProgress)) ([]protocol.ManifestWarning, error) {
+	files, warnings, err := planArchiveFiles(ctx, dirs, excludes)
 	if err != nil {
 		return nil, err
 	}
 	extraFiles = appendManifestWarnings(extraFiles, warnings)
 	reporter := newArchiveProgressReporter(files, extraFiles, progressFn)
 	if normalizeArchiveFormat(format) == protocol.ArchiveFormatZip {
-		return warnings, writeZipArchive(output, files, extraFiles, reporter)
+		return warnings, writeZipArchive(ctx, output, files, extraFiles, reporter)
 	}
-	return warnings, writeTarGzArchive(output, files, extraFiles, reporter)
+	return warnings, writeTarGzArchive(ctx, output, files, extraFiles, reporter)
 }
 
-func planArchiveFiles(dirs []string, excludes []string) ([]archiveFile, []protocol.ManifestWarning, error) {
+func planArchiveFiles(ctx context.Context, dirs []string, excludes []string) ([]archiveFile, []protocol.ManifestWarning, error) {
 	files := make([]archiveFile, 0)
 	warnings := make([]protocol.ManifestWarning, 0)
 	for _, root := range dirs {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		root = filepath.Clean(root)
 		if err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if walkErr != nil {
 				return walkErr
 			}
@@ -499,7 +506,10 @@ func planArchiveFiles(dirs []string, excludes []string) ([]archiveFile, []protoc
 				}
 			}
 			if info.Mode().IsRegular() {
-				if err := verifyArchiveSourceReadable(path); err != nil {
+				if err := verifyArchiveSourceReadable(ctx, path); err != nil {
+					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+						return err
+					}
 					warnings = append(warnings, protocol.ManifestWarning{
 						Code:    "archive_file_skipped",
 						Message: "skipped unreadable file: " + err.Error(),
@@ -521,13 +531,16 @@ func planArchiveFiles(dirs []string, excludes []string) ([]archiveFile, []protoc
 	return files, warnings, nil
 }
 
-func verifyArchiveSourceReadable(path string) error {
+func verifyArchiveSourceReadable(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	file, err := openArchiveSourceFile(path)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	if _, err := io.Copy(io.Discard, file); err != nil {
+	if _, err := io.Copy(io.Discard, newContextReadCloser(ctx, file)); err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
 	return nil
@@ -556,7 +569,7 @@ func appendManifestWarnings(extraFiles []ArchiveExtraFile, warnings []protocol.M
 	return result
 }
 
-func writeTarGzArchive(output string, files []archiveFile, extraFiles []ArchiveExtraFile, reporter *archiveProgressReporter) error {
+func writeTarGzArchive(ctx context.Context, output string, files []archiveFile, extraFiles []ArchiveExtraFile, reporter *archiveProgressReporter) error {
 	file, err := os.Create(output)
 	if err != nil {
 		return err
@@ -589,6 +602,9 @@ func writeTarGzArchive(output string, files []archiveFile, extraFiles []ArchiveE
 	}
 
 	for _, archiveFile := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		header, err := tar.FileInfoHeader(archiveFile.Info, "")
 		if err != nil {
 			return err
@@ -605,7 +621,7 @@ func writeTarGzArchive(output string, files []archiveFile, extraFiles []ArchiveE
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(writer, reporter.Reader(f, archiveFile.Path)); err != nil {
+		if _, err := io.Copy(writer, reporter.Reader(newContextReadCloser(ctx, f), archiveFile.Path)); err != nil {
 			_ = f.Close()
 			return err
 		}
@@ -618,7 +634,7 @@ func writeTarGzArchive(output string, files []archiveFile, extraFiles []ArchiveE
 	return nil
 }
 
-func writeZipArchive(output string, files []archiveFile, extraFiles []ArchiveExtraFile, reporter *archiveProgressReporter) error {
+func writeZipArchive(ctx context.Context, output string, files []archiveFile, extraFiles []ArchiveExtraFile, reporter *archiveProgressReporter) error {
 	file, err := os.Create(output)
 	if err != nil {
 		return err
@@ -644,6 +660,9 @@ func writeZipArchive(output string, files []archiveFile, extraFiles []ArchiveExt
 	}
 
 	for _, archiveFile := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !archiveFile.Info.Mode().IsRegular() {
 			continue
 		}
@@ -656,7 +675,7 @@ func writeZipArchive(output string, files []archiveFile, extraFiles []ArchiveExt
 			return err
 		}
 		reporter.StartFile(archiveFile.Path)
-		if _, err := io.Copy(entry, reporter.Reader(f, archiveFile.Path)); err != nil {
+		if _, err := io.Copy(entry, reporter.Reader(newContextReadCloser(ctx, f), archiveFile.Path)); err != nil {
 			_ = f.Close()
 			return err
 		}
@@ -782,6 +801,52 @@ func (r *archiveCountingReader) Read(p []byte) (int, error) {
 		r.onRead(n)
 	}
 	return n, err
+}
+
+type contextReadCloser struct {
+	ctx    context.Context
+	reader io.ReadCloser
+	once   sync.Once
+	done   chan struct{}
+}
+
+func newContextReadCloser(ctx context.Context, reader io.ReadCloser) io.ReadCloser {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	wrapped := &contextReadCloser{
+		ctx:    ctx,
+		reader: reader,
+		done:   make(chan struct{}),
+	}
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = wrapped.reader.Close()
+		case <-wrapped.done:
+		}
+	}()
+	return wrapped
+}
+
+func (r *contextReadCloser) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := r.reader.Read(p)
+	if err != nil && r.ctx.Err() != nil {
+		return n, r.ctx.Err()
+	}
+	return n, err
+}
+
+func (r *contextReadCloser) Close() error {
+	var err error
+	r.once.Do(func() {
+		close(r.done)
+		err = r.reader.Close()
+	})
+	return err
 }
 
 func safeArchiveRootName(name string) (string, bool) {

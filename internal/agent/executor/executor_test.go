@@ -468,6 +468,52 @@ func TestRunArchiveJobSkipsUnreadableFilesAndRecordsManifestWarning(t *testing.T
 	}
 }
 
+func TestRunArchiveJobCancelsBlockedArchiveRead(t *testing.T) {
+	configDir, backupDir := setupArchiveTestDirs(t)
+	blockedPath := filepath.Join(backupDir, "hello.txt")
+
+	originalOpen := openArchiveSourceFile
+	t.Cleanup(func() { openArchiveSourceFile = originalOpen })
+	opened := make(chan struct{})
+	openArchiveSourceFile = func(path string) (io.ReadCloser, error) {
+		if path == blockedPath {
+			close(opened)
+			return newBlockingReadCloser(), nil
+		}
+		return os.Open(path)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan TaskResult, 1)
+	go func() {
+		done <- RunArchiveJobWithProgress(ctx, ExecutorConfig{
+			ConfigDir:     configDir,
+			RepoPath:      "tenant/agent-1",
+			BackupDirs:    []string{backupDir},
+			ArchiveFormat: protocol.ArchiveFormatZip,
+		}, nil)
+	}()
+
+	select {
+	case <-opened:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for blocked archive read")
+	}
+	cancel()
+
+	select {
+	case result := <-done:
+		if result.Status != "failed" {
+			t.Fatalf("Status = %q, want failed", result.Status)
+		}
+		if !strings.Contains(result.ErrorLog, context.Canceled.Error()) {
+			t.Fatalf("ErrorLog = %q, want context canceled", result.ErrorLog)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("archive job did not return after cancellation")
+	}
+}
+
 func TestRunArchiveJobWithProgressReportsArchiveAndUploadProgress(t *testing.T) {
 	configDir, backupDir := setupArchiveTestDirs(t)
 	setupFakeRclone(t)
@@ -992,5 +1038,27 @@ func (r readErrorCloser) Read([]byte) (int, error) {
 }
 
 func (r readErrorCloser) Close() error {
+	return nil
+}
+
+type blockingReadCloser struct {
+	closed chan struct{}
+}
+
+func newBlockingReadCloser() *blockingReadCloser {
+	return &blockingReadCloser{closed: make(chan struct{})}
+}
+
+func (r *blockingReadCloser) Read([]byte) (int, error) {
+	<-r.closed
+	return 0, context.Canceled
+}
+
+func (r *blockingReadCloser) Close() error {
+	select {
+	case <-r.closed:
+	default:
+		close(r.closed)
+	}
 	return nil
 }
