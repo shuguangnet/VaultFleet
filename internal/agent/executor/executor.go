@@ -621,7 +621,7 @@ func writeTarGzArchive(ctx context.Context, output string, files []archiveFile, 
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(writer, reporter.Reader(newContextReadCloser(ctx, f), archiveFile.Path)); err != nil {
+		if _, err := copyArchiveSource(ctx, writer, f, archiveFile.Info.Size(), archiveFile.Path, reporter); err != nil {
 			_ = f.Close()
 			return err
 		}
@@ -675,7 +675,7 @@ func writeZipArchive(ctx context.Context, output string, files []archiveFile, ex
 			return err
 		}
 		reporter.StartFile(archiveFile.Path)
-		if _, err := io.Copy(entry, reporter.Reader(newContextReadCloser(ctx, f), archiveFile.Path)); err != nil {
+		if _, err := copyArchiveSource(ctx, entry, f, archiveFile.Info.Size(), archiveFile.Path, reporter); err != nil {
 			_ = f.Close()
 			return err
 		}
@@ -686,6 +686,42 @@ func writeZipArchive(ctx context.Context, output string, files []archiveFile, ex
 	}
 	reporter.Finish()
 	return nil
+}
+
+func copyArchiveSource(ctx context.Context, writer io.Writer, source io.ReadCloser, size int64, path string, reporter *archiveProgressReporter) (int64, error) {
+	if size < 0 {
+		size = 0
+	}
+	reader := io.LimitReader(newContextReadCloser(ctx, source), size)
+	written, err := io.Copy(writer, reporter.Reader(reader, path))
+	if err != nil {
+		return written, err
+	}
+	if written >= size {
+		return written, nil
+	}
+	padded, err := copyZeroPadding(writer, size-written)
+	return written + padded, err
+}
+
+func copyZeroPadding(writer io.Writer, size int64) (int64, error) {
+	var written int64
+	var zeros [32 * 1024]byte
+	for written < size {
+		chunk := size - written
+		if chunk > int64(len(zeros)) {
+			chunk = int64(len(zeros))
+		}
+		n, err := writer.Write(zeros[:chunk])
+		written += int64(n)
+		if err != nil {
+			return written, err
+		}
+		if n == 0 {
+			return written, io.ErrShortWrite
+		}
+	}
+	return written, nil
 }
 
 func newArchiveProgressReporter(files []archiveFile, extraFiles []ArchiveExtraFile, progressFn func(BackupProgress)) *archiveProgressReporter {

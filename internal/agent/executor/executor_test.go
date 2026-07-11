@@ -468,6 +468,39 @@ func TestRunArchiveJobSkipsUnreadableFilesAndRecordsManifestWarning(t *testing.T
 	}
 }
 
+func TestRunArchiveJobLimitsGrowingFilesToPlannedSize(t *testing.T) {
+	configDir, backupDir := setupArchiveTestDirs(t)
+	growingPath := filepath.Join(backupDir, "growing.log")
+	if err := os.WriteFile(growingPath, []byte("abc"), 0o644); err != nil {
+		t.Fatalf("seed growing file: %v", err)
+	}
+	setupFakeRclone(t)
+
+	originalOpen := openArchiveSourceFile
+	t.Cleanup(func() { openArchiveSourceFile = originalOpen })
+	openArchiveSourceFile = func(path string) (io.ReadCloser, error) {
+		if path == growingPath {
+			return io.NopCloser(strings.NewReader("abcdef")), nil
+		}
+		return os.Open(path)
+	}
+
+	result := RunArchiveJob(context.Background(), ExecutorConfig{
+		ConfigDir:     configDir,
+		RepoPath:      "tenant/agent-1",
+		BackupDirs:    []string{backupDir},
+		ArchiveFormat: protocol.ArchiveFormatTarGz,
+	})
+
+	if result.Status != "success" {
+		t.Fatalf("Status = %q, want success; error log: %q", result.Status, result.ErrorLog)
+	}
+	content := readTarGzEntry(t, filepath.Join(configDir, "artifacts", result.ArtifactName), archiveEntryName(growingPath))
+	if string(content) != "abc" {
+		t.Fatalf("growing file content = %q, want planned-size prefix", content)
+	}
+}
+
 func TestRunArchiveJobCancelsBlockedArchiveRead(t *testing.T) {
 	configDir, backupDir := setupArchiveTestDirs(t)
 	blockedPath := filepath.Join(backupDir, "hello.txt")
