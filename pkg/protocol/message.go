@@ -622,6 +622,7 @@ type RestoreReqPayload struct {
 	IncludePaths []string              `json:"include_paths,omitempty"`
 	RestoreMode  string                `json:"restore_mode,omitempty"`
 	Docker       *DockerRestoreRequest `json:"docker,omitempty"`
+	Policy       *PolicyPushPayload    `json:"policy,omitempty"`
 }
 
 type DockerRestoreRequest struct {

@@ -134,6 +134,48 @@ func TestRestoreSendsMessageAndRecordsRunningTask(t *testing.T) {
 	assert.Nil(t, history.FinishedAt)
 }
 
+func TestRestoreCarriesSourceSnapshotPolicy(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	agent := createRestoreTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+	storage := db.StorageConfig{Name: "source", RcloneType: "local"}
+	require.NoError(t, setup.database.DB.Create(&storage).Error)
+	policy := db.BackupPolicy{
+		AgentID:         agent.ID,
+		StorageID:       storage.ID,
+		RepoPath:        "source/repository",
+		BackupMode:      protocol.BackupModeSnapshot,
+		BackupDirs:      `[]`,
+		BackupSources:   `[]`,
+		ExcludePatterns: `[]`,
+		Retention:       `{}`,
+		RcloneArgs:      `{}`,
+	}
+	require.NoError(t, setup.database.DB.Create(&policy).Error)
+	require.NoError(t, setup.database.DB.Create(&db.TaskHistory{
+		AgentID:    agent.ID,
+		Type:       "backup",
+		Status:     commands.TaskStatusSuccess,
+		SnapshotID: "snap-source",
+		PolicyID:   policy.ID,
+		StorageID:  storage.ID,
+		BackupMode: protocol.BackupModeSnapshot,
+	}).Error)
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore", map[string]any{
+		"snapshot_id": "snap-source",
+		"target_path": "/restore/target",
+	})
+
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	require.Len(t, setup.hub.sent, 1)
+	payload, err := protocol.ParsePayload[protocol.RestoreReqPayload](&setup.hub.sent[0].message)
+	require.NoError(t, err)
+	require.NotNil(t, payload.Policy)
+	assert.Equal(t, policy.ID, payload.Policy.PolicyID)
+	assert.Equal(t, "source/repository", payload.Policy.Storage.RepoPath)
+}
+
 func TestRestoreUsesPolicyTimeoutHours(t *testing.T) {
 	setup := setupRestoreAPI(t)
 	agent := createRestoreTestAgent(t, setup.database, "offline")

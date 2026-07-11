@@ -227,6 +227,11 @@ func (h *RestoreHandler) Restore(c *gin.Context) {
 	if !ok {
 		return
 	}
+	restorePolicy, err := h.restoreSourcePolicy(contextFromGin(c), sourceAgentID, snapshotID)
+	if err != nil {
+		writeErrorResponse(c, http.StatusInternalServerError, "resolve source backup configuration")
+		return
+	}
 
 	var dockerRequest *protocol.DockerRestoreRequest
 	includePaths := append([]string(nil), request.IncludePaths...)
@@ -275,6 +280,7 @@ func (h *RestoreHandler) Restore(c *gin.Context) {
 		IncludePaths: includePaths,
 		RestoreMode:  restoreMode,
 		Docker:       dockerRequest,
+		Policy:       restorePolicy,
 	})
 	if err != nil {
 		writeErrorResponse(c, http.StatusInternalServerError, "encode restore request")
@@ -328,6 +334,55 @@ func (h *RestoreHandler) Restore(c *gin.Context) {
 		"command_id": command.ID,
 		"message_id": msg.ID,
 	})
+}
+
+func (h *RestoreHandler) restoreSourcePolicy(ctx context.Context, sourceAgentID string, snapshotID string) (*protocol.PolicyPushPayload, error) {
+	var history db.TaskHistory
+	historyErr := h.DB.DB.WithContext(ctx).
+		Where("agent_id = ? AND type = ? AND status = ? AND snapshot_id = ?", sourceAgentID, "backup", commands.TaskStatusSuccess, snapshotID).
+		Order("finished_at DESC, created_at DESC").
+		First(&history).Error
+
+	var policy db.BackupPolicy
+	if historyErr == nil && strings.TrimSpace(history.PolicyID) != "" {
+		if err := h.DB.DB.WithContext(ctx).First(&policy, "id = ?", history.PolicyID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, nil
+			}
+			return nil, err
+		}
+	} else {
+		if historyErr != nil && !errors.Is(historyErr, gorm.ErrRecordNotFound) {
+			return nil, historyErr
+		}
+		if err := h.DB.DB.WithContext(ctx).Where("agent_id = ?", sourceAgentID).First(&policy).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, nil
+			}
+			return nil, err
+		}
+	}
+
+	var storage db.StorageConfig
+	if err := h.DB.DB.WithContext(ctx).First(&storage, "id = ?", policy.StorageID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	payload, err := policyPushPayload(h.DB, policy, storage)
+	if err != nil {
+		return nil, err
+	}
+	if historyErr == nil {
+		if strings.TrimSpace(history.BackupMode) != "" {
+			payload.BackupMode = history.BackupMode
+		}
+		if strings.TrimSpace(history.ArchiveFormat) != "" {
+			payload.ArchiveFormat = history.ArchiveFormat
+		}
+	}
+	return &payload, nil
 }
 
 func (h *RestoreHandler) resolveDockerRestoreRequest(c *gin.Context, agentID string, snapshotID string, request restoreRequest) (protocol.DockerRestoreRequest, error) {

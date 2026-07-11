@@ -2083,6 +2083,52 @@ func TestHandleRestoreRunnerFailureSendsFailedTaskResult(t *testing.T) {
 	assert.Contains(t, result.ErrorLog, "restore failed")
 }
 
+func TestHandleRestoreUsesSourcePolicyFromRequest(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{
+		AgentID: "target-agent",
+		Storage: protocol.StorageConfig{RepoPath: "target/repo"},
+	}))
+	sent := &sentMessages{}
+	configSeen := make(chan executor.ExecutorConfig, 1)
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   t.TempDir(),
+		AgentID:     "target-agent",
+		SendFunc:    sent.send,
+		RestoreRunner: func(_ context.Context, cfg executor.ExecutorConfig, _ string, _ string, _ []string) error {
+			configSeen <- cfg
+			return nil
+		},
+	})
+	msg, err := protocol.NewMessage(protocol.TypeRestoreReq, protocol.RestoreReqPayload{
+		SnapshotID: "snap-source",
+		Target:     "/restore/target",
+		Policy: &protocol.PolicyPushPayload{
+			AgentID: "source-agent",
+			Storage: protocol.StorageConfig{
+				RcloneType: "local",
+				RepoPath:   "source/repo",
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+
+	select {
+	case cfg := <-configSeen:
+		assert.Equal(t, "source/repo", cfg.RepoPath)
+	case <-time.After(time.Second):
+		t.Fatal("restore runner did not receive source policy")
+	}
+	waitForMessageType(t, sent, protocol.TypeTaskResult, time.Second)
+	messages := sent.snapshot()
+	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&messages[len(messages)-1])
+	require.NoError(t, err)
+	assert.Equal(t, "target-agent", result.AgentID)
+}
+
 func TestHandleRestoreStartsAsyncAndDoesNotBlockHandle(t *testing.T) {
 	store := policy.NewStore(t.TempDir())
 	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{

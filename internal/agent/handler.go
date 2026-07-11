@@ -1588,7 +1588,10 @@ func (h *Handler) handleRestoreReq(msg protocol.Message) {
 		return
 	}
 
-	policyPayload, err := h.policyStore.LoadPolicy()
+	policyPayload := req.Policy
+	if policyPayload == nil {
+		policyPayload, err = h.policyStore.LoadPolicy()
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			h.sendTaskResultWithID(msg.ID, h.failedTypedTaskResult(h.agentID, "restore", req.SnapshotID, "no backup policy configured for this agent", time.Now()))
@@ -1598,9 +1601,9 @@ func (h *Handler) handleRestoreReq(msg protocol.Message) {
 		}
 		return
 	}
-	agentID := policyPayload.AgentID
+	agentID := h.agentID
 	if agentID == "" {
-		agentID = h.agentID
+		agentID = policyPayload.AgentID
 	}
 
 	startErr := h.tasks.Start(msg.ID, taskTypeRestore, func(ctx context.Context) {
