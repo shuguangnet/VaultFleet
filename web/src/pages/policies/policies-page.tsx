@@ -12,7 +12,6 @@ import {
   Empty,
   Input,
   InputNumber,
-  Popconfirm,
   Row,
   Select,
   Space,
@@ -364,6 +363,8 @@ export function PoliciesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmBackupPolicy, setConfirmBackupPolicy] =
     useState<BackupPolicy | null>(null);
+  const [confirmDeletePolicy, setConfirmDeletePolicy] =
+    useState<BackupPolicy | null>(null);
   const [bulkSourcePolicy, setBulkSourcePolicy] = useState<BackupPolicy | null>(
     null,
   );
@@ -385,7 +386,13 @@ export function PoliciesPage() {
     defaultPolicyInput()
   );
 
-  const { data: policies, isLoading } = useQuery({
+  const {
+    data: policies,
+    isLoading,
+    isFetching,
+    error: policiesError,
+    refetch: refetchPolicies,
+  } = useQuery({
     queryKey: ["policies"],
     queryFn: () => listPolicies(),
   });
@@ -439,6 +446,7 @@ export function PoliciesPage() {
   const deleteMutation = useMutation({
     mutationFn: deletePolicy,
     onSuccess: () => {
+      setConfirmDeletePolicy(null);
       queryClient.invalidateQueries({ queryKey: ["policies"] });
       message.success("策略已删除");
     },
@@ -816,6 +824,8 @@ export function PoliciesPage() {
       title: "操作",
       key: "action",
       align: "right",
+      fixed: "right",
+      width: 56,
       render: (_, record) => (
         <Dropdown
           menu={{
@@ -859,18 +869,8 @@ export function PoliciesPage() {
               canWritePolicies ? {
                 key: "delete",
                 icon: <DeleteOutlined />,
-                label: (
-                  <Popconfirm
-                    title="确认删除备份策略？"
-                    description="此操作将停止该节点的自动备份任务。存储中的备份数据不会被删除。"
-                    okText="确认删除"
-                    okButtonProps={{ danger: true }}
-                    cancelText="取消"
-                    onConfirm={() => deleteMutation.mutate(record.id)}
-                  >
-                    <span style={{ color: "#ef4444" }}>删除</span>
-                  </Popconfirm>
-                ),
+                label: <span style={{ color: "#ef4444" }}>删除</span>,
+                onClick: () => setConfirmDeletePolicy(record),
               } : null,
             ].filter(Boolean) as any,
           }}
@@ -898,6 +898,13 @@ export function PoliciesPage() {
             添加策略
           </Button> : null
         }
+      />
+
+      <ErrorPanel
+        error={policiesError}
+        title="无法加载备份策略"
+        onRetry={() => void refetchPolicies()}
+        retrying={isFetching}
       />
 
       <Card className="vf-table-card" styles={{ body: { padding: 0 } }}>
@@ -2193,7 +2200,7 @@ export function PoliciesPage() {
           </Button>
         }
       >
-        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={16} style={{ width: "100%" }}>
           {bulkSourcePolicy && (
             <Alert
               type="info"
@@ -2252,7 +2259,7 @@ export function PoliciesPage() {
                 title={`成功 ${bulkResult.created_count}，失败 ${bulkResult.failed_count}`}
                 style={{ marginBottom: 12 }}
               />
-              <Space direction="vertical" size={8} style={{ width: "100%" }}>
+              <Space orientation="vertical" size={8} style={{ width: "100%" }}>
                 {bulkResult.results.map((result, index) => (
                   <div
                     key={`${result.agent_id || index}-${result.policy_id || result.error}`}
@@ -2275,6 +2282,18 @@ export function PoliciesPage() {
           )}
         </Space>
       </Drawer>
+
+      <ConfirmDialog
+        open={!!confirmDeletePolicy}
+        onOpenChange={(open) => !open && setConfirmDeletePolicy(null)}
+        title="确认删除备份策略？"
+        description={`删除策略「${confirmDeletePolicy?.name || "未命名策略"}」后，该节点将停止对应的自动备份任务。存储中的已有备份数据不会被删除。`}
+        confirmText="确认删除"
+        onConfirm={() =>
+          confirmDeletePolicy && deleteMutation.mutate(confirmDeletePolicy.id)
+        }
+        loading={deleteMutation.isPending}
+      />
 
       <ConfirmDialog
         open={!!confirmBackupPolicy}

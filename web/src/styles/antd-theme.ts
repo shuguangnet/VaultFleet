@@ -97,7 +97,7 @@ export const antdTheme: ThemeConfig = {
     Breadcrumb: {
       colorText: colors.textSecondary,
       colorTextDescription: colors.textTertiary,
-      colorBgTextHover: "rgba(15, 76, 129, 0.06)",
+      colorBgTextHover: "rgba(15, 118, 110, 0.08)",
     },
     Tooltip: {
       borderRadius: 6,

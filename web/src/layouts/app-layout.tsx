@@ -166,6 +166,9 @@ export function AppLayout({ user }: AppLayoutProps) {
   return (
     <AuthProvider user={user}>
       <Layout className="vf-app-shell">
+        <a className="vf-skip-link" href="#vf-main-content">
+          跳转到主要内容
+        </a>
         {!isMobile && (
           <Sider
             collapsible
@@ -201,7 +204,7 @@ export function AppLayout({ user }: AppLayoutProps) {
           placement="left"
           open={mobileNavOpen}
           onClose={() => setMobileNavOpen(false)}
-          width="min(86vw, 320px)"
+          size={320}
           className="vf-mobile-nav-drawer"
           styles={{
             body: { padding: 0, background: colors.siderBg },
@@ -301,6 +304,9 @@ export function AppLayout({ user }: AppLayoutProps) {
           </Header>
 
           <Content
+            id="vf-main-content"
+            role="main"
+            tabIndex={-1}
             className="vf-app-content"
           >
             <Outlet />

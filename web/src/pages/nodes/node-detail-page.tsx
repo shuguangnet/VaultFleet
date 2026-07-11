@@ -17,6 +17,7 @@ import {
   Row,
   Segmented,
   Select,
+  Skeleton,
   Space,
   Spin,
   Table,
@@ -52,6 +53,7 @@ import {
 import { listAgentCommands } from "@/services/commands";
 import { StatusBadge } from "@/components/status-badge";
 import { PageHeader } from "@/components/page-header";
+import { ErrorPanel } from "@/components/error-panel";
 import { DirectoryBrowser } from "@/components/directory-browser";
 import { safeFormatDate } from "@/lib/date";
 import { copyToClipboard } from "@/lib/utils";
@@ -60,6 +62,7 @@ import type { RestoreRequest, Snapshot } from "@/types/snapshot";
 import type { DockerResolvedSource } from "@/types/task";
 import { useAuth } from "@/contexts/auth-context";
 import { permissions } from "@/services/identity";
+import { ApiError } from "@/services/http";
 
 const COMMAND_TYPE_LABELS: Record<string, string> = {
   backup_now: "手动备份",
@@ -86,10 +89,18 @@ export function NodeDetailPage() {
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
 
-  const { data: agent, isLoading: agentLoading } = useQuery({
+  const {
+    data: agent,
+    isLoading: agentLoading,
+    isFetching: agentFetching,
+    error: agentError,
+    refetch: refetchAgent,
+  } = useQuery({
     queryKey: ["agent", agentId],
     queryFn: () => getAgent(agentId!),
     enabled: !!agentId,
+    retry: (failureCount, error) =>
+      error instanceof ApiError && error.status === 404 ? false : failureCount < 1,
   });
   const { data: policies } = useQuery({
     queryKey: ["policies", { agent_id: agentId }],
@@ -167,13 +178,60 @@ export function NodeDetailPage() {
 
   if (agentLoading) {
     return (
-      <div style={{ padding: 40, textAlign: "center" }}>
-        <Spin size="large" />
+      <div className="vf-page" aria-busy="true" aria-live="polite">
+        <PageHeader
+          title="节点详情"
+          description="正在加载节点运行信息"
+          icon={<DesktopOutlined />}
+          actions={<Link to="/nodes"><Button>返回节点列表</Button></Link>}
+        />
+        <Card>
+          <Space orientation="vertical" size={18} style={{ width: "100%" }}>
+            <Space>
+              <Spin size="small" />
+              <Typography.Text type="secondary">正在获取节点状态与备份数据</Typography.Text>
+            </Space>
+            <Skeleton active paragraph={{ rows: 5 }} />
+          </Space>
+        </Card>
+      </div>
+    );
+  }
+  if (agentError && (!(agentError instanceof ApiError) || agentError.status !== 404)) {
+    return (
+      <div className="vf-page">
+        <PageHeader
+          title="节点详情"
+          description="节点信息暂时不可用"
+          icon={<DesktopOutlined />}
+          actions={<Link to="/nodes"><Button>返回节点列表</Button></Link>}
+        />
+        <ErrorPanel
+          error={agentError}
+          title="无法加载节点详情"
+          onRetry={() => void refetchAgent()}
+          retrying={agentFetching}
+        />
       </div>
     );
   }
   if (!agent) {
-    return <Alert type="warning" message="节点未找到" showIcon />;
+    return (
+      <div className="vf-page">
+        <PageHeader
+          title="节点详情"
+          description="无法找到请求的节点"
+          icon={<DesktopOutlined />}
+          actions={<Link to="/nodes"><Button type="primary">返回节点列表</Button></Link>}
+        />
+        <Card>
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="该节点可能已被删除，或当前账号无权查看"
+          />
+        </Card>
+      </div>
+    );
   }
 
   const policyColumns: ColumnsType<any> = [
@@ -203,6 +261,8 @@ export function NodeDetailPage() {
       title: "操作",
       key: "action",
       align: "right",
+      fixed: "right",
+      width: 72,
       render: (_, record) => (
         <Link to={`/policies?id=${record.id}`}>
           <Button type="link" size="small">详情</Button>
@@ -281,6 +341,8 @@ export function NodeDetailPage() {
       title: "操作",
       key: "action",
       align: "right",
+      fixed: "right",
+      width: 160,
       render: (_, record) => {
         const hasDocker = agentSupportsDockerRestore && (record.docker?.sources?.length ?? 0) > 0;
         return (
@@ -350,6 +412,8 @@ export function NodeDetailPage() {
       title: "操作",
       key: "action",
       align: "right",
+      fixed: "right",
+      width: 72,
       render: (_, record) => (
         <Button
           type="link"
@@ -458,7 +522,7 @@ export function NodeDetailPage() {
             <Alert
               type="error"
               style={{ marginTop: 8 }}
-              message={
+              title={
                 <pre
                   style={{
                     margin: 0,

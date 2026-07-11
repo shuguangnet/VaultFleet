@@ -39,7 +39,7 @@ export function SetupPage({ onComplete }: SetupPageProps) {
       description="创建首个管理员账户，完成后即可进入控制台。"
       width="wide"
     >
-      {error && <Alert type="error" showIcon message="设置失败" description={error} />}
+      {error && <Alert type="error" showIcon title="设置失败" description={error} />}
 
       <Form<SetupFormValues>
         layout="vertical"

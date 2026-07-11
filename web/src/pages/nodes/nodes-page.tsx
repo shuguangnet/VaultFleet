@@ -46,6 +46,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { InstallCommand } from "@/components/install-command";
 import { PageHeader } from "@/components/page-header";
+import { ErrorPanel } from "@/components/error-panel";
 import { StatusBadge } from "@/components/status-badge";
 import { App } from "antd";
 import { useAuth } from "@/contexts/auth-context";
@@ -77,7 +78,13 @@ export function NodesPage() {
   const [rolloutCanaryCount, setRolloutCanaryCount] = useState(1);
   const [rolloutBatchSize, setRolloutBatchSize] = useState(5);
 
-  const { data: agents, isLoading } = useQuery({
+  const {
+    data: agents,
+    isLoading,
+    isFetching,
+    error: agentsError,
+    refetch: refetchAgents,
+  } = useQuery({
     queryKey: ["agents", selectedTags],
     queryFn: () => listAgents(selectedTags),
     refetchInterval: 10000,
@@ -313,6 +320,8 @@ export function NodesPage() {
       title: "操作",
       key: "action",
       align: "right",
+      fixed: "right",
+      width: 56,
       render: (_, record) => (
         <Dropdown
           menu={{
@@ -390,6 +399,13 @@ export function NodesPage() {
             </Space>
           ) : null
         }
+      />
+
+      <ErrorPanel
+        error={agentsError}
+        title="无法加载节点"
+        onRetry={() => void refetchAgents()}
+        retrying={isFetching}
       />
 
       <div className="vf-toolbar" role="search" aria-label="节点筛选">
@@ -471,7 +487,7 @@ export function NodesPage() {
           <InstallCommand enrollToken={enrollToken} />
         ) : (
           <form onSubmit={handleAddNode}>
-            <Space direction="vertical" size={16} style={{ width: "100%" }}>
+            <Space orientation="vertical" size={16} style={{ width: "100%" }}>
               <Typography.Paragraph type="secondary">
                 输入节点名称以生成安装 Token。
               </Typography.Paragraph>
@@ -512,11 +528,11 @@ export function NodesPage() {
           </Button>
         }
       >
-        <Space direction="vertical" size={14} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={14} style={{ width: "100%" }}>
           <Alert
             type="info"
             showIcon
-            message="先升级 canary 节点，确认重新上线并上报目标版本后，再按批次继续；任一节点失败会停止后续升级。"
+            title="先升级 canary 节点，确认重新上线并上报目标版本后，再按批次继续；任一节点失败会停止后续升级。"
           />
           <div>
             <Typography.Text strong>目标版本</Typography.Text>
@@ -654,7 +670,7 @@ export function NodesPage() {
           </Button>
         }
       >
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           <Typography.Paragraph type="secondary">
             使用环境、区域、业务或 OpenStack 可用区等标签组织节点。
           </Typography.Paragraph>

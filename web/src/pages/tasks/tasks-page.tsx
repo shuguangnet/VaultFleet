@@ -35,6 +35,7 @@ import type { BackupProgress, TaskHistory, TaskLogLine, TaskLogResponse, TaskLog
 import { safeFormatDate } from "@/lib/date";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
+import { ErrorPanel } from "@/components/error-panel";
 import { StatusBadge } from "@/components/status-badge";
 import { useAuth } from "@/contexts/auth-context";
 import { permissions } from "@/services/identity";
@@ -88,7 +89,7 @@ export function renderTaskManifestSummary(task: TaskHistory) {
 
   return (
     <div className="vf-task-manifest">
-      <Space direction="vertical" size={8} style={{ width: "100%" }}>
+      <Space orientation="vertical" size={8} style={{ width: "100%" }}>
         <Space wrap>
           <Typography.Text strong style={{ fontSize: 12 }}>
             备份内容清单
@@ -265,7 +266,7 @@ export function TasksPage() {
     [searchParams]
   );
 
-  const { data: tasks, isLoading, refetch, isFetching } = useQuery({
+  const { data: tasks, isLoading, refetch, isFetching, error: tasksError } = useQuery({
     queryKey: ["tasks", filters],
     queryFn: () => listTasks(filters),
     refetchInterval: (query) => {
@@ -699,6 +700,13 @@ export function TasksPage() {
         }
       />
 
+      <ErrorPanel
+        error={tasksError}
+        title="无法加载任务记录"
+        onRetry={() => void refetch()}
+        retrying={isFetching}
+      />
+
       <Card className="vf-filter-panel">
         <Row gutter={[12, 12]} style={{ marginBottom: 0 }}>
           <Col xs={24} sm={8}>
@@ -817,35 +825,45 @@ export function TasksPage() {
       />
 
       <Drawer
+        className="vf-task-log-drawer"
         title={logTask ? `任务日志 · ${taskTypeLabel(logTask.type)}` : "任务日志"}
         open={!!logTask}
         onClose={() => setLogTask(null)}
         size={760}
         extra={
-          <Space>
-            <Button
-              size="small"
-              icon={followLogs ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
-              onClick={() => setFollowLogs((v) => !v)}
-            >
-              {followLogs ? "暂停" : "跟随"}
-            </Button>
-            <Button
-              size="small"
-              icon={<ReloadOutlined spin={logsLoading} />}
-              onClick={() => loadTaskLogs(0)}
-              disabled={logsLoading}
-            >
-              刷新
-            </Button>
-            <Button
-              size="small"
-              icon={<CopyOutlined />}
-              onClick={copyVisibleLogs}
-              disabled={logLines.length === 0}
-            >
-              复制
-            </Button>
+          <Space className="vf-task-log-toolbar">
+            <Tooltip title={followLogs ? "暂停日志跟随" : "继续日志跟随"}>
+              <Button
+                aria-label={followLogs ? "暂停日志跟随" : "继续日志跟随"}
+                size="small"
+                icon={followLogs ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
+                onClick={() => setFollowLogs((v) => !v)}
+              >
+                <span className="vf-task-log-button-label">{followLogs ? "暂停" : "跟随"}</span>
+              </Button>
+            </Tooltip>
+            <Tooltip title="刷新日志">
+              <Button
+                aria-label="刷新日志"
+                size="small"
+                icon={<ReloadOutlined spin={logsLoading} />}
+                onClick={() => loadTaskLogs(0)}
+                disabled={logsLoading}
+              >
+                <span className="vf-task-log-button-label">刷新</span>
+              </Button>
+            </Tooltip>
+            <Tooltip title="复制可见日志">
+              <Button
+                aria-label="复制可见日志"
+                size="small"
+                icon={<CopyOutlined />}
+                onClick={copyVisibleLogs}
+                disabled={logLines.length === 0}
+              >
+                <span className="vf-task-log-button-label">复制</span>
+              </Button>
+            </Tooltip>
           </Space>
         }
       >

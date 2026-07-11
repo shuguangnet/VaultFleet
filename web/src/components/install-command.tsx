@@ -84,7 +84,7 @@ export function InstallCommand({ enrollToken }: InstallCommandProps) {
                   scriptSource === option.value ? colors.primary : colors.border
                 }`,
                 background:
-                  scriptSource === option.value ? "rgba(15, 76, 129, 0.04)" : "transparent",
+                  scriptSource === option.value ? "var(--vf-primary-soft)" : "transparent",
                 cursor: "pointer",
               }}
             >

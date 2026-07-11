@@ -133,7 +133,13 @@ export function StoragePage() {
   const rcloneType = Form.useWatch("rclone_type", form) || "s3";
   const rcloneConfig = Form.useWatch("rclone_config", { form, preserve: true }) || {};
 
-  const { data: storageList, isLoading } = useQuery({
+  const {
+    data: storageList,
+    isLoading,
+    isFetching,
+    error: storageError,
+    refetch: refetchStorage,
+  } = useQuery({
     queryKey: ["storage"],
     queryFn: listStorage,
   });
@@ -277,6 +283,8 @@ export function StoragePage() {
       title: "操作",
       key: "action",
       align: "right",
+      fixed: "right",
+      width: 120,
       render: (_, record) => (
         <Space>
           {canWriteStorage && <Button
@@ -329,6 +337,13 @@ export function StoragePage() {
             添加存储
           </Button> : null
         }
+      />
+
+      <ErrorPanel
+        error={storageError}
+        title="无法加载存储配置"
+        onRetry={() => void refetchStorage()}
+        retrying={isFetching}
       />
 
       <Card className="vf-table-card" styles={{ body: { padding: 0 } }}>

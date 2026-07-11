@@ -346,7 +346,7 @@ export function SystemPage() {
       <Card
         title={
           <Space>
-            <ThunderboltOutlined style={{ color: "#0f4c81" }} />
+            <ThunderboltOutlined style={{ color: "var(--vf-primary)" }} />
             <Typography.Text strong>系统状态</Typography.Text>
             {versionInfo?.version && (
               <Tag style={{ fontFamily: "monospace" }}>{versionInfo.version}</Tag>
@@ -381,7 +381,7 @@ export function SystemPage() {
             type="error"
             showIcon
             style={{ marginTop: 16 }}
-            message={
+            title={
               <span>
                 <strong>系统未就绪：</strong>
                 {readyStatus.error}
@@ -451,7 +451,7 @@ export function SystemPage() {
               <Alert
                 type="error"
                 showIcon
-                message="验证失败"
+                title="验证失败"
                 description={
                   <ul style={{ marginBottom: 0, paddingLeft: 16 }}>
                     {importResult.errors.map((err, i) => (
@@ -496,7 +496,7 @@ export function SystemPage() {
             <Typography.Text type="secondary" style={{ display: "block", marginBottom: 8 }}>
               选择需要收集日志的 Agent（可选）：
             </Typography.Text>
-            <Space direction="vertical" style={{ width: "100%" }}>
+            <Space orientation="vertical" style={{ width: "100%" }}>
               {agents.map((agent: Agent) => (
                 <Space key={agent.id}>
                   <input
@@ -585,7 +585,7 @@ export function SystemPage() {
               type="success"
               showIcon
               style={{ marginBottom: 16 }}
-              message="Token 只显示一次"
+              title="Token 只显示一次"
               description={<Input.TextArea readOnly autoSize value={createdToken} />}
               closable
               onClose={() => setCreatedToken("")}

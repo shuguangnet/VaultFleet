@@ -119,7 +119,13 @@ export function SnapshotsPage() {
     queryKey: ["storage"],
     queryFn: listStorage,
   });
-  const { data: snapshots, isLoading, isFetching } = useQuery({
+  const {
+    data: snapshots,
+    isLoading,
+    isFetching,
+    error: snapshotsError,
+    refetch: refetchSnapshots,
+  } = useQuery({
     queryKey: ["snapshots", agentId],
     queryFn: () => listSnapshots(agentId),
     enabled: !!agentId,
@@ -283,6 +289,8 @@ export function SnapshotsPage() {
       title: "操作",
       key: "action",
       align: "right",
+      fixed: "right",
+      width: 136,
       render: (_, record) => {
         const hasDocker = (record.docker?.sources?.length ?? 0) > 0;
         return (
@@ -367,9 +375,18 @@ export function SnapshotsPage() {
             disabled={!agentId || isFetching || refreshMutation.isPending}
             onClick={() => refreshMutation.mutate()}
             title="请求 Agent 刷新快照列表"
-          />}
+          >
+            刷新快照
+          </Button>}
           </>
         }
+      />
+
+      <ErrorPanel
+        error={snapshotsError}
+        title="无法加载快照"
+        onRetry={() => void refetchSnapshots()}
+        retrying={isFetching}
       />
 
       {!agentId ? (
@@ -523,7 +540,7 @@ export function SnapshotsPage() {
                     type="warning"
                     showIcon
                     style={{ marginBottom: 16 }}
-                    message="目标节点未上报容器恢复能力，提交后可能被后端拒绝。请确认 Agent 已升级并重新连接。"
+                    title="目标节点未上报容器恢复能力，提交后可能被后端拒绝。请确认 Agent 已升级并重新连接。"
                   />
                 )}
                 <Form.Item label="Docker 容器">
@@ -572,7 +589,7 @@ export function SnapshotsPage() {
                 type={preflightStale ? "warning" : preflightAlertType(preflightReport)}
                 showIcon
                 style={{ marginTop: 16 }}
-                message={
+                title={
                   preflightStale
                     ? "恢复计划已变更，预检结果仅供参考"
                     : preflightReport?.status === "passed"
@@ -581,7 +598,7 @@ export function SnapshotsPage() {
                 }
                 description={
                   preflightReport ? (
-                    <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                    <Space orientation="vertical" size={4} style={{ width: "100%" }}>
                       {preflightReport.checks.map((check, index) => (
                         <Typography.Text
                           key={`${check.code}-${index}`}
@@ -599,7 +616,7 @@ export function SnapshotsPage() {
 
             <Alert
               type="warning"
-              message={
+              title={
                 <Checkbox
                   checked={confirmed}
                   onChange={(e) => setConfirmed(e.target.checked)}

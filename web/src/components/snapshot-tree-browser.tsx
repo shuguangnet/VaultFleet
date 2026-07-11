@@ -264,7 +264,7 @@ export function SnapshotTreeBrowser({
             <Alert
               type="error"
               showIcon
-              message="无法读取快照内容"
+              title="无法读取快照内容"
               description={rootError}
             />
           </div>

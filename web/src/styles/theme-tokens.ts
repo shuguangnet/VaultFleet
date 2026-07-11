@@ -5,11 +5,11 @@
 
 export const colors = {
   /** 主品牌色：按钮、链接、重点标识 */
-  primary: "#0f4c81",
+  primary: "#0f766e",
   /** 主色悬停态 */
-  primaryHover: "#0d3d6a",
+  primaryHover: "#115e59",
   /** 信息蓝：信息提示、图表 */
-  info: "#1668dc",
+  info: "#2563eb",
   /** 成功绿：在线/成功状态 */
   success: "#10b981",
   /** 警示橙：警告/待同步 */
@@ -17,29 +17,29 @@ export const colors = {
   /** 危险红：失败/错误 */
   error: "#ef4444",
   /** 页面底色 */
-  background: "#f8fafc",
+  background: "#f3f6f7",
   /** 卡片/面板背景 */
   card: "#ffffff",
   /** 浮层/侧栏背景 */
   elevated: "#ffffff",
   /** 主边框 */
-  border: "#e2e8f0",
+  border: "#d9e1e3",
   /** 次级边框/表头背景 */
-  borderSecondary: "#f1f5f9",
+  borderSecondary: "#eaf0f1",
   /** 主文字 */
-  text: "#0f172a",
+  text: "#182329",
   /** 次级文字 */
-  textSecondary: "#64748b",
+  textSecondary: "#607077",
   /** 三级文字/placeholder */
-  textTertiary: "#94a3b8",
+  textTertiary: "#88979d",
   /** 侧栏背景 */
-  siderBg: "#0f172a",
+  siderBg: "#172126",
   /** 侧栏选中 indicator */
-  siderIndicator: "#5aa3ff",
+  siderIndicator: "#5eead4",
   /** 输入框悬停边框 */
   inputHoverBorder: "#94a3b8",
   /** 输入框聚焦 outline */
-  inputFocusOutline: "rgba(15, 76, 129, 0.1)",
+  inputFocusOutline: "rgba(15, 118, 110, 0.14)",
 } as const;
 
 export const chartColors = {

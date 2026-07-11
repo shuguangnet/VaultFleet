@@ -38,6 +38,7 @@ import { listTasks } from "@/services/tasks";
 import { chartColors, colors } from "@/styles/theme-tokens";
 import type { TaskHistory } from "@/types/task";
 import { useColorMode } from "@/contexts/theme-context";
+import { ErrorPanel } from "@/components/error-panel";
 
 dayjs.extend(relativeTime);
 dayjs.locale("zh-cn");
@@ -78,19 +79,43 @@ export function DashboardPage() {
         : colors,
     [mode]
   );
-  const { data: agents, isLoading: agentsLoading } = useQuery({
+  const {
+    data: agents,
+    isLoading: agentsLoading,
+    isFetching: agentsFetching,
+    error: agentsError,
+    refetch: refetchAgents,
+  } = useQuery({
     queryKey: ["agents"],
     queryFn: listAgents,
   });
-  const { data: policies, isLoading: policiesLoading } = useQuery({
+  const {
+    data: policies,
+    isLoading: policiesLoading,
+    isFetching: policiesFetching,
+    error: policiesError,
+    refetch: refetchPolicies,
+  } = useQuery({
     queryKey: ["policies"],
     queryFn: () => listPolicies(),
   });
-  const { data: storageList, isLoading: storageLoading } = useQuery({
+  const {
+    data: storageList,
+    isLoading: storageLoading,
+    isFetching: storageFetching,
+    error: storageError,
+    refetch: refetchStorage,
+  } = useQuery({
     queryKey: ["storage"],
     queryFn: listStorage,
   });
-  const { data: tasks, isLoading: tasksLoading } = useQuery({
+  const {
+    data: tasks,
+    isLoading: tasksLoading,
+    isFetching: tasksFetching,
+    error: tasksError,
+    refetch: refetchTasks,
+  } = useQuery({
     queryKey: ["tasks", { limit: 200 }],
     queryFn: () => listTasks({ limit: 200 }),
   });
@@ -104,6 +129,9 @@ export function DashboardPage() {
   const policiesList = policies ?? [];
   const storageConfigs = storageList ?? [];
   const tasksList = tasks ?? [];
+  const dashboardError = agentsError || policiesError || storageError || tasksError;
+  const dashboardFetching =
+    agentsFetching || policiesFetching || storageFetching || tasksFetching;
 
   const onlineNodes = agentsList.filter((a) => a.status === "online").length;
   const offlineNodes = agentsList.filter((a) => a.status === "offline").length;
@@ -190,7 +218,7 @@ export function DashboardPage() {
               y2: 1,
               colorStops: [
                 { offset: 0, color: chartColors.primary },
-                { offset: 1, color: "rgba(15, 76, 129, 0.05)" },
+                { offset: 1, color: "rgba(15, 118, 110, 0.05)" },
               ],
             },
           },
@@ -427,22 +455,19 @@ export function DashboardPage() {
 
   return (
     <div className="vf-page vf-dashboard">
-      <section className="vf-dashboard-hero">
-        <div>
-          <Typography.Text className="vf-dashboard-eyebrow">
-            云备份运维
-          </Typography.Text>
+      <section className="vf-dashboard-commandbar">
+        <div className="vf-dashboard-commandbar-copy">
           <Typography.Title level={3} className="vf-dashboard-title">
             控制台总览
           </Typography.Title>
           <Typography.Text className="vf-dashboard-subtitle">
             集中查看节点健康、策略同步、存储配置与备份任务执行趋势。
           </Typography.Text>
-          <Typography.Text style={{ display: "block", marginTop: 10, color: "rgba(255,255,255,0.55)", fontSize: 12 }}>
+          <Typography.Text className="vf-dashboard-refreshed">
             最后刷新：{lastRefreshed}
           </Typography.Text>
         </div>
-        <Space wrap className="vf-dashboard-hero-actions">
+        <Space wrap className="vf-dashboard-commandbar-actions">
           <Tag
             className="vf-readiness-tag"
             color={readyStatus?.ok ? "success" : "error"}
@@ -466,6 +491,20 @@ export function DashboardPage() {
           </Link>
         </Space>
       </section>
+
+      <ErrorPanel
+        error={dashboardError}
+        title="部分总览数据加载失败"
+        onRetry={() => {
+          void Promise.all([
+            refetchAgents(),
+            refetchPolicies(),
+            refetchStorage(),
+            refetchTasks(),
+          ]);
+        }}
+        retrying={dashboardFetching}
+      />
 
       <Row gutter={[20, 20]}>
         <Col xs={24} sm={12} lg={8} xl={6}>

@@ -9,7 +9,6 @@ import {
   Empty,
   Form,
   Input,
-  Popconfirm,
   Row,
   Select,
   Space,
@@ -118,7 +117,13 @@ export function NotificationsPage() {
     events: ["backup_failed", "agent_offline"],
   });
 
-  const { data: notifications, isLoading } = useQuery({
+  const {
+    data: notifications,
+    isLoading,
+    isFetching,
+    error: notificationsError,
+    refetch: refetchNotifications,
+  } = useQuery({
     queryKey: ["notifications"],
     queryFn: listNotifications,
   });
@@ -146,6 +151,7 @@ export function NotificationsPage() {
   const deleteMutation = useMutation({
     mutationFn: deleteNotification,
     onSuccess: () => {
+      setConfirmDeleteId(null);
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
       message.success("通知配置已删除");
     },
@@ -248,6 +254,8 @@ export function NotificationsPage() {
       title: "操作",
       key: "action",
       align: "right",
+      fixed: "right",
+      width: 88,
       render: (_, record) => (
         <Space>
           {canWriteNotifications && <Button
@@ -276,18 +284,8 @@ export function NotificationsPage() {
                 {
                   key: "delete",
                   icon: <DeleteOutlined />,
-                  label: (
-                    <Popconfirm
-                      title="确认删除通知配置？"
-                      description="系统将停止向此渠道发送告警。此操作不可撤销。"
-                      okText="确认删除"
-                      okButtonProps={{ danger: true }}
-                      cancelText="取消"
-                      onConfirm={() => deleteMutation.mutate(record.id)}
-                    >
-                      <span style={{ color: "#ef4444" }}>删除</span>
-                    </Popconfirm>
-                  ),
+                  label: <span style={{ color: "#ef4444" }}>删除</span>,
+                  onClick: () => setConfirmDeleteId(record.id),
                 },
               ],
             }}
@@ -318,6 +316,13 @@ export function NotificationsPage() {
             添加通知
           </Button> : null
         }
+      />
+
+      <ErrorPanel
+        error={notificationsError}
+        title="无法加载通知配置"
+        onRetry={() => void refetchNotifications()}
+        retrying={isFetching}
       />
 
       <Card className="vf-table-card" styles={{ body: { padding: 0 } }}>
@@ -620,7 +625,7 @@ export function NotificationsPage() {
 
           <div>
             <Typography.Text strong>触发事件</Typography.Text>
-            <Space direction="vertical" style={{ marginTop: 8 }}>
+            <Space orientation="vertical" style={{ marginTop: 8 }}>
               {EVENT_OPTIONS.map((opt) => (
                 <Switch
                   key={opt.id}
@@ -635,6 +640,16 @@ export function NotificationsPage() {
           <button type="submit" style={{ display: "none" }} />
         </form>
       </Drawer>
+
+      <ConfirmDialog
+        open={!!confirmDeleteId}
+        onOpenChange={(open) => !open && setConfirmDeleteId(null)}
+        title="确认删除通知配置？"
+        description="系统将停止向此渠道发送告警。此操作不可撤销。"
+        confirmText="确认删除"
+        onConfirm={() => confirmDeleteId && deleteMutation.mutate(confirmDeleteId)}
+        loading={deleteMutation.isPending}
+      />
     </div>
   );
 }

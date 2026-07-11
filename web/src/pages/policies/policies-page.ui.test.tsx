@@ -13,6 +13,7 @@ import { listAgents, backupNow, discoverDatabaseAgent, discoverDockerAgent, list
 import {
   bulkAssignPolicy,
   createPolicy,
+  copyPolicy,
   deletePolicy,
   listPolicies,
   previewArtifactNaming,
@@ -32,6 +33,7 @@ vi.mock("@/services/agents", () => ({
 vi.mock("@/services/policies", () => ({
   bulkAssignPolicy: vi.fn(),
   createPolicy: vi.fn(),
+  copyPolicy: vi.fn(),
   deletePolicy: vi.fn(),
   listPolicies: vi.fn(),
   previewArtifactNaming: vi.fn(),
@@ -75,6 +77,7 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.mocked(listAgentTags).mockResolvedValue([]);
+  vi.mocked(copyPolicy).mockResolvedValue({} as never);
   vi.mocked(discoverDatabaseAgent).mockResolvedValue({
     available: true,
     databases: [],

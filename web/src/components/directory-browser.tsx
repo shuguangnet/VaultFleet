@@ -227,7 +227,7 @@ export function DirectoryBrowser({
             <Alert
               type="error"
               showIcon
-              message="无法浏览目录"
+              title="无法浏览目录"
               description={rootError}
             />
           </div>
