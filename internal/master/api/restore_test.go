@@ -138,12 +138,14 @@ func TestRestoreCarriesSourceSnapshotPolicy(t *testing.T) {
 	setup := setupRestoreAPI(t)
 	agent := createRestoreTestAgent(t, setup.database, "online")
 	setup.hub.online[agent.ID] = true
-	storage := db.StorageConfig{Name: "source", RcloneType: "local"}
-	require.NoError(t, setup.database.DB.Create(&storage).Error)
+	currentStorage := db.StorageConfig{Name: "current", RcloneType: "local"}
+	require.NoError(t, setup.database.DB.Create(&currentStorage).Error)
+	sourceStorage := db.StorageConfig{Name: "source", RcloneType: "local"}
+	require.NoError(t, setup.database.DB.Create(&sourceStorage).Error)
 	policy := db.BackupPolicy{
 		AgentID:         agent.ID,
-		StorageID:       storage.ID,
-		RepoPath:        "source/repository",
+		StorageID:       currentStorage.ID,
+		RepoPath:        "current/repository",
 		BackupMode:      protocol.BackupModeSnapshot,
 		BackupDirs:      `[]`,
 		BackupSources:   `[]`,
@@ -157,9 +159,9 @@ func TestRestoreCarriesSourceSnapshotPolicy(t *testing.T) {
 		Type:       "backup",
 		Status:     commands.TaskStatusSuccess,
 		SnapshotID: "snap-source",
-		PolicyID:   policy.ID,
-		StorageID:  storage.ID,
+		StorageID:  sourceStorage.ID,
 		BackupMode: protocol.BackupModeSnapshot,
+		Manifest:   `{"policy":{"repository":"source/repository","backup_mode":"snapshot"}}`,
 	}).Error)
 
 	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore", map[string]any{
@@ -174,6 +176,7 @@ func TestRestoreCarriesSourceSnapshotPolicy(t *testing.T) {
 	require.NotNil(t, payload.Policy)
 	assert.Equal(t, policy.ID, payload.Policy.PolicyID)
 	assert.Equal(t, "source/repository", payload.Policy.Storage.RepoPath)
+	assert.Equal(t, "local", payload.Policy.Storage.RcloneType)
 }
 
 func TestRestoreUsesPolicyTimeoutHours(t *testing.T) {

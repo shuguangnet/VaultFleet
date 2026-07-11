@@ -363,8 +363,12 @@ func (h *RestoreHandler) restoreSourcePolicy(ctx context.Context, sourceAgentID 
 		}
 	}
 
+	storageID := policy.StorageID
+	if historyErr == nil && strings.TrimSpace(history.StorageID) != "" {
+		storageID = history.StorageID
+	}
 	var storage db.StorageConfig
-	if err := h.DB.DB.WithContext(ctx).First(&storage, "id = ?", policy.StorageID).Error; err != nil {
+	if err := h.DB.DB.WithContext(ctx).First(&storage, "id = ?", storageID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
@@ -375,6 +379,18 @@ func (h *RestoreHandler) restoreSourcePolicy(ctx context.Context, sourceAgentID 
 		return nil, err
 	}
 	if historyErr == nil {
+		var manifest protocol.BackupContentManifest
+		if strings.TrimSpace(history.Manifest) != "" && json.Unmarshal([]byte(history.Manifest), &manifest) == nil {
+			if strings.TrimSpace(manifest.Policy.Repository) != "" {
+				payload.Storage.RepoPath = strings.TrimSpace(manifest.Policy.Repository)
+			}
+			if strings.TrimSpace(manifest.Policy.BackupMode) != "" {
+				payload.BackupMode = manifest.Policy.BackupMode
+			}
+			if strings.TrimSpace(manifest.Policy.ArchiveFormat) != "" {
+				payload.ArchiveFormat = manifest.Policy.ArchiveFormat
+			}
+		}
 		if strings.TrimSpace(history.BackupMode) != "" {
 			payload.BackupMode = history.BackupMode
 		}
