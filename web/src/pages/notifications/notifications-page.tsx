@@ -347,17 +347,10 @@ export function NotificationsPage() {
           setDrawerOpen(false);
           resetForm();
         }}
-        width="min(100vw, 520px)"
-        destroyOnClose
+        size="min(100vw, 520px)"
+        destroyOnHidden
         footer={
-          <div
-            className="vf-drawer-footer"
-            style={{
-              padding: "10px 16px",
-              background: "#fff",
-              borderTop: "1px solid #e2e8f0",
-            }}
-          >
+          <div className="vf-drawer-footer">
             <Row gutter={[8, 8]}>
               <Col xs={24} sm={10}>
                 <Button
@@ -418,14 +411,7 @@ export function NotificationsPage() {
             />
           </div>
 
-          <div
-            style={{
-              border: "1px solid #e2e8f0",
-              borderRadius: 6,
-              padding: 12,
-              background: "#fafafa",
-            }}
-          >
+          <div className="vf-form-section">
             <Typography.Text strong>渠道配置</Typography.Text>
             <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 12 }}>
               {formData.type === "telegram" && (

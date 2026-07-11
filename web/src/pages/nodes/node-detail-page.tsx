@@ -29,6 +29,7 @@ import {
   CheckCircleOutlined,
   CloudUploadOutlined,
   CopyOutlined,
+  DesktopOutlined,
   FolderOpenOutlined,
   InfoCircleOutlined,
   PlayCircleOutlined,
@@ -50,6 +51,7 @@ import {
 } from "@/services/snapshots";
 import { listAgentCommands } from "@/services/commands";
 import { StatusBadge } from "@/components/status-badge";
+import { PageHeader } from "@/components/page-header";
 import { DirectoryBrowser } from "@/components/directory-browser";
 import { safeFormatDate } from "@/lib/date";
 import { copyToClipboard } from "@/lib/utils";
@@ -414,7 +416,7 @@ export function NodeDetailPage() {
   ];
 
   const expandedRowRender = (record: any) => (
-    <div style={{ padding: "8px 24px", background: "#fafafa" }}>
+    <div className="vf-task-expanded-row">
       <Row gutter={24}>
         <Col xs={24} md={12}>
           <Descriptions column={1} size="small" colon labelStyle={{ width: 120 }}>
@@ -478,27 +480,21 @@ export function NodeDetailPage() {
   );
 
   return (
-    <div className="vf-page">
-      <div
-        className="vf-page-header"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
-      >
-        <Space direction="vertical" size={4}>
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            {agent.name}
-          </Typography.Title>
-          <Space>
+    <div className="vf-page vf-node-detail">
+      <PageHeader
+        title={agent.name}
+        description="查看节点运行信息、备份策略、快照与远程命令"
+        icon={<DesktopOutlined />}
+        meta={
+          <Space size={8} wrap>
             <StatusBadge status={agent.status as any} />
-            <Typography.Text type="secondary">ID: {agent.id}</Typography.Text>
+            <Typography.Text copyable={{ text: agent.id }} className="vf-mono-meta">
+              {agent.id}
+            </Typography.Text>
           </Space>
-        </Space>
-        <Space className="vf-page-actions">
+        }
+        actions={
+          <Space wrap>
           {canWriteNodes && <Button
             icon={<CloudUploadOutlined />}
             disabled={agent.status !== "online" || updateMutation.isPending}
@@ -516,10 +512,11 @@ export function NodeDetailPage() {
           >
             立即备份
           </Button>}
-        </Space>
-      </div>
+          </Space>
+        }
+      />
 
-      <Card styles={{ body: { padding: 16 } }}>
+      <section className="vf-detail-workspace">
         <Tabs
           activeKey={activeTab}
           onChange={setActiveTab}
@@ -528,9 +525,10 @@ export function NodeDetailPage() {
               key: "overview",
               label: "概览",
               children: (
-                <Row gutter={16}>
+                <Row gutter={[16, 16]}>
                   <Col xs={24} md={12} lg={8}>
-                    <Card type="inner" title="系统信息" size="small">
+                    <section className="vf-info-panel">
+                      <Typography.Title level={5}>系统信息</Typography.Title>
                       <Descriptions column={1} size="small">
                         <Descriptions.Item label="操作系统">{agent.os}</Descriptions.Item>
                         <Descriptions.Item label="架构">{agent.arch}</Descriptions.Item>
@@ -539,10 +537,11 @@ export function NodeDetailPage() {
                           {agent.version ? `v${agent.version}` : "未知"}
                         </Descriptions.Item>
                       </Descriptions>
-                    </Card>
+                    </section>
                   </Col>
                   <Col xs={24} md={12} lg={8}>
-                    <Card type="inner" title="连接状态" size="small">
+                    <section className="vf-info-panel">
+                      <Typography.Title level={5}>连接状态</Typography.Title>
                       <Descriptions column={1} size="small">
                         <Descriptions.Item label="当前状态">
                           <StatusBadge status={agent.status as any} />
@@ -554,7 +553,7 @@ export function NodeDetailPage() {
                           {safeFormatDate(agent.created_at, "yyyy-MM-dd HH:mm:ss")}
                         </Descriptions.Item>
                       </Descriptions>
-                    </Card>
+                    </section>
                   </Col>
                 </Row>
               ),
@@ -692,7 +691,7 @@ export function NodeDetailPage() {
             },
           ]}
         />
-      </Card>
+      </section>
 
       <Modal
         open={!!selectedSnapshot}
@@ -712,7 +711,7 @@ export function NodeDetailPage() {
         okText="确认恢复"
         cancelText="取消"
         okButtonProps={{ disabled: !canRunRestore || !restoreConfirmed, loading: restoreMutation.isPending }}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form layout="vertical" style={{ marginTop: 12 }}>
           <Form.Item label="恢复模式">
@@ -760,13 +759,10 @@ export function NodeDetailPage() {
             </Form.Item>
           )}
           <div
+            className="vf-warning-panel"
             style={{
-              background: "#fffbe6",
-              border: "1px solid #ffe58f",
-              borderRadius: 6,
               padding: 12,
-              display: "flex",
-              gap: 8,
+              alignItems: "flex-start",
             }}
           >
             <Checkbox

@@ -198,21 +198,8 @@ export function DirectoryBrowser({
   );
 
   return (
-    <div
-      style={{
-        border: "1px solid #e2e8f0",
-        borderRadius: 6,
-        background: "#fff",
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          padding: 8,
-          background: "#fafafa",
-          borderBottom: "1px solid #e2e8f0",
-        }}
-      >
+    <div className="vf-browser">
+      <div className="vf-browser-toolbar">
         <Space>
           <Button
             type="text"
@@ -221,17 +208,7 @@ export function DirectoryBrowser({
             onClick={loadRoot}
             disabled={rootLoading}
           />
-          <div
-            style={{
-              minWidth: 200,
-              padding: "4px 8px",
-              fontSize: 12,
-              fontFamily: "monospace",
-              background: "#fff",
-              border: "1px solid #e2e8f0",
-              borderRadius: 4,
-            }}
-          >
+          <div className="vf-browser-path">
             /
           </div>
           <Button
@@ -315,6 +292,7 @@ function TreeNodeRow({
   return (
     <>
       <div
+        className="vf-tree-row"
         style={{
           display: "flex",
           alignItems: "center",
@@ -322,12 +300,6 @@ function TreeNodeRow({
           padding: "4px 8px",
           paddingLeft: depth * 20 + 8,
           cursor: isDir ? "pointer" : "default",
-        }}
-        onMouseOver={(e) => {
-          (e.currentTarget as HTMLElement).style.background = "#fafafa";
-        }}
-        onMouseOut={(e) => {
-          (e.currentTarget as HTMLElement).style.background = "transparent";
         }}
       >
         {isDir ? (
@@ -340,7 +312,7 @@ function TreeNodeRow({
               padding: 0,
               cursor: "pointer",
               fontSize: 12,
-              color: "rgba(0,0,0,0.45)",
+              color: "var(--vf-text-muted)",
               width: 16,
             }}
           >
@@ -373,7 +345,7 @@ function TreeNodeRow({
               <FolderOutlined style={{ color: "#1677ff", fontSize: 14 }} />
             )
           ) : (
-            <FileOutlined style={{ color: "rgba(0,0,0,0.45)", fontSize: 14 }} />
+            <FileOutlined style={{ color: "var(--vf-text-muted)", fontSize: 14 }} />
           )}
           <Typography.Text ellipsis style={{ fontSize: 13, flex: 1 }}>
             {name}
@@ -399,7 +371,7 @@ function TreeNodeRow({
           </Tooltip>
         )}
         {isDir && dirSize === "loading" && (
-          <ReloadOutlined spin style={{ fontSize: 10, color: "rgba(0,0,0,0.45)" }} />
+          <ReloadOutlined spin style={{ fontSize: 10, color: "var(--vf-text-muted)" }} />
         )}
         {isDir && dirSize === "error" && (
           <Typography.Text type="danger" style={{ fontSize: 12 }}>
@@ -438,7 +410,7 @@ function TreeNodeRow({
             padding: "2px 8px",
             paddingLeft: (depth + 1) * 20 + 8,
             fontSize: 12,
-            color: "rgba(0,0,0,0.45)",
+            color: "var(--vf-text-muted)",
           }}
         >
           空目录

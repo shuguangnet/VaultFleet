@@ -15,7 +15,7 @@ export const antdTheme: ThemeConfig = {
     colorBorderSecondary: colors.borderSecondary,
     colorTextBase: colors.text,
     borderRadius: 8,
-    borderRadiusLG: 12,
+    borderRadiusLG: 8,
     borderRadiusSM: 6,
     borderRadiusXS: 4,
     fontSize: 14,
@@ -48,7 +48,7 @@ export const antdTheme: ThemeConfig = {
       itemBorderRadius: 8,
     },
     Card: {
-      borderRadiusLG: 12,
+      borderRadiusLG: 8,
       paddingLG: 20,
       boxShadow:
         "0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04)",
@@ -69,7 +69,7 @@ export const antdTheme: ThemeConfig = {
       borderRadius: 8,
     },
     Modal: {
-      borderRadiusLG: 12,
+      borderRadiusLG: 8,
       boxShadow: "0 20px 60px rgba(15, 23, 42, 0.16)",
     },
     Drawer: {

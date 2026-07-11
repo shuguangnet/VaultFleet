@@ -1,4 +1,4 @@
-import { Spin } from "antd";
+import { LoadingOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import { checkAuth } from "@/services/auth";
 import { LoginPage } from "./login-page";
@@ -13,16 +13,16 @@ export function AuthGate() {
 
   if (isLoading) {
     return (
-      <div
-        style={{
-          display: "flex",
-          height: "100vh",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <Spin size="large" tip="加载中..." />
-      </div>
+      <main className="vf-auth-loading" aria-busy="true" aria-live="polite">
+        <span className="vf-auth-loading-mark" aria-hidden="true">
+          <SafetyCertificateOutlined />
+        </span>
+        <strong>VaultFleet</strong>
+        <span className="vf-auth-loading-status">
+          <LoadingOutlined spin aria-hidden="true" />
+          正在验证服务状态
+        </span>
+      </main>
     );
   }
 

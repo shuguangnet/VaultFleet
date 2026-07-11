@@ -10,6 +10,7 @@ import {
 import { CanvasRenderer } from "echarts/renderers";
 import type { EChartsOption } from "echarts";
 import { colors } from "@/styles/theme-tokens";
+import { useColorMode } from "@/contexts/theme-context";
 
 use([
   BarChart,
@@ -35,13 +36,14 @@ export function EChart({
   height = 280,
   loading = false,
 }: EChartProps) {
+  const { mode } = useColorMode();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<EChartsType | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const chart = init(containerRef.current, undefined, {
+    const chart = init(containerRef.current, mode === "dark" ? "dark" : undefined, {
       renderer: "canvas",
     });
     chartRef.current = chart;
@@ -56,13 +58,13 @@ export function EChart({
       chart.dispose();
       chartRef.current = null;
     };
-  }, []);
+  }, [mode]);
 
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
 
-    chart.setOption(option, true);
+    chart.setOption({ ...option, backgroundColor: "transparent" }, true);
   }, [option]);
 
   useEffect(() => {
@@ -73,13 +75,14 @@ export function EChart({
       chart.showLoading("default", {
         text: "加载中",
         color: colors.primary,
-        textColor: colors.textSecondary,
-        maskColor: "rgba(255, 255, 255, 0.6)",
+        textColor: mode === "dark" ? "#a8b5c1" : colors.textSecondary,
+        maskColor:
+          mode === "dark" ? "rgba(24, 33, 43, 0.72)" : "rgba(255, 255, 255, 0.72)",
       });
     } else {
       chart.hideLoading();
     }
-  }, [loading]);
+  }, [loading, mode]);
 
   return (
     <div

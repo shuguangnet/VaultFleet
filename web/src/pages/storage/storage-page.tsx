@@ -354,21 +354,10 @@ export function StoragePage() {
         title={editingId ? "编辑存储" : "添加新存储"}
         open={drawerOpen}
         onClose={closeDrawer}
-        width="min(100vw, 540px)"
-        destroyOnClose
+        size="min(100vw, 540px)"
+        destroyOnHidden
         footer={
-          <div
-            className="vf-drawer-footer"
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 8,
-              padding: "10px 16px",
-              background: "#fff",
-              borderTop: "1px solid #e2e8f0",
-            }}
-          >
+          <div className="vf-drawer-footer">
             <Space>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 连接测试:

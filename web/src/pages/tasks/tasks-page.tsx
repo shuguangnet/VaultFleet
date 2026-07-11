@@ -86,15 +86,7 @@ export function renderTaskManifestSummary(task: TaskHistory) {
   const warnings = manifest?.warnings || [];
 
   return (
-    <div
-      style={{
-        marginTop: 12,
-        padding: "10px 12px",
-        background: "#fff",
-        border: "1px solid #e2e8f0",
-        borderRadius: 6,
-      }}
-    >
+    <div className="vf-task-manifest">
       <Space direction="vertical" size={8} style={{ width: "100%" }}>
         <Space wrap>
           <Typography.Text strong style={{ fontSize: 12 }}>
@@ -450,7 +442,7 @@ export function TasksPage() {
   ];
 
   const expandedRowRender = (task: TaskHistory) => (
-    <div style={{ padding: "16px 24px", background: "#fafafa" }}>
+    <div className="vf-task-expanded-row">
       <Row gutter={[16, 16]}>
         <Col xs={24} md={8}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -550,21 +542,7 @@ export function TasksPage() {
 
       {task.error_log && (
         <Tooltip title="错误日志">
-          <pre
-            style={{
-              marginTop: 12,
-              padding: 12,
-              background: "#fff1f0",
-              color: "#cf1322",
-              borderRadius: 6,
-              fontSize: 12,
-              fontFamily: "monospace",
-              whiteSpace: "pre-wrap",
-              maxHeight: 300,
-              overflow: "auto",
-              margin: "12px 0 0",
-            }}
-          >
+          <pre className="vf-task-error-log">
             {task.error_log}
           </pre>
         </Tooltip>
@@ -579,12 +557,7 @@ export function TasksPage() {
             {task.verification.checks.map((check) => (
               <div
                 key={`${check.code}-${check.status}`}
-                style={{
-                  padding: "8px 10px",
-                  background: "#fff",
-                  border: "1px solid #e2e8f0",
-                  borderRadius: 6,
-                }}
+                className="vf-task-check-row"
               >
                 <Space wrap>
                   <Tag
@@ -632,19 +605,13 @@ export function TasksPage() {
           </Typography.Text>
           {task.backup_mode === "archive" && task.artifact_name && (
             <div
+              className="vf-warning-panel"
               style={{
                 marginTop: 8,
-                padding: "8px 12px",
-                background: "#fffbe6",
-                border: "1px solid #ffe58f",
-                borderRadius: 6,
-                display: "flex",
-                gap: 8,
-                alignItems: "center",
                 flexWrap: "wrap",
               }}
             >
-              <Typography.Text strong style={{ fontSize: 12, color: "#d48806" }}>
+              <Typography.Text strong style={{ fontSize: 12, color: "inherit" }}>
                 压缩包已生成
               </Typography.Text>
               <Typography.Text style={{ fontSize: 12, color: "#d48806" }}>
@@ -700,7 +667,7 @@ export function TasksPage() {
         }
       />
 
-      <Card>
+      <Card className="vf-filter-panel">
         <Row gutter={[12, 12]} style={{ marginBottom: 0 }}>
           <Col xs={24} sm={8}>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -810,7 +777,7 @@ export function TasksPage() {
         title={logTask ? `任务日志 · ${taskTypeLabel(logTask.type)}` : "任务日志"}
         open={!!logTask}
         onClose={() => setLogTask(null)}
-        width={760}
+        size={760}
         extra={
           <Space>
             <Button
@@ -1035,7 +1002,7 @@ function ProgressText({
         display: "flex",
         minHeight: 32,
         alignItems: "center",
-        color: muted ? "rgba(0,0,0,0.45)" : undefined,
+        color: muted ? "var(--vf-text-muted)" : undefined,
         animation: pulse ? "pulse 2s infinite" : undefined,
       }}
     >

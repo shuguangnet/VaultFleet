@@ -10,6 +10,7 @@ interface EmptyStateProps {
 }
 
 export function EmptyState({
+  icon,
   title,
   description,
   action,
@@ -17,11 +18,11 @@ export function EmptyState({
 }: EmptyStateProps) {
   return (
     <Empty
-      image={Empty.PRESENTED_IMAGE_SIMPLE}
+      image={icon || Empty.PRESENTED_IMAGE_SIMPLE}
       description={
-        <div>
-          <div style={{ fontSize: 14, color: "rgba(0,0,0,0.88)" }}>{title}</div>
-          <div style={{ fontSize: 12, color: "rgba(0,0,0,0.45)" }}>
+        <div className="vf-empty-copy">
+          <div className="vf-empty-title">{title}</div>
+          <div className="vf-empty-description">
             {description}
           </div>
         </div>

@@ -39,9 +39,9 @@ export function ConfirmDialog({
       }}
       cancelButtonProps={{ disabled: loading }}
       centered
-      destroyOnClose
+      destroyOnHidden
     >
-      <div style={{ paddingTop: 8, color: "rgba(0,0,0,0.65)" }}>{description}</div>
+      <div className="vf-confirm-description">{description}</div>
     </Modal>
   );
 }

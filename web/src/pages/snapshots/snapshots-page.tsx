@@ -3,6 +3,7 @@ import {
   Alert,
   App,
   Button,
+  Card,
   Checkbox,
   Drawer,
   Empty,
@@ -372,11 +373,11 @@ export function SnapshotsPage() {
       />
 
       {!agentId ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div className="vf-snapshot-empty">
           <Empty
             image={
               <CameraOutlined
-                style={{ fontSize: 56, color: "rgba(0,0,0,0.25)" }}
+                className="vf-empty-icon"
               />
             }
             description={
@@ -412,31 +413,33 @@ export function SnapshotsPage() {
           )}
         </div>
       ) : (
-        <Table
-          columns={columns}
-          dataSource={snapshots || []}
-          rowKey="id"
-          loading={isLoading}
-          pagination={{ pageSize: 10 }}
-          scroll={{ x: 760 }}
-          size="middle"
-          locale={{
-            emptyText: (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="该节点暂无快照"
-              />
-            ),
-          }}
-        />
+        <Card className="vf-table-card" styles={{ body: { padding: 0 } }}>
+          <Table
+            columns={columns}
+            dataSource={snapshots || []}
+            rowKey="id"
+            loading={isLoading}
+            pagination={{ pageSize: 10 }}
+            scroll={{ x: 760 }}
+            size="middle"
+            locale={{
+              emptyText: (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="该节点暂无快照"
+                />
+              ),
+            }}
+          />
+        </Card>
       )}
 
       <Drawer
         title="恢复数据"
         open={!!selectedSnapshot}
         onClose={() => setSelectedSnapshot(null)}
-        width="min(100vw, 480px)"
-        destroyOnClose
+        size="min(100vw, 480px)"
+        destroyOnHidden
       >
         {restoreSuccessId ? (
           <Result

@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { lazy, Suspense, useMemo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -28,7 +28,6 @@ import type { EChartsOption } from "echarts";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import "dayjs/locale/zh-cn";
-import { EChart } from "@/components/e-chart";
 import { StatusBadge } from "@/components/status-badge";
 import { checkReady } from "@/services/health";
 import { listAgents } from "@/services/agents";
@@ -37,9 +36,14 @@ import { listStorage } from "@/services/storage";
 import { listTasks } from "@/services/tasks";
 import { chartColors, colors } from "@/styles/theme-tokens";
 import type { TaskHistory } from "@/types/task";
+import { useColorMode } from "@/contexts/theme-context";
 
 dayjs.extend(relativeTime);
 dayjs.locale("zh-cn");
+
+const EChart = lazy(() =>
+  import("@/components/e-chart").then((module) => ({ default: module.EChart }))
+);
 
 interface DashboardTaskRow {
   id: string;
@@ -63,6 +67,20 @@ const taskStatusMeta: Record<
 };
 
 export function DashboardPage() {
+  const { mode } = useColorMode();
+  const chartTheme = useMemo(
+    () =>
+      mode === "dark"
+        ? {
+            text: "#edf3f7",
+            textSecondary: "#a8b5c1",
+            textTertiary: "#7f8d9a",
+            border: "#31404f",
+            borderSecondary: "#253240",
+          }
+        : colors,
+    [mode]
+  );
   const { data: agents, isLoading: agentsLoading } = useQuery({
     queryKey: ["agents"],
     queryFn: listAgents,
@@ -141,22 +159,22 @@ export function DashboardPage() {
         right: 0,
         itemWidth: 10,
         itemHeight: 10,
-        textStyle: { color: colors.textSecondary },
+        textStyle: { color: chartTheme.textSecondary },
       },
       grid: { top: 42, right: 18, bottom: 24, left: 34 },
       xAxis: {
         type: "category",
         boundaryGap: false,
         data: labels,
-        axisLine: { lineStyle: { color: colors.border } },
+        axisLine: { lineStyle: { color: chartTheme.border } },
         axisTick: { show: false },
-        axisLabel: { color: colors.textTertiary },
+        axisLabel: { color: chartTheme.textTertiary },
       },
       yAxis: {
         type: "value",
         minInterval: 1,
-        splitLine: { lineStyle: { color: colors.borderSecondary } },
-        axisLabel: { color: colors.textTertiary },
+        splitLine: { lineStyle: { color: chartTheme.borderSecondary } },
+        axisLabel: { color: chartTheme.textTertiary },
       },
       series: [
         {
@@ -199,7 +217,7 @@ export function DashboardPage() {
         },
       ],
     };
-  }, [tasksList]);
+  }, [chartTheme, tasksList]);
 
   const taskStatusOption = useMemo<EChartsOption>(() => {
     const data = Object.entries(taskStatusMeta)
@@ -217,7 +235,7 @@ export function DashboardPage() {
               text: "暂无任务",
               left: "center",
               top: "42%",
-              textStyle: { color: colors.textTertiary, fontSize: 14 },
+              textStyle: { color: chartTheme.textTertiary, fontSize: 14 },
             }
           : undefined,
       tooltip: { trigger: "item" },
@@ -226,7 +244,7 @@ export function DashboardPage() {
         left: "center",
         itemWidth: 10,
         itemHeight: 10,
-        textStyle: { color: colors.textSecondary },
+        textStyle: { color: chartTheme.textSecondary },
       },
       series: [
         {
@@ -237,14 +255,14 @@ export function DashboardPage() {
           avoidLabelOverlap: true,
           label: {
             formatter: "{b}\n{c}",
-            color: colors.text,
+            color: chartTheme.text,
           },
           labelLine: { length: 10, length2: 8 },
           data,
         },
       ],
     };
-  }, [tasksList]);
+  }, [chartTheme, tasksList]);
 
   const assetHealthOption = useMemo<EChartsOption>(() => {
     const categories = ["在线节点", "离线节点", "已同步策略", "待同步策略", "存储配置"];
@@ -269,15 +287,15 @@ export function DashboardPage() {
       xAxis: {
         type: "value",
         minInterval: 1,
-        splitLine: { lineStyle: { color: colors.borderSecondary } },
-        axisLabel: { color: colors.textTertiary },
+        splitLine: { lineStyle: { color: chartTheme.borderSecondary } },
+        axisLabel: { color: chartTheme.textTertiary },
       },
       yAxis: {
         type: "category",
         data: categories,
         axisTick: { show: false },
-        axisLine: { lineStyle: { color: colors.border } },
-        axisLabel: { color: colors.text },
+        axisLine: { lineStyle: { color: chartTheme.border } },
+        axisLabel: { color: chartTheme.text },
       },
       series: [
         {
@@ -300,6 +318,7 @@ export function DashboardPage() {
       ],
     };
   }, [
+    chartTheme,
     offlineNodes,
     onlineNodes,
     storageConfigs.length,
@@ -333,7 +352,7 @@ export function DashboardPage() {
               text: "暂无存储",
               left: "center",
               top: "42%",
-              textStyle: { color: colors.textTertiary, fontSize: 14 },
+              textStyle: { color: chartTheme.textTertiary, fontSize: 14 },
             }
           : undefined,
       tooltip: { trigger: "item" },
@@ -342,7 +361,7 @@ export function DashboardPage() {
         left: "center",
         itemWidth: 10,
         itemHeight: 10,
-        textStyle: { color: colors.textSecondary },
+        textStyle: { color: chartTheme.textSecondary },
       },
       series: [
         {
@@ -350,12 +369,12 @@ export function DashboardPage() {
           type: "pie",
           radius: ["0%", "68%"],
           center: ["50%", "42%"],
-          label: { formatter: "{b}: {c}", color: colors.text },
+          label: { formatter: "{b}: {c}", color: chartTheme.text },
           data,
         },
       ],
     };
-  }, [storageConfigs]);
+  }, [chartTheme, storageConfigs]);
 
   const columns: ColumnsType<DashboardTaskRow> = [
     {
@@ -501,17 +520,23 @@ export function DashboardPage() {
             title="近 7 天任务趋势"
             extra={<Typography.Text type="secondary">最近 200 条任务</Typography.Text>}
           >
-            <EChart option={taskTrendOption} loading={tasksLoading} height={320} />
+            <DashboardChart height={320}>
+              <EChart option={taskTrendOption} loading={tasksLoading} height={320} />
+            </DashboardChart>
           </Card>
         </Col>
         <Col xs={24} md={12} xl={5}>
           <Card className="vf-dashboard-card" title="任务状态分布">
-            <EChart option={taskStatusOption} loading={tasksLoading} height={320} />
+            <DashboardChart height={320}>
+              <EChart option={taskStatusOption} loading={tasksLoading} height={320} />
+            </DashboardChart>
           </Card>
         </Col>
         <Col xs={24} md={12} xl={5}>
           <Card className="vf-dashboard-card" title="存储类型">
-            <EChart option={storageTypeOption} loading={storageLoading} height={320} />
+            <DashboardChart height={320}>
+              <EChart option={storageTypeOption} loading={storageLoading} height={320} />
+            </DashboardChart>
           </Card>
         </Col>
       </Row>
@@ -519,11 +544,13 @@ export function DashboardPage() {
       <Row gutter={[20, 20]}>
         <Col xs={24} lg={14}>
           <Card className="vf-dashboard-card" title="资产健康视图">
-            <EChart
-              option={assetHealthOption}
-              loading={agentsLoading || policiesLoading || storageLoading}
-              height={292}
-            />
+            <DashboardChart height={292}>
+              <EChart
+                option={assetHealthOption}
+                loading={agentsLoading || policiesLoading || storageLoading}
+                height={292}
+              />
+            </DashboardChart>
           </Card>
         </Col>
         <Col xs={24} lg={10}>
@@ -589,6 +616,23 @@ export function DashboardPage() {
   );
 }
 
+function DashboardChart({ children, height }: { children: ReactNode; height: number }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="vf-chart-skeleton" style={{ height }} aria-label="图表加载中">
+          <span className="vf-chart-skeleton-bar" />
+          <span className="vf-chart-skeleton-bar" />
+          <span className="vf-chart-skeleton-bar" />
+          <span className="vf-chart-skeleton-bar" />
+        </div>
+      }
+    >
+      {children}
+    </Suspense>
+  );
+}
+
 function MetricCard({
   label,
   value,
@@ -633,7 +677,7 @@ function DashboardAction({
     <Link to={to} className="vf-dashboard-action">
       <span className="vf-dashboard-action-icon">{icon}</span>
       <span>
-        <Typography.Text strong style={{ fontSize: 14, color: colors.text }}>
+        <Typography.Text strong className="vf-dashboard-action-title">
           {title}
         </Typography.Text>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>

@@ -204,7 +204,7 @@ export function SnapshotTreeBrowser({
 
   if (!expanded) {
     return (
-      <div style={{ border: "1px solid #e2e8f0", borderRadius: 6, padding: 12, background: "#fff" }}>
+      <div className="vf-browser-collapsed">
         <Button
           block
           icon={<SearchOutlined />}
@@ -218,24 +218,8 @@ export function SnapshotTreeBrowser({
   }
 
   return (
-    <div
-      style={{
-        overflow: "hidden",
-        border: "1px solid #e2e8f0",
-        borderRadius: 6,
-        background: "#fff",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          padding: "4px 12px",
-          background: "#fafafa",
-          borderBottom: "1px solid #e2e8f0",
-        }}
-      >
+    <div className="vf-browser">
+      <div className="vf-browser-toolbar">
         <Typography.Text style={{ fontSize: 12, fontWeight: 500 }}>
           快照内容
         </Typography.Text>
@@ -308,16 +292,7 @@ export function SnapshotTreeBrowser({
       </div>
 
       {selectedPaths.length > 0 && (
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 12,
-            padding: "4px 12px",
-            background: "#fafafa",
-            borderTop: "1px solid #e2e8f0",
-          }}
-        >
+        <div className="vf-browser-selection-bar">
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             已选中 {selectedPaths.length} 项
           </Typography.Text>
@@ -357,6 +332,7 @@ function TreeNodeRow({
     <>
       <div
         data-snapshot-tree-row=""
+        className="vf-tree-row"
         style={{
           display: "flex",
           alignItems: "center",
@@ -365,8 +341,6 @@ function TreeNodeRow({
           paddingLeft: depth * 16 + 8,
           minHeight: 32,
         }}
-        onMouseOver={(e) => (e.currentTarget.style.background = "#fafafa")}
-        onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
       >
         {isDir ? (
           <button
@@ -379,7 +353,7 @@ function TreeNodeRow({
               padding: 0,
               cursor: "pointer",
               fontSize: 10,
-              color: "rgba(0,0,0,0.45)",
+              color: "var(--vf-text-muted)",
               width: 16,
             }}
           >
@@ -419,7 +393,7 @@ function TreeNodeRow({
               <FolderOutlined style={{ color: "#1677ff", fontSize: 14 }} />
             )
           ) : (
-            <FileOutlined style={{ color: "rgba(0,0,0,0.45)", fontSize: 12 }} />
+            <FileOutlined style={{ color: "var(--vf-text-muted)", fontSize: 12 }} />
           )}
           <Typography.Text ellipsis style={{ fontSize: 12 }}>
             {node.name}
@@ -467,7 +441,7 @@ function TreeNodeRow({
                 padding: "2px 8px",
                 paddingLeft: (depth + 1) * 16 + 28,
                 fontSize: 10,
-                color: "rgba(0,0,0,0.45)",
+                color: "var(--vf-text-muted)",
               }}
             >
               空目录

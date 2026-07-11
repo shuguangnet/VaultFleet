@@ -242,7 +242,7 @@ export function NodesPage() {
         <Link to={`/nodes/${record.id}`}>
           <Space>
             <Typography.Text strong>{text}</Typography.Text>
-            <LinkOutlined style={{ color: "rgba(0,0,0,0.45)" }} />
+            <LinkOutlined style={{ color: "var(--vf-text-muted)" }} />
           </Space>
         </Link>
       ),
@@ -392,26 +392,29 @@ export function NodesPage() {
         }
       />
 
-      <Input
-        className="vf-mobile-full"
-        allowClear
-        placeholder="搜索节点名称..."
-        prefix={<SearchOutlined />}
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        style={{ maxWidth: 320 }}
-      />
-      <Select
-        className="vf-mobile-full"
-        mode="multiple"
-        allowClear
-        placeholder="按标签筛选"
-        value={selectedTags}
-        onChange={setSelectedTags}
-        options={(knownTags ?? []).map((tag) => ({ label: tag, value: tag }))}
-        style={{ maxWidth: 360, minWidth: 220, marginLeft: 8 }}
-        suffixIcon={<TagsOutlined />}
-      />
+      <div className="vf-toolbar" role="search" aria-label="节点筛选">
+        <Input
+          className="vf-toolbar-search"
+          allowClear
+          placeholder="搜索节点名称"
+          prefix={<SearchOutlined />}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <Select
+          className="vf-toolbar-filter"
+          mode="multiple"
+          allowClear
+          placeholder="按标签筛选"
+          value={selectedTags}
+          onChange={setSelectedTags}
+          options={(knownTags ?? []).map((tag) => ({ label: tag, value: tag }))}
+          suffixIcon={<TagsOutlined />}
+        />
+        <Typography.Text className="vf-toolbar-count">
+          共 {filtered.length} 个节点
+        </Typography.Text>
+      </div>
 
       <Card className="vf-table-card" styles={{ body: { padding: 0 } }}>
         <Table<Agent>
@@ -461,8 +464,8 @@ export function NodesPage() {
         title={enrollToken ? "安装指令" : "添加新节点"}
         open={drawerOpen}
         onClose={closeDrawer}
-        width="min(100vw, 480px)"
-        destroyOnClose
+        size="min(100vw, 480px)"
+        destroyOnHidden
       >
         {enrollToken ? (
           <InstallCommand enrollToken={enrollToken} />
@@ -495,8 +498,8 @@ export function NodesPage() {
         title="Agent 批量升级"
         open={rolloutDrawerOpen}
         onClose={closeRolloutDrawer}
-        width="min(100vw, 720px)"
-        destroyOnClose
+        size="min(100vw, 720px)"
+        destroyOnHidden
         footer={
           <Button
             type="primary"
@@ -632,8 +635,8 @@ export function NodesPage() {
           setTagEditorAgent(null);
           setTagDraft([]);
         }}
-        width="min(100vw, 420px)"
-        destroyOnClose
+        size="min(100vw, 420px)"
+        destroyOnHidden
         footer={
           <Button
             type="primary"

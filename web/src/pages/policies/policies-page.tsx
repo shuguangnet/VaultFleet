@@ -10,7 +10,6 @@ import {
   Drawer,
   Dropdown,
   Empty,
-  Form,
   Input,
   InputNumber,
   Popconfirm,
@@ -380,11 +379,6 @@ export function PoliciesPage() {
   const [databasePickerOpenIndex, setDatabasePickerOpenIndex] = useState<
     number | null
   >(null);
-  const preBackupTimeout = Form.useWatch(
-    ["pre_backup_hook", "timeout_seconds"],
-    { preserve: true }
-  );
-
   const [formData, setFormData] = useState<PolicyInput>(() =>
     defaultPolicyInput()
   );
@@ -916,17 +910,10 @@ export function PoliciesPage() {
           createMutation.reset();
           updateMutation.reset();
         }}
-        width="min(100vw, 640px)"
-        destroyOnClose
+        size="min(100vw, 640px)"
+        destroyOnHidden
         footer={
-          <div
-            className="vf-drawer-footer"
-            style={{
-              padding: "10px 16px",
-              background: "#fff",
-              borderTop: "1px solid #e2e8f0",
-            }}
-          >
+          <div className="vf-drawer-footer">
             <Button
               type="primary"
               block
@@ -1014,16 +1001,17 @@ export function PoliciesPage() {
 
           <div>
             <Typography.Text strong>仓库子路径</Typography.Text>
-            <Input
-              addonBefore="vaultfleet/"
-              style={{ marginTop: 4 }}
-              value={formData.repo_path}
-              onChange={(e) =>
-                setFormData({ ...formData, repo_path: e.target.value })
-              }
-              placeholder={selectedAgent?.name || "my-server"}
-              disabled={!!editingId}
-            />
+            <Space.Compact block style={{ marginTop: 4 }}>
+              <span className="vf-input-addon">vaultfleet/</span>
+              <Input
+                value={formData.repo_path}
+                onChange={(e) =>
+                  setFormData({ ...formData, repo_path: e.target.value })
+                }
+                placeholder={selectedAgent?.name || "my-server"}
+                disabled={!!editingId}
+              />
+            </Space.Compact>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               备份仓库的唯一标识。更换节点后使用相同路径即可访问原有备份数据。
             </Typography.Text>
@@ -1052,13 +1040,7 @@ export function PoliciesPage() {
             </div>
           )}
 
-          <div
-            style={{
-              border: "1px solid #e2e8f0",
-              borderRadius: 6,
-              padding: 12,
-            }}
-          >
+          <div className="vf-form-section">
             <Typography.Text strong>备份模式</Typography.Text>
             <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
               可选择标准快照仓库备份，或直接生成可下载压缩包。
@@ -1067,25 +1049,13 @@ export function PoliciesPage() {
               <Col xs={24} sm={12}>
                 <button
                   type="button"
+                  className={`vf-policy-mode-option${
+                    formData.backup_mode === "snapshot" ? " is-selected" : ""
+                  }`}
+                  aria-pressed={formData.backup_mode === "snapshot"}
                   onClick={() =>
                     setFormData({ ...formData, backup_mode: "snapshot" })
                   }
-                  style={{
-                    width: "100%",
-                    textAlign: "left",
-                    padding: 10,
-                    borderRadius: 6,
-                    border: `1px solid ${
-                      formData.backup_mode === "snapshot"
-                        ? "#0f4c81"
-                        : "#e2e8f0"
-                    }`,
-                    background:
-                      formData.backup_mode === "snapshot"
-                        ? "rgba(15,76,129,0.05)"
-                        : "transparent",
-                    cursor: "pointer",
-                  }}
                 >
                   <div style={{ fontSize: 13, fontWeight: 500 }}>快照仓库</div>
                   <Typography.Text type="secondary" style={{ fontSize: 11 }}>
@@ -1096,25 +1066,13 @@ export function PoliciesPage() {
               <Col xs={24} sm={12}>
                 <button
                   type="button"
+                  className={`vf-policy-mode-option${
+                    formData.backup_mode === "archive" ? " is-selected" : ""
+                  }`}
+                  aria-pressed={formData.backup_mode === "archive"}
                   onClick={() =>
                     setFormData({ ...formData, backup_mode: "archive" })
                   }
-                  style={{
-                    width: "100%",
-                    textAlign: "left",
-                    padding: 10,
-                    borderRadius: 6,
-                    border: `1px solid ${
-                      formData.backup_mode === "archive"
-                        ? "#0f4c81"
-                        : "#e2e8f0"
-                    }`,
-                    background:
-                      formData.backup_mode === "archive"
-                        ? "rgba(15,76,129,0.05)"
-                        : "transparent",
-                    cursor: "pointer",
-                  }}
                 >
                   <div style={{ fontSize: 13, fontWeight: 500 }}>压缩包归档</div>
                   <Typography.Text type="secondary" style={{ fontSize: 11 }}>
@@ -1147,13 +1105,7 @@ export function PoliciesPage() {
             )}
 	          </div>
 
-          <div
-            style={{
-              border: "1px solid #e2e8f0",
-              borderRadius: 6,
-              padding: 12,
-            }}
-          >
+          <div className="vf-form-section">
             <Typography.Text strong>备份产物命名</Typography.Text>
             <Row gutter={[8, 8]} style={{ marginTop: 8 }}>
               <Col xs={24}>
@@ -1277,7 +1229,7 @@ export function PoliciesPage() {
 
           <div
             style={{
-              borderTop: "1px solid #e2e8f0",
+              borderTop: "1px solid var(--vf-border)",
               paddingTop: 12,
             }}
           >
@@ -1427,13 +1379,7 @@ export function PoliciesPage() {
           </div>
 
           {formData.agent_id && (
-            <div
-              style={{
-                border: "1px solid #e2e8f0",
-                borderRadius: 6,
-                padding: 12,
-              }}
-            >
+            <div className="vf-form-section">
               <div
                 style={{
                   display: "flex",
@@ -1472,7 +1418,7 @@ export function PoliciesPage() {
                 </Typography.Text>
               )}
               {isAgentOnline && !dockerCapable && (
-                <div style={{ fontSize: 12, color: "rgba(0,0,0,0.45)" }}>
+                <div className="vf-policy-muted-copy">
                   当前 Agent 未上报 Docker 备份能力。
                 </div>
               )}
@@ -1483,7 +1429,7 @@ export function PoliciesPage() {
                     type="error"
                     showIcon
                     style={{ marginTop: 8 }}
-                    message={
+                    title={
                       (dockerDiscoveryQuery.error as Error)?.message ||
                       dockerDiscoveryQuery.data?.error
                     }
@@ -1505,14 +1451,8 @@ export function PoliciesPage() {
                         return (
                           <label
                             key={c.id}
+                            className="vf-policy-source-row"
                             style={{
-                              display: "flex",
-                              gap: 12,
-                              alignItems: "flex-start",
-                              padding: 10,
-                              marginBottom: 6,
-                              border: "1px solid #e2e8f0",
-                              borderRadius: 6,
                               opacity: c.selectable ? 1 : 0.5,
                               cursor: c.selectable ? "pointer" : "default",
                             }}
@@ -1555,7 +1495,7 @@ export function PoliciesPage() {
                                 </Typography.Text>
                                 <Tag>{c.state}</Tag>
                               </div>
-                              <span style={{ fontSize: 12, color: "rgba(0,0,0,0.45)" }}>
+                              <span className="vf-policy-muted-copy">
                                 {c.image}
                               </span>
                               {(compose?.project || compose?.service) && (
@@ -1581,13 +1521,7 @@ export function PoliciesPage() {
             </div>
           )}
 
-          <div
-            style={{
-              border: "1px solid #e2e8f0",
-              borderRadius: 6,
-              padding: 12,
-            }}
-          >
+          <div className="vf-form-section">
             <div
               style={{
                 display: "flex",
@@ -1629,7 +1563,7 @@ export function PoliciesPage() {
 	                  return (
                     <div
                       key={index}
-                      style={{ border: "1px solid #e2e8f0", borderRadius: 6, padding: 12 }}
+                      className="vf-policy-source-editor"
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                         <Typography.Text strong>{databaseSourceLabel(db)}</Typography.Text>
@@ -1893,7 +1827,7 @@ export function PoliciesPage() {
             type="warning"
             showIcon
             icon={<AlertOutlined />}
-            message="Docker 工作负载建议"
+            title="Docker 工作负载建议"
             description={
               <div style={{ fontSize: 12 }}>
                 <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
@@ -1903,7 +1837,7 @@ export function PoliciesPage() {
                 </Typography.Paragraph>
                 <Row gutter={[8, 8]}>
                   <Col xs={24} sm={12}>
-                    <div style={{ padding: 8, border: "1px solid #e2e8f0", borderRadius: 4, background: "#fafafa" }}>
+                    <div className="vf-policy-example">
                       <Typography.Text strong style={{ fontSize: 12 }}>
                         推荐路径示例
                       </Typography.Text>
@@ -1919,7 +1853,7 @@ export function PoliciesPage() {
                     </div>
                   </Col>
                   <Col xs={24} sm={12}>
-                    <div style={{ padding: 8, border: "1px solid #e2e8f0", borderRadius: 4, background: "#fafafa" }}>
+                    <div className="vf-policy-example">
                       <Typography.Text strong style={{ fontSize: 12 }}>
                         一致性示例
                       </Typography.Text>
@@ -1939,13 +1873,7 @@ export function PoliciesPage() {
             }
           />
 
-          <div
-            style={{
-              border: "1px solid #e2e8f0",
-              borderRadius: 6,
-              padding: 12,
-            }}
-          >
+          <div className="vf-form-section">
             <Typography.Text strong>备份钩子（可选）</Typography.Text>
             <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
               备份前后可执行主机命令，用于 Docker 数据导出、短暂停服务或恢复运行。命令执行失败会导致任务失败。
@@ -2067,7 +1995,7 @@ export function PoliciesPage() {
 
           <div
             style={{
-              borderTop: "1px solid #e2e8f0",
+              borderTop: "1px solid var(--vf-border)",
               paddingTop: 12,
             }}
           >
@@ -2080,6 +2008,10 @@ export function PoliciesPage() {
                 <Col xs={24} sm={12} key={key}>
                   <button
                     type="button"
+                    className={`vf-policy-mode-option${
+                      retentionPreset === key ? " is-selected" : ""
+                    }`}
+                    aria-pressed={retentionPreset === key}
                     onClick={() => {
                       setRetentionPreset(key);
                       if (key !== "custom") {
@@ -2088,20 +2020,6 @@ export function PoliciesPage() {
                           retention: { ...preset.values },
                         });
                       }
-                    }}
-                    style={{
-                      width: "100%",
-                      textAlign: "left",
-                      padding: 10,
-                      borderRadius: 6,
-                      border: `1px solid ${
-                        retentionPreset === key ? "#0f4c81" : "#e2e8f0"
-                      }`,
-                      background:
-                        retentionPreset === key
-                          ? "rgba(15,76,129,0.05)"
-                          : "transparent",
-                      cursor: "pointer",
                     }}
                   >
                     <div style={{ fontSize: 13, fontWeight: 500 }}>{preset.label}</div>
@@ -2144,14 +2062,7 @@ export function PoliciesPage() {
             )}
             {retentionPreset !== "custom" && (
               <div
-                style={{
-                  marginTop: 8,
-                  padding: "6px 10px",
-                  background: "#fafafa",
-                  borderRadius: 4,
-                  fontSize: 12,
-                  color: "rgba(0,0,0,0.45)",
-                }}
+                className="vf-policy-retention-summary"
               >
                 最近 {formData.retention.keep_last ?? 0} 个 · 每日{" "}
                 {formData.retention.keep_daily ?? 0} 份 · 每周{" "}
@@ -2163,7 +2074,7 @@ export function PoliciesPage() {
 
           <div
             style={{
-              borderTop: "1px solid #e2e8f0",
+              borderTop: "1px solid var(--vf-border)",
               paddingTop: 12,
             }}
           >
@@ -2251,8 +2162,8 @@ export function PoliciesPage() {
         title="批量下发策略"
         open={!!bulkSourcePolicy}
         onClose={closeBulkAssign}
-        width="min(100vw, 520px)"
-        destroyOnClose
+        size="min(100vw, 520px)"
+        destroyOnHidden
         footer={
           <Button
             type="primary"
@@ -2269,7 +2180,7 @@ export function PoliciesPage() {
             <Alert
               type="info"
               showIcon
-              message="从现有策略克隆"
+              title="从现有策略克隆"
               description={`源节点：${
                 agents?.find((a) => a.id === bulkSourcePolicy.agent_id)?.name ||
                 bulkSourcePolicy.agent_id
@@ -2320,21 +2231,14 @@ export function PoliciesPage() {
               <Alert
                 type={bulkResult.failed_count ? "warning" : "success"}
                 showIcon
-                message={`成功 ${bulkResult.created_count}，失败 ${bulkResult.failed_count}`}
+                title={`成功 ${bulkResult.created_count}，失败 ${bulkResult.failed_count}`}
                 style={{ marginBottom: 12 }}
               />
               <Space direction="vertical" size={8} style={{ width: "100%" }}>
                 {bulkResult.results.map((result, index) => (
                   <div
                     key={`${result.agent_id || index}-${result.policy_id || result.error}`}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 12,
-                      padding: "8px 10px",
-                      border: "1px solid #e2e8f0",
-                      borderRadius: 6,
-                    }}
+                    className="vf-policy-result-row"
                   >
                     <Typography.Text>
                       {result.agent_name || result.agent_id || "未知节点"}

@@ -357,18 +357,9 @@ export function SystemPage() {
         <Row gutter={[16, 16]}>
           {statusItems.map((item) => (
             <Col xs={24} md={12} key={item.title}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: 12,
-                  border: "1px solid #e2e8f0",
-                  borderRadius: 6,
-                }}
-              >
+              <div className="vf-status-item">
                 <Space>
-                  <span style={{ color: "rgba(0,0,0,0.45)", fontSize: 18 }}>
+                  <span className="vf-status-item-icon">
                     {item.icon}
                   </span>
                   <div>
@@ -445,20 +436,9 @@ export function SystemPage() {
             title="数据管理"
             styles={{ body: { display: "flex", flexDirection: "column", gap: 12 } }}
           >
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                padding: "24px 0",
-                textAlign: "center",
-                background: "#fafafa",
-                border: "1px dashed #d9d9d9",
-                borderRadius: 6,
-              }}
-            >
+            <div className="vf-system-data-notice">
               <SafetyCertificateOutlined
-                style={{ fontSize: 40, color: "rgba(0,0,0,0.25)" }}
+                className="vf-system-data-notice-icon"
               />
               <Typography.Paragraph
                 type="secondary"

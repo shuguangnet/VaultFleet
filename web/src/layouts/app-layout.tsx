@@ -38,6 +38,7 @@ import { logout } from "@/services/auth";
 import { colors } from "@/styles/theme-tokens";
 import type { AuthUser } from "@/types/api";
 import { AuthProvider } from "@/contexts/auth-context";
+import { useColorMode } from "@/contexts/theme-context";
 
 const { Header, Sider, Content } = Layout;
 const { useBreakpoint } = Grid;
@@ -73,27 +74,6 @@ function findActiveLabel(pathname: string): string {
   return matched?.label ?? "页面";
 }
 
-function useThemeToggle() {
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    if (typeof window === "undefined") return "light";
-    return document.documentElement.classList.contains("dark") ? "dark" : "light";
-  });
-
-  const toggle = () => {
-    setTheme((prev) => {
-      const next = prev === "light" ? "dark" : "light";
-      if (next === "dark") {
-        document.documentElement.classList.add("dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-      }
-      return next;
-    });
-  };
-
-  return { theme, toggle };
-}
-
 export function AppLayout({ user }: AppLayoutProps) {
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -101,7 +81,7 @@ export function AppLayout({ user }: AppLayoutProps) {
   const isMobile = !screens.md;
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const { theme, toggle: toggleTheme } = useThemeToggle();
+  const { mode, toggleMode } = useColorMode();
 
   const { data: agents } = useQuery({
     queryKey: ["agents"],
@@ -246,17 +226,6 @@ export function AppLayout({ user }: AppLayoutProps) {
         <Layout>
           <Header
             className="vf-app-header"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "0 20px",
-              background: colors.card,
-              borderBottom: `1px solid ${colors.border}`,
-              position: "sticky",
-              top: 0,
-              zIndex: 10,
-            }}
           >
             <Space size="middle" align="center">
               <button
@@ -273,7 +242,6 @@ export function AppLayout({ user }: AppLayoutProps) {
                   border: "none",
                   cursor: "pointer",
                   fontSize: 16,
-                  color: "rgba(0,0,0,0.65)",
                 }}
               >
                 {isMobile || collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
@@ -282,7 +250,7 @@ export function AppLayout({ user }: AppLayoutProps) {
                 className="vf-app-breadcrumb"
                 items={[
                   ...(!isMobile ? [{ title: <HomeOutlined /> }] : []),
-                  { title: <span style={{ fontWeight: 600, color: colors.text }}>{activeLabel}</span> },
+                  { title: <span className="vf-app-breadcrumb-current">{activeLabel}</span> },
                 ]}
               />
             </Space>
@@ -300,21 +268,20 @@ export function AppLayout({ user }: AppLayoutProps) {
                 </Space>
               </Tooltip>
 
-              <Tooltip title={theme === "light" ? "切换深色模式" : "切换浅色模式"}>
+              <Tooltip title={mode === "light" ? "切换深色模式" : "切换浅色模式"}>
                 <button
                   type="button"
-                  onClick={toggleTheme}
-                  aria-label={theme === "light" ? "切换深色模式" : "切换浅色模式"}
+                  onClick={toggleMode}
+                  aria-label={mode === "light" ? "切换深色模式" : "切换浅色模式"}
                   className="vf-icon-button"
                   style={{
                     background: "transparent",
                     border: "none",
                     cursor: "pointer",
                     fontSize: 16,
-                    color: "rgba(0,0,0,0.65)",
                   }}
                 >
-                  {theme === "light" ? <MoonOutlined /> : <SunOutlined />}
+                  {mode === "light" ? <MoonOutlined /> : <SunOutlined />}
                 </button>
               </Tooltip>
 
@@ -335,10 +302,6 @@ export function AppLayout({ user }: AppLayoutProps) {
 
           <Content
             className="vf-app-content"
-            style={{
-              background: colors.background,
-              overflow: "auto",
-            }}
           >
             <Outlet />
           </Content>
