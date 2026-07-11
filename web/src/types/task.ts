@@ -1,6 +1,6 @@
 export interface BackupProgress {
   agent_id: string;
-  phase: "init" | "backup" | "forget" | "stats";
+  phase: "init" | "backup" | "archive" | "archive-upload" | "forget" | "stats";
   percent_done: number;
   total_files: number;
   files_done: number;

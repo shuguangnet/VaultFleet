@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -25,7 +26,7 @@ import (
 
 const (
 	maxSnapshotBrowseResponseBytes = 900 * 1024
-	backupProgressThrottleInterval = 5 * time.Second
+	backupProgressThrottleInterval = 2 * time.Second
 )
 
 type SendFunc func(protocol.Message) error
@@ -1045,7 +1046,8 @@ func (h *Handler) backupProgressCallback(messageID string, agentID string, logs 
 			logs.Info(phase, "entered "+phase+" phase")
 		}
 		hasMeasuredProgress := progress != nil
-		if phase == lastPhase && !lastSentAt.IsZero() && now.Sub(lastSentAt) < backupProgressThrottleInterval && (!hasMeasuredProgress || sentMeasuredProgress) {
+		isCompleteProgress := progressComplete(progress)
+		if phase == lastPhase && !lastSentAt.IsZero() && now.Sub(lastSentAt) < backupProgressThrottleInterval && !isCompleteProgress && (!hasMeasuredProgress || sentMeasuredProgress) {
 			mu.Unlock()
 			return
 		}
@@ -1071,6 +1073,9 @@ func (h *Handler) backupProgressCallback(messageID string, agentID string, logs 
 		}
 
 		h.sendBackupProgress(messageID, payload)
+		if hasMeasuredProgress {
+			logs.Info(phase, formatBackupProgressLog(payload))
+		}
 		lastPhase = phase
 		lastSentAt = now
 		if progress != nil {
@@ -1094,6 +1099,77 @@ func (h *Handler) sendBackupProgress(messageID string, payload protocol.BackupPr
 	if err := h.sendMessage(*msg); err != nil {
 		log.Printf("send backup progress failed: %v", err)
 	}
+}
+
+func progressComplete(progress *executor.BackupProgress) bool {
+	if progress == nil {
+		return false
+	}
+	if progress.TotalBytes > 0 && progress.BytesDone >= progress.TotalBytes {
+		return true
+	}
+	if progress.TotalFiles > 0 && progress.FilesDone >= progress.TotalFiles {
+		return true
+	}
+	if progress.PercentDone <= 1 {
+		return progress.PercentDone >= 1
+	}
+	return progress.PercentDone >= 100
+}
+
+func formatBackupProgressLog(progress protocol.BackupProgressPayload) string {
+	parts := make([]string, 0, 5)
+	if percent := normalizedProgressPercent(progress.PercentDone); percent >= 0 {
+		parts = append(parts, fmt.Sprintf("%.1f%%", percent))
+	}
+	if progress.TotalBytes > 0 {
+		parts = append(parts, fmt.Sprintf("%s / %s", formatLogBytes(progress.BytesDone), formatLogBytes(progress.TotalBytes)))
+	} else if progress.BytesDone > 0 {
+		parts = append(parts, formatLogBytes(progress.BytesDone))
+	}
+	if progress.BytesPerSec > 0 {
+		parts = append(parts, formatLogBytes(progress.BytesPerSec)+"/s")
+	}
+	if progress.TotalFiles > 0 {
+		parts = append(parts, fmt.Sprintf("%d / %d files", progress.FilesDone, progress.TotalFiles))
+	}
+
+	line := "progress"
+	if len(parts) > 0 {
+		line += ": " + strings.Join(parts, ", ")
+	}
+	if progress.CurrentFile != "" {
+		line += " current=" + progress.CurrentFile
+	}
+	return line
+}
+
+func normalizedProgressPercent(value float64) float64 {
+	if value < 0 {
+		return -1
+	}
+	if value <= 1 {
+		return value * 100
+	}
+	return value
+}
+
+func formatLogBytes(bytes int64) string {
+	if bytes < 0 {
+		bytes = 0
+	}
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	value := float64(bytes)
+	for _, suffix := range []string{"KiB", "MiB", "GiB", "TiB", "PiB"} {
+		value /= unit
+		if value < unit {
+			return fmt.Sprintf("%.1f %s", value, suffix)
+		}
+	}
+	return fmt.Sprintf("%.1f EiB", value/unit)
 }
 
 func (h *Handler) sendPolicyAck(messageID string, agentID string, success bool, errorText string) {
@@ -1396,7 +1472,7 @@ func runBackup(ctx context.Context, cfg executor.ExecutorConfig) executor.TaskRe
 
 func runBackupWithProgress(ctx context.Context, cfg executor.ExecutorConfig, progressFn executor.ProgressCallback) executor.TaskResult {
 	if strings.EqualFold(strings.TrimSpace(cfg.BackupMode), protocol.BackupModeArchive) {
-		return executor.RunArchiveJob(ctx, cfg)
+		return executor.RunArchiveJobWithProgress(ctx, cfg, progressFn)
 	}
 	return executor.NewExecutor(cfg).RunBackupJobWithProgress(ctx, progressFn)
 }

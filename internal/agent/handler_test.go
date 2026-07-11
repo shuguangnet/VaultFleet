@@ -1282,6 +1282,47 @@ func TestBackupProgressCallbackSendsFirstMeasuredProgressAfterPhaseMarker(t *tes
 	assert.Equal(t, "/srv/first.db", firstMeasured.CurrentFile)
 }
 
+func TestBackupProgressCallbackWritesMeasuredProgressToTaskLogs(t *testing.T) {
+	sent := &sentMessages{}
+	handler := NewHandler(HandlerConfig{SendFunc: sent.send})
+	logs := newTaskLogEmitter("agent-1", "backup-msg-1", taskTypeBackup, sent.send)
+	callback := handler.backupProgressCallback("backup-msg-1", "agent-1", logs)
+
+	callback("archive", &executor.BackupProgress{
+		PercentDone: 0.25,
+		TotalFiles:  4,
+		FilesDone:   1,
+		TotalBytes:  1024,
+		BytesDone:   256,
+		CurrentFile: "/srv/video.mov",
+	})
+	callback("archive", &executor.BackupProgress{
+		PercentDone: 1,
+		TotalFiles:  4,
+		FilesDone:   4,
+		TotalBytes:  1024,
+		BytesDone:   1024,
+		CurrentFile: "/srv/final.mov",
+	})
+
+	logMessages := sent.messagesOfType(protocol.TypeTaskLog)
+	var progressLines []protocol.TaskLogPayload
+	for _, msg := range logMessages {
+		payload, err := protocol.ParsePayload[protocol.TaskLogPayload](&msg)
+		require.NoError(t, err)
+		if strings.Contains(payload.Line, "progress:") {
+			progressLines = append(progressLines, *payload)
+		}
+	}
+	require.Len(t, progressLines, 2)
+	assert.Equal(t, "archive", progressLines[0].Phase)
+	assert.Contains(t, progressLines[0].Line, "25.0%")
+	assert.Contains(t, progressLines[0].Line, "256 B / 1.0 KiB")
+	assert.Contains(t, progressLines[0].Line, "1 / 4 files")
+	assert.Contains(t, progressLines[0].Line, "current=/srv/video.mov")
+	assert.Contains(t, progressLines[1].Line, "100.0%")
+}
+
 func TestHandleBackupNowUsesConfiguredAgentIDWhenRequestAndPolicyOmitIt(t *testing.T) {
 	store := policy.NewStore(t.TempDir())
 	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{

@@ -30,7 +30,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { backupNow, listAgents } from "@/services/agents";
 import { cancelTask, getTaskLogs, listTasks, taskArtifactDownloadUrl } from "@/services/tasks";
-import type { TaskHistory, TaskLogLine, TaskLogResponse, TaskLogStatus } from "@/types/task";
+import type { BackupProgress, TaskHistory, TaskLogLine, TaskLogResponse, TaskLogStatus } from "@/types/task";
 import { safeFormatDate } from "@/lib/date";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -933,23 +933,12 @@ function renderTaskProgress(task: TaskHistory) {
     case "init":
       return <ProgressText muted text="初始化仓库..." />;
     case "backup": {
-      const percent = formatProgressPercent(progress.percent_done);
-      const speed = formatSpeed(progress.bytes_per_sec);
-      return (
-        <div style={{ display: "flex", flexDirection: "column", minHeight: 32, justifyContent: "center", maxWidth: 240 }}>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-            {`上传中: ${formatBytes(progress.bytes_done)} / ${formatBytes(
-              progress.total_bytes
-            )} (${percent}%)`}
-          </span>
-          {speed ? (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {`↑${speed}`}
-            </Typography.Text>
-          ) : null}
-        </div>
-      );
+      return renderMeasuredProgress("上传中", progress);
     }
+    case "archive":
+      return renderMeasuredProgress("打包中", progress);
+    case "archive-upload":
+      return renderMeasuredProgress("上传压缩包", progress);
     case "forget":
       return <ProgressText muted text="清理旧快照..." />;
     case "stats":
@@ -957,6 +946,30 @@ function renderTaskProgress(task: TaskHistory) {
     default:
       return <ProgressText muted pulse text="处理中..." />;
   }
+}
+
+function renderMeasuredProgress(label: string, progress: BackupProgress) {
+  const percent = formatProgressPercent(progress.percent_done);
+  const speed = formatSpeed(progress.bytes_per_sec);
+  const hasTotal = progress.total_bytes > 0;
+  const summary = hasTotal
+    ? `${label}: ${formatBytes(progress.bytes_done)} / ${formatBytes(progress.total_bytes)} (${percent}%)`
+    : `${label}: ${formatBytes(progress.bytes_done)}`;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", minHeight: 32, justifyContent: "center", maxWidth: 260 }}>
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{summary}</span>
+      {speed ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {`↑${speed}`}
+        </Typography.Text>
+      ) : null}
+      {progress.current_file ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }} ellipsis>
+          {progress.current_file}
+        </Typography.Text>
+      ) : null}
+    </div>
+  );
 }
 
 function taskSupportsLogs(task: TaskHistory): boolean {

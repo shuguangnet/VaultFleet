@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"vaultfleet/internal/artifactnaming"
@@ -87,6 +88,17 @@ type archiveFile struct {
 	Path string
 	Name string
 	Info os.FileInfo
+}
+
+type archiveProgressReporter struct {
+	mu          sync.Mutex
+	totalBytes  int64
+	bytesDone   int64
+	totalFiles  int64
+	filesDone   int64
+	currentFile string
+	lastEmit    time.Time
+	progressFn  func(BackupProgress)
 }
 
 var openArchiveSourceFile = func(path string) (io.ReadCloser, error) {
@@ -328,6 +340,10 @@ func (e *Executor) RunBackupJobWithProgress(ctx context.Context, progressFn Prog
 }
 
 func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) {
+	return RunArchiveJobWithProgress(ctx, cfg, nil)
+}
+
+func RunArchiveJobWithProgress(ctx context.Context, cfg ExecutorConfig, progressFn ProgressCallback) (result TaskResult) {
 	start := time.Now()
 	result = TaskResult{
 		Type:          "backup",
@@ -369,8 +385,11 @@ func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) 
 
 	artifactName := naming.ArtifactName
 	artifactPath := filepath.Join(artifactDir, artifactName)
+	emitProgress(progressFn, "archive", nil)
 	emitTaskLog(cfg.TaskLog, "info", "archive", "system", "writing local archive "+artifactName)
-	warnings, err := writeArchive(artifactPath, result.ArchiveFormat, cfg.BackupDirs, cfg.Excludes, cfg.ExtraArchiveFiles)
+	warnings, err := writeArchive(artifactPath, result.ArchiveFormat, cfg.BackupDirs, cfg.Excludes, cfg.ExtraArchiveFiles, func(progress BackupProgress) {
+		emitProgress(progressFn, "archive", &progress)
+	})
 	if err != nil {
 		emitTaskLog(cfg.TaskLog, "error", "archive", "stderr", err.Error())
 		result.ErrorLog = "archive: " + err.Error()
@@ -385,8 +404,17 @@ func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) 
 		RepoPath:        cfg.RepoPath,
 		RcloneExtraArgs: copyStringMap(cfg.RcloneArgs),
 	}
+	emitProgress(progressFn, "archive-upload", nil)
 	emitTaskLog(cfg.TaskLog, "info", "archive-upload", "system", "uploading archive")
-	if err := runner.CopyFileToRemote(ctx, artifactPath, remoteArtifactPath); err != nil {
+	if info, err := os.Stat(artifactPath); err == nil {
+		emitProgress(progressFn, "archive-upload", &BackupProgress{
+			PercentDone: 0,
+			TotalFiles:  1,
+			TotalBytes:  info.Size(),
+			CurrentFile: artifactName,
+		})
+	}
+	if err := runner.CopyFileToRemoteWithTaskLog(ctx, artifactPath, remoteArtifactPath, cfg.TaskLog); err != nil {
 		emitTaskLog(cfg.TaskLog, "error", "archive-upload", "stderr", err.Error())
 		result.ErrorLog = "archive-upload: " + err.Error()
 		return result
@@ -397,6 +425,14 @@ func RunArchiveJob(ctx context.Context, cfg ExecutorConfig) (result TaskResult) 
 		result.ErrorLog = "archive-stat: " + err.Error()
 		return result
 	}
+	emitProgress(progressFn, "archive-upload", &BackupProgress{
+		PercentDone: 1,
+		TotalFiles:  1,
+		FilesDone:   1,
+		TotalBytes:  info.Size(),
+		BytesDone:   info.Size(),
+		CurrentFile: artifactName,
+	})
 
 	result.Status = "success"
 	result.ArtifactPath = remoteArtifactPath
@@ -432,16 +468,17 @@ func archiveContentType(format string) string {
 	return "application/gzip"
 }
 
-func writeArchive(output string, format string, dirs []string, excludes []string, extraFiles []ArchiveExtraFile) ([]protocol.ManifestWarning, error) {
+func writeArchive(output string, format string, dirs []string, excludes []string, extraFiles []ArchiveExtraFile, progressFn func(BackupProgress)) ([]protocol.ManifestWarning, error) {
 	files, warnings, err := planArchiveFiles(dirs, excludes)
 	if err != nil {
 		return nil, err
 	}
 	extraFiles = appendManifestWarnings(extraFiles, warnings)
+	reporter := newArchiveProgressReporter(files, extraFiles, progressFn)
 	if normalizeArchiveFormat(format) == protocol.ArchiveFormatZip {
-		return warnings, writeZipArchive(output, files, extraFiles)
+		return warnings, writeZipArchive(output, files, extraFiles, reporter)
 	}
-	return warnings, writeTarGzArchive(output, files, extraFiles)
+	return warnings, writeTarGzArchive(output, files, extraFiles, reporter)
 }
 
 func planArchiveFiles(dirs []string, excludes []string) ([]archiveFile, []protocol.ManifestWarning, error) {
@@ -519,7 +556,7 @@ func appendManifestWarnings(extraFiles []ArchiveExtraFile, warnings []protocol.M
 	return result
 }
 
-func writeTarGzArchive(output string, files []archiveFile, extraFiles []ArchiveExtraFile) error {
+func writeTarGzArchive(output string, files []archiveFile, extraFiles []ArchiveExtraFile, reporter *archiveProgressReporter) error {
 	file, err := os.Create(output)
 	if err != nil {
 		return err
@@ -548,6 +585,7 @@ func writeTarGzArchive(output string, files []archiveFile, extraFiles []ArchiveE
 		if _, err := writer.Write(extra.Data); err != nil {
 			return err
 		}
+		reporter.AddBytes(int64(len(extra.Data)), name)
 	}
 
 	for _, archiveFile := range files {
@@ -562,22 +600,25 @@ func writeTarGzArchive(output string, files []archiveFile, extraFiles []ArchiveE
 		if !archiveFile.Info.Mode().IsRegular() {
 			continue
 		}
+		reporter.StartFile(archiveFile.Path)
 		f, err := openArchiveSourceFile(archiveFile.Path)
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(writer, f); err != nil {
+		if _, err := io.Copy(writer, reporter.Reader(f, archiveFile.Path)); err != nil {
 			_ = f.Close()
 			return err
 		}
 		if err := f.Close(); err != nil {
 			return err
 		}
+		reporter.FinishFile(archiveFile.Path)
 	}
+	reporter.Finish()
 	return nil
 }
 
-func writeZipArchive(output string, files []archiveFile, extraFiles []ArchiveExtraFile) error {
+func writeZipArchive(output string, files []archiveFile, extraFiles []ArchiveExtraFile, reporter *archiveProgressReporter) error {
 	file, err := os.Create(output)
 	if err != nil {
 		return err
@@ -599,6 +640,7 @@ func writeZipArchive(output string, files []archiveFile, extraFiles []ArchiveExt
 		if _, err := entry.Write(extra.Data); err != nil {
 			return err
 		}
+		reporter.AddBytes(int64(len(extra.Data)), name)
 	}
 
 	for _, archiveFile := range files {
@@ -613,15 +655,133 @@ func writeZipArchive(output string, files []archiveFile, extraFiles []ArchiveExt
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(entry, f); err != nil {
+		reporter.StartFile(archiveFile.Path)
+		if _, err := io.Copy(entry, reporter.Reader(f, archiveFile.Path)); err != nil {
 			_ = f.Close()
 			return err
 		}
 		if err := f.Close(); err != nil {
 			return err
 		}
+		reporter.FinishFile(archiveFile.Path)
 	}
+	reporter.Finish()
 	return nil
+}
+
+func newArchiveProgressReporter(files []archiveFile, extraFiles []ArchiveExtraFile, progressFn func(BackupProgress)) *archiveProgressReporter {
+	reporter := &archiveProgressReporter{progressFn: progressFn}
+	for _, file := range files {
+		if !file.Info.Mode().IsRegular() {
+			continue
+		}
+		reporter.totalFiles++
+		reporter.totalBytes += file.Info.Size()
+	}
+	for _, extra := range extraFiles {
+		if _, ok := safeArchiveRootName(extra.Name); ok {
+			reporter.totalBytes += int64(len(extra.Data))
+		}
+	}
+	return reporter
+}
+
+func (r *archiveProgressReporter) Reader(reader io.Reader, currentFile string) io.Reader {
+	if r == nil {
+		return reader
+	}
+	return &archiveCountingReader{
+		reader: reader,
+		onRead: func(n int) {
+			r.AddBytes(int64(n), currentFile)
+		},
+	}
+}
+
+func (r *archiveProgressReporter) StartFile(path string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.currentFile = path
+	r.emitLocked(false)
+	r.mu.Unlock()
+}
+
+func (r *archiveProgressReporter) AddBytes(n int64, currentFile string) {
+	if r == nil || n <= 0 {
+		return
+	}
+	r.mu.Lock()
+	r.bytesDone += n
+	if currentFile != "" {
+		r.currentFile = currentFile
+	}
+	r.emitLocked(false)
+	r.mu.Unlock()
+}
+
+func (r *archiveProgressReporter) FinishFile(path string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.filesDone++
+	if path != "" {
+		r.currentFile = path
+	}
+	r.emitLocked(false)
+	r.mu.Unlock()
+}
+
+func (r *archiveProgressReporter) Finish() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	if r.totalBytes > 0 {
+		r.bytesDone = r.totalBytes
+	}
+	if r.totalFiles > 0 {
+		r.filesDone = r.totalFiles
+	}
+	r.emitLocked(true)
+	r.mu.Unlock()
+}
+
+func (r *archiveProgressReporter) emitLocked(force bool) {
+	if r.progressFn == nil {
+		return
+	}
+	now := time.Now()
+	if !force && !r.lastEmit.IsZero() && now.Sub(r.lastEmit) < 2*time.Second {
+		return
+	}
+	r.lastEmit = now
+	progress := BackupProgress{
+		TotalFiles:  r.totalFiles,
+		FilesDone:   r.filesDone,
+		TotalBytes:  r.totalBytes,
+		BytesDone:   r.bytesDone,
+		CurrentFile: r.currentFile,
+	}
+	if r.totalBytes > 0 {
+		progress.PercentDone = float64(r.bytesDone) / float64(r.totalBytes)
+	}
+	r.progressFn(progress)
+}
+
+type archiveCountingReader struct {
+	reader io.Reader
+	onRead func(int)
+}
+
+func (r *archiveCountingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 && r.onRead != nil {
+		r.onRead(n)
+	}
+	return n, err
 }
 
 func safeArchiveRootName(name string) (string, bool) {

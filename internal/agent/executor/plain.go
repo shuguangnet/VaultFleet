@@ -1,18 +1,21 @@
 package executor
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -163,6 +166,13 @@ func (r PlainRunner) CopyFileToRemote(ctx context.Context, localPath string, rem
 		return commandError("rclone copyto "+localPath, stderr.String(), err)
 	}
 	return nil
+}
+
+func (r PlainRunner) CopyFileToRemoteWithTaskLog(ctx context.Context, localPath string, remoteSubPath string, logFn TaskLogCallback) error {
+	args := r.rcloneBaseArgs()
+	args = append(args, "--stats", "2s", "--stats-one-line", "--progress", "copyto", localPath, r.remoteArg(remoteSubPath))
+	cmd := r.command(ctx, args...)
+	return runCommandWithTaskLog(cmd, "rclone copyto "+localPath, "archive-upload", logFn)
 }
 
 func (r PlainRunner) CopyFileFromRemote(ctx context.Context, remoteSubPath string, localPath string) error {
@@ -335,6 +345,85 @@ func (r PlainRunner) matchesIncludePaths(dirName string, includePaths []string) 
 		}
 	}
 	return false
+}
+
+func runCommandWithTaskLog(cmd *exec.Cmd, operation string, phase string, logFn TaskLogCallback) error {
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("prepare %s stdout: %w", operation, err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("prepare %s stderr: %w", operation, err)
+	}
+
+	var outputMu sync.Mutex
+	var stderrText bytes.Buffer
+	var stdoutText bytes.Buffer
+	appendOutput := func(buffer *bytes.Buffer, text string) {
+		outputMu.Lock()
+		buffer.WriteString(text)
+		buffer.WriteByte('\n')
+		outputMu.Unlock()
+	}
+
+	if err := cmd.Start(); err != nil {
+		return commandError(operation, "", err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		scanCommandProgressLines(stdout, func(line string) {
+			appendOutput(&stdoutText, line)
+			emitTaskLog(logFn, "info", phase, "stdout", line)
+		})
+	}()
+	go func() {
+		defer wg.Done()
+		scanCommandProgressLines(stderr, func(line string) {
+			appendOutput(&stderrText, line)
+			emitTaskLog(logFn, "info", phase, "stderr", line)
+		})
+	}()
+
+	waitErr := cmd.Wait()
+	wg.Wait()
+	if waitErr != nil {
+		outputMu.Lock()
+		details := strings.TrimSpace(stderrText.String())
+		if details == "" {
+			details = strings.TrimSpace(stdoutText.String())
+		}
+		outputMu.Unlock()
+		return commandError(operation, details, waitErr)
+	}
+	return nil
+}
+
+func scanCommandProgressLines(reader io.Reader, emit func(string)) {
+	scanner := bufio.NewScanner(reader)
+	scanner.Split(splitCommandProgressLines)
+	scanner.Buffer(make([]byte, 16*1024), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			emit(line)
+		}
+	}
+}
+
+func splitCommandProgressLines(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	for i, b := range data {
+		if b == '\n' || b == '\r' {
+			return i + 1, data[:i], nil
+		}
+	}
+	if atEOF && len(data) > 0 {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
 }
 
 // LsSnapshot lists files in the plain backup. Since plain mode has only

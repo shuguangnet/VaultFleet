@@ -468,6 +468,58 @@ func TestRunArchiveJobSkipsUnreadableFilesAndRecordsManifestWarning(t *testing.T
 	}
 }
 
+func TestRunArchiveJobWithProgressReportsArchiveAndUploadProgress(t *testing.T) {
+	configDir, backupDir := setupArchiveTestDirs(t)
+	setupFakeRclone(t)
+
+	var updates []struct {
+		phase    string
+		progress *BackupProgress
+	}
+	result := RunArchiveJobWithProgress(context.Background(), ExecutorConfig{
+		ConfigDir:     configDir,
+		RepoPath:      "tenant/agent-1",
+		BackupDirs:    []string{backupDir},
+		ArchiveFormat: protocol.ArchiveFormatZip,
+	}, func(phase string, progress *BackupProgress) {
+		var copied *BackupProgress
+		if progress != nil {
+			value := *progress
+			copied = &value
+		}
+		updates = append(updates, struct {
+			phase    string
+			progress *BackupProgress
+		}{phase: phase, progress: copied})
+	})
+
+	if result.Status != "success" {
+		t.Fatalf("Status = %q, want success; error log: %q", result.Status, result.ErrorLog)
+	}
+	var archiveComplete, uploadComplete bool
+	for _, update := range updates {
+		if update.progress == nil {
+			continue
+		}
+		switch update.phase {
+		case "archive":
+			if update.progress.TotalBytes > 0 && update.progress.BytesDone == update.progress.TotalBytes && update.progress.TotalFiles > 0 && update.progress.FilesDone == update.progress.TotalFiles {
+				archiveComplete = true
+			}
+		case "archive-upload":
+			if update.progress.TotalBytes == result.ArtifactSize && update.progress.BytesDone == result.ArtifactSize && update.progress.FilesDone == 1 {
+				uploadComplete = true
+			}
+		}
+	}
+	if !archiveComplete {
+		t.Fatalf("updates = %#v, want completed archive progress", updates)
+	}
+	if !uploadComplete {
+		t.Fatalf("updates = %#v, want completed archive upload progress", updates)
+	}
+}
+
 func TestRunBackupJobWithProgressReportsPhasesAndUsesProgressRunner(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	runner := &recordingRunner{
