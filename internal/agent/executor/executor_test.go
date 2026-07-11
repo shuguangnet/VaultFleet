@@ -471,6 +471,62 @@ func TestRunArchiveJobSkipsUnreadableFilesAndRecordsManifestWarning(t *testing.T
 	}
 }
 
+func TestRunArchiveJobSkipsFileThatDisappearsAfterPlanning(t *testing.T) {
+	for _, format := range []string{protocol.ArchiveFormatZip, protocol.ArchiveFormatTarGz} {
+		t.Run(format, func(t *testing.T) {
+			testRunArchiveJobSkipsFileThatDisappearsAfterPlanning(t, format)
+		})
+	}
+}
+
+func testRunArchiveJobSkipsFileThatDisappearsAfterPlanning(t *testing.T, format string) {
+	configDir, backupDir := setupArchiveTestDirs(t)
+	vanishedPath := filepath.Join(backupDir, "database.sqlite3-journal")
+	if err := os.WriteFile(vanishedPath, []byte("temporary journal"), 0o644); err != nil {
+		t.Fatalf("seed transient file: %v", err)
+	}
+	setupFakeRclone(t)
+
+	originalOpen := openArchiveSourceFile
+	t.Cleanup(func() { openArchiveSourceFile = originalOpen })
+	openCount := 0
+	openArchiveSourceFile = func(path string) (io.ReadCloser, error) {
+		if path == vanishedPath {
+			openCount++
+			if openCount > 1 {
+				return nil, &os.PathError{Op: "open", Path: path, Err: os.ErrNotExist}
+			}
+		}
+		return os.Open(path)
+	}
+
+	result := RunArchiveJob(context.Background(), ExecutorConfig{
+		ConfigDir:     configDir,
+		RepoPath:      "tenant/agent-1",
+		BackupDirs:    []string{backupDir},
+		ArchiveFormat: format,
+	})
+
+	if result.Status != "success" {
+		t.Fatalf("Status = %q, want success; error log: %q", result.Status, result.ErrorLog)
+	}
+	if len(result.ManifestWarnings) != 1 {
+		t.Fatalf("ManifestWarnings = %#v, want one skipped-file warning", result.ManifestWarnings)
+	}
+	warning := result.ManifestWarnings[0]
+	if warning.Code != "archive_file_skipped" || warning.Source != vanishedPath || !strings.Contains(warning.Message, "disappeared during archive") {
+		t.Fatalf("warning = %+v, want disappeared-file warning for %s", warning, vanishedPath)
+	}
+	archivePath := filepath.Join(configDir, "artifacts", result.ArtifactName)
+	entryExists := zipEntryExists
+	if format == protocol.ArchiveFormatTarGz {
+		entryExists = tarGzEntryExists
+	}
+	if entryExists(t, archivePath, archiveEntryName(vanishedPath)) {
+		t.Fatalf("archive contains disappeared file %s", vanishedPath)
+	}
+}
+
 func TestRunArchiveJobLimitsGrowingFilesToPlannedSize(t *testing.T) {
 	configDir, backupDir := setupArchiveTestDirs(t)
 	growingPath := filepath.Join(backupDir, "growing.log")
@@ -1059,6 +1115,33 @@ func zipEntryExists(t *testing.T, archivePath string, entryName string) bool {
 		}
 	}
 	return false
+}
+
+func tarGzEntryExists(t *testing.T, archivePath string, entryName string) bool {
+	t.Helper()
+	file, err := os.Open(archivePath)
+	if err != nil {
+		t.Fatalf("open tar.gz: %v", err)
+	}
+	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatalf("read gzip: %v", err)
+	}
+	defer gz.Close()
+	reader := tar.NewReader(gz)
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			return false
+		}
+		if err != nil {
+			t.Fatalf("read tar entry: %v", err)
+		}
+		if header.Name == entryName {
+			return true
+		}
+	}
 }
 
 func archiveEntryName(path string) string {

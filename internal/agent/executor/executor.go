@@ -477,9 +477,11 @@ func writeArchive(ctx context.Context, output string, format string, dirs []stri
 	extraFiles = appendManifestWarnings(extraFiles, warnings)
 	reporter := newArchiveProgressReporter(files, extraFiles, progressFn)
 	if normalizeArchiveFormat(format) == protocol.ArchiveFormatZip {
-		return warnings, writeZipArchive(ctx, output, files, extraFiles, reporter)
+		writeWarnings, err := writeZipArchive(ctx, output, files, extraFiles, reporter)
+		return append(warnings, writeWarnings...), err
 	}
-	return warnings, writeTarGzArchive(ctx, output, files, extraFiles, reporter)
+	writeWarnings, err := writeTarGzArchive(ctx, output, files, extraFiles, reporter)
+	return append(warnings, writeWarnings...), err
 }
 
 func planArchiveFiles(ctx context.Context, dirs []string, excludes []string) ([]archiveFile, []protocol.ManifestWarning, error) {
@@ -495,6 +497,10 @@ func planArchiveFiles(ctx context.Context, dirs []string, excludes []string) ([]
 				return err
 			}
 			if walkErr != nil {
+				if os.IsNotExist(walkErr) {
+					warnings = append(warnings, skippedArchiveFileWarning(path, walkErr))
+					return nil
+				}
 				return walkErr
 			}
 			for _, exclude := range excludes {
@@ -529,6 +535,14 @@ func planArchiveFiles(ctx context.Context, dirs []string, excludes []string) ([]
 		}
 	}
 	return files, warnings, nil
+}
+
+func skippedArchiveFileWarning(path string, err error) protocol.ManifestWarning {
+	return protocol.ManifestWarning{
+		Code:    "archive_file_skipped",
+		Message: "skipped file that disappeared during archive: " + err.Error(),
+		Source:  path,
+	}
 }
 
 func verifyArchiveSourceReadable(ctx context.Context, path string) error {
@@ -569,10 +583,11 @@ func appendManifestWarnings(extraFiles []ArchiveExtraFile, warnings []protocol.M
 	return result
 }
 
-func writeTarGzArchive(ctx context.Context, output string, files []archiveFile, extraFiles []ArchiveExtraFile, reporter *archiveProgressReporter) error {
+func writeTarGzArchive(ctx context.Context, output string, files []archiveFile, extraFiles []ArchiveExtraFile, reporter *archiveProgressReporter) ([]protocol.ManifestWarning, error) {
+	warnings := make([]protocol.ManifestWarning, 0)
 	file, err := os.Create(output)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer file.Close()
 
@@ -593,51 +608,65 @@ func writeTarGzArchive(ctx context.Context, output string, files []archiveFile, 
 			ModTime: time.Now().UTC(),
 		}
 		if err := writer.WriteHeader(header); err != nil {
-			return err
+			return nil, err
 		}
 		if _, err := writer.Write(extra.Data); err != nil {
-			return err
+			return nil, err
 		}
 		reporter.AddBytes(int64(len(extra.Data)), name)
 	}
 
 	for _, archiveFile := range files {
 		if err := ctx.Err(); err != nil {
-			return err
+			return nil, err
+		}
+		var source io.ReadCloser
+		if archiveFile.Info.Mode().IsRegular() {
+			source, err = openArchiveSourceFile(archiveFile.Path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					warnings = append(warnings, skippedArchiveFileWarning(archiveFile.Path, err))
+					continue
+				}
+				return nil, err
+			}
 		}
 		header, err := tar.FileInfoHeader(archiveFile.Info, "")
 		if err != nil {
-			return err
+			if source != nil {
+				_ = source.Close()
+			}
+			return nil, err
 		}
 		header.Name = archiveFile.Name
 		if err := writer.WriteHeader(header); err != nil {
-			return err
+			if source != nil {
+				_ = source.Close()
+			}
+			return nil, err
 		}
 		if !archiveFile.Info.Mode().IsRegular() {
 			continue
 		}
 		reporter.StartFile(archiveFile.Path)
-		f, err := openArchiveSourceFile(archiveFile.Path)
-		if err != nil {
-			return err
+		if _, err := copyArchiveSource(ctx, writer, source, archiveFile.Info.Size(), archiveFile.Path, reporter); err != nil {
+			_ = source.Close()
+			return nil, err
 		}
-		if _, err := copyArchiveSource(ctx, writer, f, archiveFile.Info.Size(), archiveFile.Path, reporter); err != nil {
-			_ = f.Close()
-			return err
-		}
-		if err := f.Close(); err != nil {
-			return err
+		if err := source.Close(); err != nil {
+			return nil, err
 		}
 		reporter.FinishFile(archiveFile.Path)
 	}
 	reporter.Finish()
-	return nil
+	return warnings, nil
 }
 
-func writeZipArchive(ctx context.Context, output string, files []archiveFile, extraFiles []ArchiveExtraFile, reporter *archiveProgressReporter) error {
+func writeZipArchive(ctx context.Context, output string, files []archiveFile, extraFiles []ArchiveExtraFile, reporter *archiveProgressReporter) ([]protocol.ManifestWarning, error) {
+	warnings := make([]protocol.ManifestWarning, 0)
 	file, err := os.Create(output)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer file.Close()
 
@@ -651,41 +680,46 @@ func writeZipArchive(ctx context.Context, output string, files []archiveFile, ex
 		}
 		entry, err := writer.Create(name)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if _, err := entry.Write(extra.Data); err != nil {
-			return err
+			return nil, err
 		}
 		reporter.AddBytes(int64(len(extra.Data)), name)
 	}
 
 	for _, archiveFile := range files {
 		if err := ctx.Err(); err != nil {
-			return err
+			return nil, err
 		}
 		if !archiveFile.Info.Mode().IsRegular() {
 			continue
 		}
-		entry, err := writer.Create(archiveFile.Name)
-		if err != nil {
-			return err
-		}
 		f, err := openArchiveSourceFile(archiveFile.Path)
 		if err != nil {
-			return err
+			if os.IsNotExist(err) {
+				warnings = append(warnings, skippedArchiveFileWarning(archiveFile.Path, err))
+				continue
+			}
+			return nil, err
+		}
+		entry, err := writer.Create(archiveFile.Name)
+		if err != nil {
+			_ = f.Close()
+			return nil, err
 		}
 		reporter.StartFile(archiveFile.Path)
 		if _, err := copyArchiveSource(ctx, entry, f, archiveFile.Info.Size(), archiveFile.Path, reporter); err != nil {
 			_ = f.Close()
-			return err
+			return nil, err
 		}
 		if err := f.Close(); err != nil {
-			return err
+			return nil, err
 		}
 		reporter.FinishFile(archiveFile.Path)
 	}
 	reporter.Finish()
-	return nil
+	return warnings, nil
 }
 
 func copyArchiveSource(ctx context.Context, writer io.Writer, source io.ReadCloser, size int64, path string, reporter *archiveProgressReporter) (int64, error) {
