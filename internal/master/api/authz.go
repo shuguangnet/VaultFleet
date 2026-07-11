@@ -239,6 +239,9 @@ func permissionForRoute(method string, path string) string {
 		if strings.Contains(path, "download") {
 			return PermissionRunRestore
 		}
+		if method == http.MethodDelete {
+			return PermissionRunBackup
+		}
 		return PermissionReadOperational
 	case strings.HasPrefix(path, "/api/commands"), strings.HasPrefix(path, "/api/snapshots"):
 		return PermissionReadOperational

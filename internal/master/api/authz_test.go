@@ -11,3 +11,7 @@ func TestPermissionForTaskAndCommandLogs(t *testing.T) {
 	assert.Equal(t, PermissionReadOperational, permissionForRoute(http.MethodGet, "/api/tasks/:id/logs"))
 	assert.Equal(t, PermissionReadOperational, permissionForRoute(http.MethodGet, "/api/commands/:id/logs"))
 }
+
+func TestDeletingTaskHistoryRequiresBackupPermission(t *testing.T) {
+	assert.Equal(t, PermissionRunBackup, permissionForRoute(http.MethodDelete, "/api/tasks/:id"))
+}

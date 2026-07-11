@@ -1041,6 +1041,38 @@ func TestDeletePolicy(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, w.Code)
 }
 
+func TestCopyPolicyPreservesConfigurationAndUsesIndependentRepository(t *testing.T) {
+	setup := setupTestPolicyAPI(t)
+	agent := createPolicyTestAgent(t, setup.database)
+	storage := createPolicyTestStorage(t, setup.database)
+	w := postAnyJSON(t, setup.router, "/api/policies", map[string]any{
+		"name":            "Production",
+		"agent_id":        agent.ID,
+		"storage_id":      storage.ID,
+		"repo_path":       "vaultfleet/production",
+		"restic_password": "secret",
+		"backup_dirs":     []string{"/etc"},
+		"schedule":        "0 3 * * *",
+		"retention":       map[string]any{"keep_last": 3},
+	})
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	source := parseJSON(t, w)
+
+	w = postAnyJSON(t, setup.router, "/api/policies/"+source["id"].(string)+"/copy", map[string]any{})
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	copied := parseJSON(t, w)
+	assert.NotEqual(t, source["id"], copied["id"])
+	assert.Equal(t, "Production - 副本", copied["name"])
+	assert.NotEqual(t, source["repo_path"], copied["repo_path"])
+
+	var sourcePolicy, copiedPolicy db.BackupPolicy
+	require.NoError(t, setup.database.DB.First(&sourcePolicy, "id = ?", source["id"]).Error)
+	require.NoError(t, setup.database.DB.First(&copiedPolicy, "id = ?", copied["id"]).Error)
+	assert.Equal(t, sourcePolicy.ResticPassword, copiedPolicy.ResticPassword)
+	assert.Equal(t, sourcePolicy.StorageID, copiedPolicy.StorageID)
+	assert.False(t, copiedPolicy.Synced)
+}
+
 func TestDeletePolicyPublishesEvent(t *testing.T) {
 	setup := setupTestPolicyAPI(t)
 	agent := createPolicyTestAgent(t, setup.database)

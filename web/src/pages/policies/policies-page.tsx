@@ -24,6 +24,7 @@ import {
 import {
   AlertOutlined,
   DatabaseOutlined,
+  CopyOutlined,
   DeleteOutlined,
   DeploymentUnitOutlined,
   EditOutlined,
@@ -46,6 +47,7 @@ import {
 import { listStorage } from "@/services/storage";
 import {
   createPolicy,
+  copyPolicy,
   deletePolicy,
   bulkAssignPolicy,
   listPolicies,
@@ -444,6 +446,17 @@ export function PoliciesPage() {
       message.error("删除策略失败: " + error.message),
   });
 
+  const copyMutation = useMutation({
+    mutationFn: copyPolicy,
+    onSuccess: (policy) => {
+      queryClient.invalidateQueries({ queryKey: ["policies"] });
+      message.success(`已复制策略「${policy.name}」`);
+      handleEdit(policy);
+    },
+    onError: (error: any) =>
+      message.error("复制策略失败: " + error.message),
+  });
+
   const backupMutation = useMutation({
     mutationFn: (policy: BackupPolicy) =>
       backupNow(policy.agent_id, { policy_id: policy.id }),
@@ -814,6 +827,12 @@ export function PoliciesPage() {
                 onClick: () => handleEdit(record),
               } : null,
               canWritePolicies ? {
+                key: "copy",
+                icon: <CopyOutlined />,
+                label: "复制",
+                onClick: () => copyMutation.mutate(record.id),
+              } : null,
+              canWritePolicies ? {
                 key: "bulk-assign",
                 icon: <DeploymentUnitOutlined />,
                 label: "批量下发",
@@ -976,7 +995,6 @@ export function PoliciesPage() {
                 style={{ width: "100%", marginTop: 4 }}
                 value={formData.storage_id || undefined}
                 placeholder="请选择存储"
-                disabled={!!editingId}
                 onChange={(val) => {
                   const storage = storageList?.find((s) => s.id === val);
                   const updates: Partial<PolicyInput> = { storage_id: val };

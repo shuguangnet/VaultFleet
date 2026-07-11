@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -169,6 +170,37 @@ func RegisterPolicyRoutes(rg *gin.RouterGroup, h *PolicyHandler) {
 	rg.GET("/policies/:id", h.GetPolicy)
 	rg.PUT("/policies/:id", h.UpdatePolicy)
 	rg.DELETE("/policies/:id", h.DeletePolicy)
+	rg.POST("/policies/:id/copy", h.CopyPolicy)
+}
+
+func (h *PolicyHandler) CopyPolicy(c *gin.Context) {
+	source, ok := h.findPolicyByID(c, c.Param("id"))
+	if !ok {
+		return
+	}
+
+	copy := source
+	copy.ID = ""
+	copy.Name = source.Name + " - 副本"
+	copy.RepoPath = copiedPolicyRepoPath(source.RepoPath)
+	copy.Synced = false
+	copy.CreatedAt = time.Time{}
+	copy.UpdatedAt = time.Time{}
+	if err := h.DB.DB.Create(&copy).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
+		return
+	}
+
+	h.publishPolicyChanged(copy.AgentID, "created")
+	h.writePolicyResponse(c, http.StatusCreated, copy)
+}
+
+func copiedPolicyRepoPath(repoPath string) string {
+	repoPath = strings.TrimSuffix(strings.TrimSpace(repoPath), "/")
+	if repoPath == "" {
+		repoPath = "vaultfleet/backup"
+	}
+	return fmt.Sprintf("%s-copy-%d", repoPath, time.Now().UnixNano())
 }
 
 func (h *PolicyHandler) PreviewArtifactNaming(c *gin.Context) {

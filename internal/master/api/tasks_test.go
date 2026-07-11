@@ -976,6 +976,30 @@ func TestGetTaskLogsReturnsUnavailableStates(t *testing.T) {
 	assert.Equal(t, "unsupported_agent", data["status"])
 }
 
+func TestDeleteTaskDeletesCompletedHistory(t *testing.T) {
+	setup := setupTasksAPI(t)
+	agent := createTasksTestAgent(t, setup.database, "online")
+	history := seedTaskHistory(t, setup.database, agent.ID, "backup", commands.TaskStatusSuccess, "snap-delete", time.Now())
+
+	w := deleteJSON(t, setup.router, "/api/tasks/"+history.ID)
+	require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
+	var count int64
+	require.NoError(t, setup.database.DB.Model(&db.TaskHistory{}).Where("id = ?", history.ID).Count(&count).Error)
+	assert.Zero(t, count)
+}
+
+func TestDeleteTaskRejectsActiveHistory(t *testing.T) {
+	setup := setupTasksAPI(t)
+	agent := createTasksTestAgent(t, setup.database, "online")
+	history := seedTaskHistory(t, setup.database, agent.ID, "backup", commands.TaskStatusRunning, "snap-active", time.Now())
+
+	w := deleteJSON(t, setup.router, "/api/tasks/"+history.ID)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	var count int64
+	require.NoError(t, setup.database.DB.Model(&db.TaskHistory{}).Where("id = ?", history.ID).Count(&count).Error)
+	assert.EqualValues(t, 1, count)
+}
+
 type tasksAPISetup struct {
 	database  *db.Database
 	hub       *fakeCommandHub

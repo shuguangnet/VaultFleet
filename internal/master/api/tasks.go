@@ -88,8 +88,27 @@ func RegisterTaskRoutes(rg *gin.RouterGroup, h *TaskHandler) {
 	rg.GET("/tasks/:id/logs", h.GetLogs)
 	rg.GET("/tasks/:id/download", h.DownloadArtifact)
 	rg.POST("/tasks/:id/cancel", h.CancelTask)
+	rg.DELETE("/tasks/:id", h.DeleteTask)
 	rg.POST("/agents/:id/backup-now", h.BackupNow)
 	rg.POST("/policies/:id/verify-now", h.VerifyPolicyNow)
+}
+
+func (h *TaskHandler) DeleteTask(c *gin.Context) {
+	taskID := c.Param("id")
+	var history db.TaskHistory
+	if err := h.DB.DB.First(&history, "id = ?", taskID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "task not found"})
+		return
+	}
+	if history.Status == commands.TaskStatusRunning || history.Status == commands.TaskStatusPending {
+		c.JSON(http.StatusConflict, gin.H{"ok": false, "error": "active task cannot be deleted"})
+		return
+	}
+	if err := h.DB.DB.Delete(&history).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "database error"})
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (h *TaskHandler) VerifyPolicyNow(c *gin.Context) {

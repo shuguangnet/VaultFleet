@@ -20,6 +20,7 @@ import {
   CloseOutlined,
   CopyOutlined,
   DownloadOutlined,
+  DeleteOutlined,
   FileTextOutlined,
   HistoryOutlined,
   PauseCircleOutlined,
@@ -29,7 +30,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { backupNow, listAgents } from "@/services/agents";
-import { cancelTask, getTaskLogs, listTasks, taskArtifactDownloadUrl } from "@/services/tasks";
+import { cancelTask, deleteTask, getTaskLogs, listTasks, taskArtifactDownloadUrl } from "@/services/tasks";
 import type { BackupProgress, TaskHistory, TaskLogLine, TaskLogResponse, TaskLogStatus } from "@/types/task";
 import { safeFormatDate } from "@/lib/date";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -244,6 +245,7 @@ export function TasksPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [backupAgentId, setBackupAgentId] = useState<string | null>(null);
   const [cancelTaskId, setCancelTaskId] = useState<string | null>(null);
+  const [deleteTaskId, setDeleteTaskId] = useState<string | null>(null);
   const [logTask, setLogTask] = useState<TaskHistory | null>(null);
   const [logLines, setLogLines] = useState<TaskLogLine[]>([]);
   const [logStatus, setLogStatus] = useState<TaskLogStatus>("empty");
@@ -298,6 +300,16 @@ export function TasksPage() {
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
     },
     onError: (error: any) => message.error(error.message),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (taskId: string) => deleteTask(taskId),
+    onSuccess: () => {
+      setDeleteTaskId(null);
+      message.success("任务历史已删除");
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    },
+    onError: (error: any) => message.error("删除任务历史失败: " + error.message),
   });
 
   const loadTaskLogs = useCallback(
@@ -424,20 +436,40 @@ export function TasksPage() {
     {
       title: "操作",
       key: "actions",
-      render: (_: unknown, record: TaskHistory) =>
-        canViewLogs && taskSupportsLogs(record) ? (
-          <Button
-            size="small"
-            icon={<FileTextOutlined />}
-            onClick={(e) => {
-              e.stopPropagation();
-              setFollowLogs(true);
-              setLogTask(record);
-            }}
-          >
-            日志
-          </Button>
-        ) : null,
+      fixed: "right",
+      width: 88,
+      render: (_: unknown, record: TaskHistory) => (
+        <Space size={4}>
+          {canViewLogs && taskSupportsLogs(record) ? (
+            <Button
+              size="small"
+              icon={<FileTextOutlined />}
+              onClick={(e) => {
+                e.stopPropagation();
+                setFollowLogs(true);
+                setLogTask(record);
+              }}
+            >
+              日志
+            </Button>
+          ) : null}
+          {canRunBackup && record.status !== "running" && record.status !== "pending" ? (
+            <Tooltip title="删除任务历史">
+              <Button
+                danger
+                type="text"
+                size="small"
+                aria-label="删除任务历史"
+                icon={<DeleteOutlined />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDeleteTaskId(record.id);
+                }}
+              />
+            </Tooltip>
+          ) : null}
+        </Space>
+      ),
     },
   ];
 
@@ -771,6 +803,17 @@ export function TasksPage() {
         confirmText="确认取消"
         onConfirm={() => cancelTaskId && cancelMutation.mutate(cancelTaskId)}
         loading={cancelMutation.isPending}
+      />
+
+      <ConfirmDialog
+        open={!!deleteTaskId}
+        onOpenChange={(open) => !open && setDeleteTaskId(null)}
+        title="确认删除任务历史"
+        description="仅删除这条任务历史记录，不会删除远程存储中的备份数据。"
+        confirmText="确认删除"
+        variant="destructive"
+        onConfirm={() => deleteTaskId && deleteMutation.mutate(deleteTaskId)}
+        loading={deleteMutation.isPending}
       />
 
       <Drawer

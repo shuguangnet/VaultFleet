@@ -7,6 +7,7 @@ export const createPolicy = (body: PolicyInput) => apiPost<BackupPolicy>("/api/p
 export const getPolicy = (id: string) => apiGet<BackupPolicy>(`/api/policies/${id}`);
 export const updatePolicy = (id: string, body: Partial<PolicyInput>) => apiPut<BackupPolicy>(`/api/policies/${id}`, body);
 export const deletePolicy = (id: string) => apiDelete(`/api/policies/${id}`);
+export const copyPolicy = (id: string) => apiPost<BackupPolicy>(`/api/policies/${id}/copy`, {});
 export const verifyPolicyNow = (id: string) => apiPost<{ command_id: string; message_id: string }>(`/api/policies/${id}/verify-now`, {});
 export const bulkAssignPolicy = (body: BulkAssignPolicyRequest) =>
   apiPost<BulkAssignPolicyResponse>("/api/policies/bulk-assign", body);
