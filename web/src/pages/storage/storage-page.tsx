@@ -130,6 +130,7 @@ export function StoragePage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<StorageTestResult | null>(null);
   const [form] = Form.useForm<StorageFormValues>();
+  const rcloneType = Form.useWatch("rclone_type", form) || "s3";
 
   const { data: storageList, isLoading } = useQuery({
     queryKey: ["storage"],
@@ -314,8 +315,7 @@ export function StoragePage() {
     },
   ];
 
-  const currentTemplate =
-    STORAGE_TEMPLATES[Form.useWatch("rclone_type", form) || "s3"];
+  const currentTemplate = STORAGE_TEMPLATES[rcloneType];
 
   return (
     <div className="vf-page">
@@ -450,7 +450,7 @@ export function StoragePage() {
                         <Col span={24} key={f.key}>
                           <Form.Item label={f.label}>
                             {f.key === "provider" &&
-                            Form.useWatch("rclone_type", form) === "s3" &&
+                            rcloneType === "s3" &&
                             s3Providers &&
                             s3Providers.length > 0 ? (
                               <Select
