@@ -156,14 +156,16 @@ func (r PlainRunner) syncDir(ctx context.Context, dir string, excludes []string)
 		operation = "copyto"
 	}
 	args = append(args, operation, cleaned, r.remoteArg(remotePath))
-	for _, exclude := range excludes {
-		args = append(args, "--exclude", exclude)
+	if operation == "sync" {
+		for _, exclude := range excludes {
+			args = append(args, "--exclude", exclude)
+		}
 	}
 	cmd := r.command(ctx, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return commandError("rclone sync "+dir, stderr.String(), err)
+		return commandError("rclone "+operation+" "+dir, stderr.String(), err)
 	}
 	return nil
 }

@@ -43,6 +43,33 @@ esac
 	}
 }
 
+func TestPlainBackupSingleFileDoesNotPassExcludeFilters(t *testing.T) {
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "rclone.log")
+	requireWriteExecutable(t, filepath.Join(binDir, "rclone"), `#!/bin/sh
+printf '%s\n' "$*" >> "$RCLONE_TEST_LOG"
+`)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("RCLONE_TEST_LOG", logPath)
+	source := filepath.Join(t.TempDir(), "docker-compose.yml")
+	if err := os.WriteFile(source, []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := PlainRunner{RcloneConfPath: "/tmp/rclone.conf", RepoPath: "repo/source"}
+	if err := runner.syncDir(context.Background(), source, []string{"*.log", "/tmp"}); err != nil {
+		t.Fatalf("syncDir() error = %v", err)
+	}
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := string(raw)
+	if !strings.Contains(command, " copyto ") || strings.Contains(command, "--exclude") {
+		t.Fatalf("syncDir() command = %s", command)
+	}
+}
+
 func TestPlainRestoreRejectsMissingSelectedPath(t *testing.T) {
 	binDir := t.TempDir()
 	script := `#!/bin/sh
