@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"vaultfleet/internal/master/db"
 	"vaultfleet/internal/master/events"
 	"vaultfleet/pkg/protocol"
+	"vaultfleet/pkg/schedulecron"
 )
 
 type PolicyHandler struct {
@@ -289,7 +291,14 @@ func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
 	if !ok {
 		return
 	}
-	retention, ok := marshalPolicyJSON(c, request.Retention)
+	if !validatePolicySchedule(c, request.Schedule) {
+		return
+	}
+	normalizedRetention, ok := validatePolicyRetention(c, request.Retention)
+	if !ok {
+		return
+	}
+	retention, ok := marshalPolicyJSON(c, normalizedRetention)
 	if !ok {
 		return
 	}
@@ -712,10 +721,17 @@ func (h *PolicyHandler) UpdatePolicy(c *gin.Context) {
 		policy.PostBackupHook = postBackupHookRaw
 	}
 	if request.Schedule != "" {
+		if !validatePolicySchedule(c, request.Schedule) {
+			return
+		}
 		policy.Schedule = request.Schedule
 	}
 	if request.Retention != nil {
-		retention, ok := marshalPolicyJSON(c, request.Retention)
+		normalizedRetention, ok := validatePolicyRetention(c, request.Retention)
+		if !ok {
+			return
+		}
+		retention, ok := marshalPolicyJSON(c, normalizedRetention)
 		if !ok {
 			return
 		}
@@ -800,6 +816,71 @@ func (h *PolicyHandler) UpdatePolicy(c *gin.Context) {
 	h.publishPolicyChanged(policy.AgentID, "updated")
 
 	h.writePolicyResponse(c, http.StatusOK, policy)
+}
+
+var policyRetentionKeys = []string{"keep_last", "keep_daily", "keep_weekly", "keep_monthly"}
+
+func validatePolicySchedule(c *gin.Context, schedule string) bool {
+	if err := schedulecron.Validate(schedule); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid schedule: " + err.Error()})
+		return false
+	}
+	return true
+}
+
+func validatePolicyRetention(c *gin.Context, retention map[string]any) (map[string]int, bool) {
+	normalized := make(map[string]int, len(policyRetentionKeys))
+	allowed := make(map[string]struct{}, len(policyRetentionKeys))
+	for _, key := range policyRetentionKeys {
+		allowed[key] = struct{}{}
+	}
+	for key, raw := range retention {
+		if _, ok := allowed[key]; !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid retention field: " + key})
+			return nil, false
+		}
+		value, ok := retentionInteger(raw)
+		if !ok || value < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": key + " must be a non-negative integer"})
+			return nil, false
+		}
+		normalized[key] = value
+	}
+	for _, key := range policyRetentionKeys {
+		if _, ok := normalized[key]; !ok {
+			normalized[key] = 0
+		}
+	}
+	if normalized["keep_last"] == 0 && normalized["keep_daily"] == 0 && normalized["keep_weekly"] == 0 && normalized["keep_monthly"] == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "at least one retention value must be greater than zero"})
+		return nil, false
+	}
+	return normalized, true
+}
+
+func retentionInteger(raw any) (int, bool) {
+	switch value := raw.(type) {
+	case float64:
+		if math.Trunc(value) != value || value > float64(math.MaxInt) || value < float64(math.MinInt) {
+			return 0, false
+		}
+		return int(value), true
+	case int:
+		return value, true
+	case int64:
+		if int64(int(value)) != value {
+			return 0, false
+		}
+		return int(value), true
+	case json.Number:
+		parsed, err := value.Int64()
+		if err != nil || int64(int(parsed)) != parsed {
+			return 0, false
+		}
+		return int(parsed), true
+	default:
+		return 0, false
+	}
 }
 
 func (h *PolicyHandler) DeletePolicy(c *gin.Context) {

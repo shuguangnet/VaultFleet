@@ -143,7 +143,7 @@ curl -fsSL https://raw.githubusercontent.com/momo-z/VaultFleet/main/build/uninst
 1. 在 **存储配置** 中添加 S3 / R2 / MinIO、WebDAV、SFTP、本地路径或其他 rclone 后端，并执行连接测试。
 2. 在 **节点管理** 中创建节点，复制安装命令到目标服务器执行，等待 Agent 注册上线。
 3. 可选：在 **节点管理** 中给节点添加环境、区域或业务标签，例如 `prod`、`web`、`openstack:az1`，便于后续筛选和批量下发。
-4. 在 **备份策略** 中选择节点和存储，设置仓库子路径、备份来源、排除规则、Cron 调度、保留策略和任务超时。备份来源可以是宿主机目录，也可以是在支持 Docker 的 Agent 上发现并选择的 Docker 容器。
+4. 在 **备份策略** 中选择节点和存储，通过可视化执行计划或自定义 Cron 设置调度，并配置多层保留规则和任务超时。执行计划以 Agent 本地时间运行，详见 [备份调度与保留规则](docs/policy-scheduling-retention.md)。备份来源可以是宿主机目录，也可以是在支持 Docker 的 Agent 上发现并选择的 Docker 容器。
 5. 多节点场景下，可在已有策略的操作菜单中选择 **批量下发**，把策略克隆到选定节点或标签匹配节点。
 6. 如使用 WebDAV、AList 代理或限流存储，在策略的 **高级传输参数** 中调整 rclone 并发、请求频率、重试和超时。
 7. 如果业务运行在 Docker 中，优先备份挂载目录、bind mount 路径、`docker-compose.yml` 和 `.env`，并按需配置备份前后钩子执行数据库导出或短暂停服务。
@@ -330,6 +330,7 @@ npm run test
 
 - [English README](README.en.md)
 - [通信协议](docs/protocol.md)
+- [备份调度与保留规则](docs/policy-scheduling-retention.md)
 - [多用户、RBAC 与 API Token](docs/identity-access-control.md)
 - [Agent 批量升级与灰度发布](docs/agent-rollout-upgrades.md)
 - [发布流程](docs/release.md)

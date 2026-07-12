@@ -86,6 +86,81 @@ func TestCreatePolicy(t *testing.T) {
 	assert.NotEmpty(t, stored.ResticPassword)
 }
 
+func TestCreatePolicyAcceptsSupportedScheduleFormats(t *testing.T) {
+	for _, schedule := range []string{"30 2 * * *", "0 30 2 * * *", "@daily"} {
+		t.Run(schedule, func(t *testing.T) {
+			setup := setupTestPolicyAPI(t)
+			agent := createPolicyTestAgent(t, setup.database)
+			storage := createPolicyTestStorage(t, setup.database)
+
+			w := postAnyJSON(t, setup.router, "/api/policies", map[string]any{
+				"agent_id": agent.ID, "storage_id": storage.ID, "backup_dirs": []string{"/etc"},
+				"schedule": schedule, "retention": map[string]any{"keep_last": 7},
+			})
+
+			require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+			assert.Equal(t, schedule, parseJSON(t, w)["schedule"])
+		})
+	}
+}
+
+func TestCreatePolicyRejectsInvalidSchedule(t *testing.T) {
+	setup := setupTestPolicyAPI(t)
+	agent := createPolicyTestAgent(t, setup.database)
+	storage := createPolicyTestStorage(t, setup.database)
+
+	w := postAnyJSON(t, setup.router, "/api/policies", map[string]any{
+		"agent_id": agent.ID, "storage_id": storage.ID, "backup_dirs": []string{"/etc"},
+		"schedule": "not a cron expression", "retention": map[string]any{"keep_last": 7},
+	})
+
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, parseJSON(t, w)["error"], "invalid schedule")
+}
+
+func TestCreatePolicyValidatesRetention(t *testing.T) {
+	tests := []struct {
+		name      string
+		retention map[string]any
+	}{
+		{name: "negative", retention: map[string]any{"keep_last": -1}},
+		{name: "fractional", retention: map[string]any{"keep_last": 1.5}},
+		{name: "all zero", retention: map[string]any{"keep_last": 0, "keep_daily": 0, "keep_weekly": 0, "keep_monthly": 0}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setup := setupTestPolicyAPI(t)
+			agent := createPolicyTestAgent(t, setup.database)
+			storage := createPolicyTestStorage(t, setup.database)
+
+			w := postAnyJSON(t, setup.router, "/api/policies", map[string]any{
+				"agent_id": agent.ID, "storage_id": storage.ID, "backup_dirs": []string{"/etc"},
+				"schedule": "0 3 * * *", "retention": tt.retention,
+			})
+
+			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		})
+	}
+}
+
+func TestUpdatePolicyRejectsInvalidScheduleAndRetentionWithoutPersisting(t *testing.T) {
+	setup := setupTestPolicyAPI(t)
+	agent := createPolicyTestAgent(t, setup.database)
+	storage := createPolicyTestStorage(t, setup.database)
+	created := createPolicy(t, setup.router, agent.ID, storage.ID)
+	path := "/api/policies/" + created["id"].(string)
+
+	w := putJSON(t, setup.router, path, map[string]any{"schedule": "invalid"})
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	w = putJSON(t, setup.router, path, map[string]any{"retention": map[string]any{"keep_last": 2.5}})
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	var stored db.BackupPolicy
+	require.NoError(t, setup.database.DB.First(&stored, "id = ?", created["id"]).Error)
+	assert.Equal(t, "0 3 * * *", stored.Schedule)
+	assert.JSONEq(t, `{"keep_last":3,"keep_daily":0,"keep_weekly":0,"keep_monthly":0}`, stored.Retention)
+}
+
 func TestCreatePolicyDefaultsTimeoutHours(t *testing.T) {
 	setup := setupTestPolicyAPI(t)
 	agent := createPolicyTestAgent(t, setup.database)
@@ -848,7 +923,7 @@ func TestUpdatePolicyMarksSyncedFalse(t *testing.T) {
 	assert.False(t, stored.Synced)
 	assert.Equal(t, `["/var/lib"]`, stored.BackupDirs)
 	assert.Equal(t, `["cache"]`, stored.ExcludePatterns)
-	assert.JSONEq(t, `{"keep_daily":2,"keep_last":5}`, stored.Retention)
+	assert.JSONEq(t, `{"keep_last":5,"keep_daily":2,"keep_weekly":0,"keep_monthly":0}`, stored.Retention)
 }
 
 func TestUpdatePolicyRclone(t *testing.T) {

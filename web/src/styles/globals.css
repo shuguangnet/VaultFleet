@@ -716,6 +716,35 @@ button {
   font-size: 12px;
 }
 
+.vf-policy-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.vf-policy-weekdays .ant-checkbox-wrapper {
+  justify-content: center;
+  margin-inline-start: 0;
+  padding: 7px 2px;
+  border: 1px solid var(--vf-border);
+  border-radius: 4px;
+}
+
+.vf-policy-review-summary {
+  margin-top: 10px;
+  padding: 9px 10px;
+  background: var(--vf-surface-subtle);
+  border-left: 3px solid var(--vf-primary);
+  border-radius: 4px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 480px) {
+  .vf-policy-weekdays { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
 .vf-tree-row { transition: background-color 0.15s ease; }
 .vf-tree-row:hover { background: var(--vf-hover); }
 

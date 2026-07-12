@@ -98,6 +98,40 @@ beforeEach(() => {
 });
 
 describe("PoliciesPage rclone form state", () => {
+  it("switches schedule modes and edits custom retention", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listPolicies).mockResolvedValue([]);
+    vi.mocked(listAgents).mockResolvedValue([]);
+    vi.mocked(listStorage).mockResolvedValue([]);
+    vi.mocked(createPolicy).mockResolvedValue({} as never);
+    vi.mocked(updatePolicy).mockResolvedValue({} as never);
+    vi.mocked(deletePolicy).mockResolvedValue({} as never);
+    vi.mocked(backupNow).mockResolvedValue({ command_id: "cmd-1", message_id: "msg-1" });
+
+    render(
+      <QueryClientProvider client={newTestQueryClient()}>
+        <AntdApp><PoliciesPage /></AntdApp>
+      </QueryClientProvider>,
+    );
+
+    await clickButtonByText(user, "添加策略");
+    expect(screen.getByLabelText("执行时间")).toHaveValue("02:00");
+
+    const frequency = screen.getByLabelText("执行频率");
+    await user.click(frequency);
+    const weeklyOptions = await screen.findAllByText("每周指定日期");
+    const weeklyOption = weeklyOptions.map((node) => node.closest(".ant-select-item-option")).find(Boolean);
+    expect(weeklyOption).toBeTruthy();
+    await user.click(weeklyOption!);
+    expect(screen.getByRole("group", { name: "执行星期" })).toBeInTheDocument();
+    expect(screen.getByText(/每周一 02:00/)).toBeInTheDocument();
+
+    await clickButtonByText(user, "自定义");
+    await user.click(screen.getByLabelText("保留最近 N 次"));
+    await user.keyboard("{Control>}a{/Control}7");
+    expect(screen.getByLabelText("保留最近 N 次")).toHaveValue("7");
+  });
+
   it("resets WebDAV rclone defaults after successful create", async () => {
     const user = userEvent.setup();
     vi.mocked(listPolicies).mockResolvedValue([]);

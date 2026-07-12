@@ -56,6 +56,12 @@ import {
 } from "@/services/policies";
 import {
   describeCron,
+  describeRetention,
+  describeSchedule,
+  cronToSchedule,
+  isValidCron,
+  scheduleToCron,
+  type VisualSchedule,
 } from "@/lib/cron";
 import {
   safeFormatDate,
@@ -354,7 +360,7 @@ function detectRetentionPreset(r: RetentionConfig): string {
 }
 
 export function PoliciesPage() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const auth = useAuth();
   const canWritePolicies = auth.hasPermission(permissions.writePolicies);
   const canRunBackup = auth.hasPermission(permissions.runBackup);
@@ -578,7 +584,15 @@ export function PoliciesPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-      const submitData = {
+    if (!isValidCron(formData.schedule)) {
+      message.error("请输入有效的 Cron 表达式");
+      return;
+    }
+    if (Object.values(formData.retention).every((value) => Number(value ?? 0) === 0)) {
+      message.error("至少启用一项保留规则");
+      return;
+    }
+    const submitData = {
       ...formData,
       name: formData.name?.trim(),
       repo_path: "vaultfleet/" + formData.repo_path,
@@ -597,6 +611,37 @@ export function PoliciesPage() {
   };
 
   const selectedAgent = agents?.find((a) => a.id === formData.agent_id);
+  const visualSchedule = cronToSchedule(formData.schedule);
+  const scheduleValid = isValidCron(formData.schedule);
+  const retentionValid = Object.values(formData.retention).some(
+    (value) => Number.isInteger(Number(value)) && Number(value) > 0,
+  );
+
+  const applyVisualSchedule = (schedule: VisualSchedule) => {
+    setFormData((current) => ({ ...current, schedule: scheduleToCron(schedule) }));
+  };
+
+  const selectScheduleMode = (mode: VisualSchedule["mode"]) => {
+    if (mode === visualSchedule.mode) return;
+    const next: VisualSchedule =
+      mode === "daily" ? { mode, time: "02:00" } :
+      mode === "weekly" ? { mode, time: "02:00", weekdays: [1] } :
+      mode === "monthly" ? { mode, time: "02:00", monthDay: 1 } :
+      mode === "interval" ? { mode, interval: 6, unit: "hour" } :
+      { mode: "custom", expression: formData.schedule };
+    const apply = () => applyVisualSchedule(next);
+    if (visualSchedule.mode === "custom" && mode !== "custom" && formData.schedule.trim()) {
+      modal.confirm({
+        title: "替换自定义 Cron？",
+        content: "切换后将使用新的可视化执行计划，当前表达式不会自动转换。",
+        okText: "替换",
+        cancelText: "保留原值",
+        onOk: apply,
+      });
+      return;
+    }
+    apply();
+  };
   const isAgentOnline = selectedAgent?.status === "online";
   const dockerCapable = !!selectedAgent?.capabilities?.includes(
     "docker_workload_backups"
@@ -763,15 +808,26 @@ export function PoliciesPage() {
       key: "schedule",
       render: (v: string) => (
         <div>
-          <Typography.Text code style={{ fontSize: 12 }}>
-            {v}
-          </Typography.Text>
+          <Typography.Text>{describeCron(v)}</Typography.Text>
           <div>
-            <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-              {describeCron(v)}
-            </Typography.Text>
+            <Tooltip title={v}>
+              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                节点本地时间 · {v}
+              </Typography.Text>
+            </Tooltip>
           </div>
         </div>
+      ),
+    },
+    {
+      title: "保留规则",
+      dataIndex: "retention",
+      key: "retention",
+      responsive: ["lg"],
+      render: (value: RetentionConfig) => (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {describeRetention(value)}
+        </Typography.Text>
       ),
     },
     {
@@ -945,6 +1001,7 @@ export function PoliciesPage() {
               block
               size="large"
               loading={createMutation.isPending || updateMutation.isPending}
+              disabled={!scheduleValid || !retentionValid}
               onClick={handleSubmit as any}
             >
               提交策略
@@ -1983,19 +2040,73 @@ export function PoliciesPage() {
             </div>
           </div>
 
-          <div>
-            <Typography.Text strong>Cron 调度</Typography.Text>
-            <Input
-              style={{ marginTop: 4 }}
-              value={formData.schedule}
-              onChange={(e) =>
-                setFormData({ ...formData, schedule: e.target.value })
-              }
-              placeholder="0 2 * * *"
+          <div className="vf-form-section">
+            <Typography.Text strong>执行计划</Typography.Text>
+            <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
+              备份按照目标节点的本地时间执行。
+            </Typography.Paragraph>
+            <Select
+              aria-label="执行频率"
+              style={{ width: "100%" }}
+              value={visualSchedule.mode}
+              onChange={(value) => selectScheduleMode(value as VisualSchedule["mode"])}
+              options={[
+                { value: "daily", label: "每天" },
+                { value: "weekly", label: "每周指定日期" },
+                { value: "monthly", label: "每月指定日期" },
+                { value: "interval", label: "固定间隔" },
+                { value: "custom", label: "自定义 Cron" },
+              ]}
             />
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {describeCron(formData.schedule)} — 标准 Cron 表达式（分 时 日 月 周）。
-            </Typography.Text>
+            {visualSchedule.mode === "daily" && (
+              <Input type="time" aria-label="执行时间" style={{ marginTop: 8 }} value={visualSchedule.time}
+                onChange={(e) => applyVisualSchedule({ ...visualSchedule, time: e.target.value })} />
+            )}
+            {visualSchedule.mode === "weekly" && (
+              <div style={{ marginTop: 8 }}>
+                <Input type="time" aria-label="执行时间" value={visualSchedule.time}
+                  onChange={(e) => applyVisualSchedule({ ...visualSchedule, time: e.target.value })} />
+                <div className="vf-policy-weekdays" role="group" aria-label="执行星期">
+                  {[1, 2, 3, 4, 5, 6, 0].map((day) => (
+                    <Checkbox key={day} checked={visualSchedule.weekdays.includes(day)} onChange={(e) => {
+                      const weekdays = e.target.checked
+                        ? [...visualSchedule.weekdays, day]
+                        : visualSchedule.weekdays.filter((value) => value !== day);
+                      if (weekdays.length) applyVisualSchedule({ ...visualSchedule, weekdays });
+                    }}>{["日", "一", "二", "三", "四", "五", "六"][day]}</Checkbox>
+                  ))}
+                </div>
+              </div>
+            )}
+            {visualSchedule.mode === "monthly" && (
+              <Space.Compact block style={{ marginTop: 8 }}>
+                <InputNumber aria-label="每月日期" min={1} max={31} value={visualSchedule.monthDay}
+                  onChange={(value) => applyVisualSchedule({ ...visualSchedule, monthDay: Number(value ?? 1) })} />
+                <Input type="time" aria-label="执行时间" value={visualSchedule.time}
+                  onChange={(e) => applyVisualSchedule({ ...visualSchedule, time: e.target.value })} />
+              </Space.Compact>
+            )}
+            {visualSchedule.mode === "interval" && (
+              <Space.Compact block style={{ marginTop: 8 }}>
+                <InputNumber aria-label="间隔数值" min={1} max={visualSchedule.unit === "minute" ? 59 : 23}
+                  value={visualSchedule.interval} onChange={(value) => applyVisualSchedule({ ...visualSchedule, interval: Number(value ?? 1) })} />
+                <Select aria-label="间隔单位" value={visualSchedule.unit} style={{ width: 120 }}
+                  onChange={(unit) => applyVisualSchedule({ ...visualSchedule, unit })}
+                  options={[{ value: "minute", label: "分钟" }, { value: "hour", label: "小时" }]} />
+              </Space.Compact>
+            )}
+            {visualSchedule.mode === "custom" && (
+              <div style={{ marginTop: 8 }}>
+                <Input status={scheduleValid ? undefined : "error"} aria-label="自定义 Cron"
+                  value={visualSchedule.expression} onChange={(e) => setFormData({ ...formData, schedule: e.target.value })}
+                  placeholder="0 2 * * *" />
+                {!scheduleValid && <Typography.Text type="danger" style={{ fontSize: 12 }}>请输入有效的五段、六段 Cron 或描述符。</Typography.Text>}
+              </div>
+            )}
+            <div className="vf-policy-review-summary">
+              <Typography.Text strong>执行计划：</Typography.Text> {describeSchedule(formData.schedule)}
+              <div><Typography.Text type="secondary" style={{ fontSize: 12 }}>Cron：{formData.schedule}</Typography.Text></div>
+            </div>
           </div>
 
           <div>
@@ -2024,9 +2135,9 @@ export function PoliciesPage() {
               paddingTop: 12,
             }}
           >
-            <Typography.Text strong>保留策略 (Retention)</Typography.Text>
+            <Typography.Text strong>保留规则</Typography.Text>
             <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
-              每次备份后自动清理旧快照，释放存储空间。
+              各层规则取并集，同一快照满足多项时只保留一份；0 表示关闭该层级。
             </Typography.Paragraph>
             <Row gutter={[8, 8]}>
               {Object.entries(RETENTION_PRESETS).map(([key, preset]) => (
@@ -2058,16 +2169,17 @@ export function PoliciesPage() {
             {retentionPreset === "custom" && (
               <Row gutter={[8, 8]} style={{ marginTop: 8 }}>
                 {[
-                  { key: "keep_last", label: "保留最近副本" },
-                  { key: "keep_daily", label: "保留每日副本" },
-                  { key: "keep_weekly", label: "保留每周副本" },
-                  { key: "keep_monthly", label: "保留每月副本" },
+                  { key: "keep_last", label: "保留最近 N 次" },
+                  { key: "keep_daily", label: "每日保留 N 份" },
+                  { key: "keep_weekly", label: "每周保留 N 份" },
+                  { key: "keep_monthly", label: "每月保留 N 份" },
                 ].map((f) => (
                   <Col xs={24} sm={12} key={f.key}>
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    <label htmlFor={`retention-${f.key}`} style={{ display: "block", color: "var(--vf-text-muted)", fontSize: 12 }}>
                       {f.label}
-                    </Typography.Text>
+                    </label>
                     <InputNumber
+                      id={`retention-${f.key}`}
                       style={{ width: "100%" }}
                       min={0}
                       value={(formData.retention as any)[f.key] ?? 0}
@@ -2095,6 +2207,10 @@ export function PoliciesPage() {
                 {formData.retention.keep_monthly ?? 0} 份
               </div>
             )}
+            {!retentionValid && <Typography.Text type="danger" style={{ fontSize: 12 }}>至少一项保留数量必须大于 0。</Typography.Text>}
+            <div className="vf-policy-review-summary">
+              <Typography.Text strong>保留规则：</Typography.Text> {describeRetention(formData.retention)}
+            </div>
           </div>
 
           <div

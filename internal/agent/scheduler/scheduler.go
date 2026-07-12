@@ -1,24 +1,22 @@
 package scheduler
 
 import (
-	"strings"
 	"sync"
 
 	"github.com/robfig/cron/v3"
+
+	"vaultfleet/pkg/schedulecron"
 )
 
 type Scheduler struct {
 	cron    *cron.Cron
-	parser  cron.Parser
 	mu      sync.Mutex
 	entryID map[string]cron.EntryID
 }
 
 func New() *Scheduler {
-	parser := cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 	return &Scheduler{
-		cron:    cron.New(cron.WithParser(parser)),
-		parser:  parser,
+		cron:    cron.New(),
 		entryID: make(map[string]cron.EntryID),
 	}
 }
@@ -81,16 +79,9 @@ func (s *Scheduler) Validate(schedule string) error {
 }
 
 func (s *Scheduler) parse(schedule string) (cron.Schedule, error) {
-	return s.parser.Parse(normalizeCron(schedule))
+	return schedulecron.Parse(schedule)
 }
 
 func normalizeCron(schedule string) string {
-	schedule = strings.TrimSpace(schedule)
-	if strings.HasPrefix(schedule, "@") {
-		return schedule
-	}
-	if len(strings.Fields(schedule)) == 5 {
-		return "0 " + schedule
-	}
-	return schedule
+	return schedulecron.Normalize(schedule)
 }
