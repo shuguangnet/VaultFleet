@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,6 +28,11 @@ type PlainRunner struct {
 	RepoPath        string
 	CacheDir        string
 	RcloneExtraArgs map[string]string
+}
+
+type plainBackupMetadata struct {
+	Timestamp string   `json:"timestamp"`
+	Dirs      []string `json:"dirs"`
 }
 
 func (r PlainRunner) remoteArg(subPath string) string {
@@ -233,10 +239,7 @@ func (r PlainRunner) ListSnapshots(ctx context.Context) ([]SnapshotInfo, error) 
 		return nil, nil
 	}
 
-	var meta struct {
-		Timestamp string   `json:"timestamp"`
-		Dirs      []string `json:"dirs"`
-	}
+	var meta plainBackupMetadata
 	if err := json.Unmarshal(stdout.Bytes(), &meta); err != nil {
 		return nil, fmt.Errorf("parse plain backup metadata: %w", err)
 	}
@@ -282,46 +285,29 @@ func (r PlainRunner) RepositorySize(ctx context.Context) (int64, error) {
 // RestoreSnapshot copies all backed-up directories from the remote
 // to the target path.
 func (r PlainRunner) RestoreSnapshot(ctx context.Context, snapshotID, targetPath string, includePaths []string) error {
-	// List remote data subdirectories.
-	dataRemote := r.remoteArg("data")
-	args := r.rcloneBaseArgs()
-	args = append(args, "lsd", dataRemote)
-	cmd := r.command(ctx, args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return commandError("list plain backup dirs", stderr.String(), err)
+	meta, err := r.readBackupMetadata(ctx)
+	if err != nil {
+		return err
+	}
+	if len(meta.Dirs) == 0 {
+		return errors.New("plain backup metadata contains no source directories")
 	}
 
-	var dirs []string
-	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	restored := 0
+	for _, sourceDir := range meta.Dirs {
+		sourceDir = filepath.Clean(strings.TrimSpace(sourceDir))
+		if sourceDir == "." || sourceDir == string(filepath.Separator) {
 			continue
 		}
-		// rclone lsd output format: "-1 2026-01-01 00:00:00        -1 dirname"
-		parts := strings.Fields(line)
-		if len(parts) > 0 {
-			dirs = append(dirs, parts[len(parts)-1])
-		}
-	}
-
-	if len(dirs) == 0 {
-		// Fallback: try copying everything from data/
-		dirs = []string{""}
-	}
-
-	for _, dir := range dirs {
-		if len(includePaths) > 0 && !r.matchesIncludePaths(dir, includePaths) {
+		if len(includePaths) > 0 && !r.matchesIncludePaths(sourceDir, includePaths) {
 			continue
 		}
 
-		srcRemote := r.remoteArg("data/" + dir)
-		destPath := filepath.Join(targetPath, dir)
-		if dir == "" {
-			srcRemote = dataRemote
-			destPath = targetPath
+		dirName := filepath.Base(sourceDir)
+		srcRemote := r.remoteArg("data/" + dirName)
+		destPath := filepath.Join(targetPath, dirName)
+		if filepath.Clean(targetPath) == string(filepath.Separator) && filepath.IsAbs(sourceDir) {
+			destPath = sourceDir
 		}
 
 		copyArgs := r.rcloneBaseArgs()
@@ -332,18 +318,41 @@ func (r PlainRunner) RestoreSnapshot(ctx context.Context, snapshotID, targetPath
 		if err := cpCmd.Run(); err != nil {
 			return commandError("rclone restore copy", cpStderr.String(), err)
 		}
+		restored++
+	}
+	if len(includePaths) > 0 && restored == 0 {
+		return fmt.Errorf("none of the requested restore paths exist in plain backup metadata: %s", strings.Join(includePaths, ", "))
 	}
 	return nil
 }
 
-func (r PlainRunner) matchesIncludePaths(dirName string, includePaths []string) bool {
+func (r PlainRunner) readBackupMetadata(ctx context.Context) (plainBackupMetadata, error) {
+	args := r.rcloneBaseArgs()
+	args = append(args, "cat", r.remoteArg(".vaultfleet-backup-meta"))
+	cmd := r.command(ctx, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return plainBackupMetadata{}, commandError("read plain backup metadata", stderr.String(), err)
+	}
+	var meta plainBackupMetadata
+	if err := json.Unmarshal(stdout.Bytes(), &meta); err != nil {
+		return plainBackupMetadata{}, fmt.Errorf("parse plain backup metadata: %w", err)
+	}
+	return meta, nil
+}
+
+func (r PlainRunner) matchesIncludePaths(sourceDir string, includePaths []string) bool {
+	dirName := filepath.Base(sourceDir)
+	cleanSource := filepath.Clean(sourceDir)
 	for _, p := range includePaths {
-		base := filepath.Base(p)
+		cleanPath := filepath.Clean(p)
+		base := filepath.Base(cleanPath)
 		if base == dirName {
 			return true
 		}
-		// Also check if the include path is a prefix.
-		if strings.HasPrefix(p, "/"+dirName) || strings.HasPrefix(p, dirName) {
+		if cleanPath == cleanSource || strings.HasPrefix(cleanPath, cleanSource+string(filepath.Separator)) {
 			return true
 		}
 	}
