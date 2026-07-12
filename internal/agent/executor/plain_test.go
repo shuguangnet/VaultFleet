@@ -15,6 +15,7 @@ func TestPlainRestoreUsesMetadataAndPreservesAbsoluteDockerPath(t *testing.T) {
 printf '%s\n' "$*" >> "$RCLONE_TEST_LOG"
 case " $* " in
   *" cat "*) printf '%s' '{"timestamp":"2026-07-12T00:00:00Z","dirs":["/opt/app/mount","/srv/other"]}' ;;
+  *" lsjson "*) printf '%s' '{"IsDir":true}' ;;
 esac
 `
 	requireWriteExecutable(t, filepath.Join(binDir, "rclone"), script)
@@ -34,7 +35,7 @@ esac
 	if strings.Contains(commands, " lsd ") {
 		t.Fatalf("RestoreSnapshot() unexpectedly used lsd: %s", commands)
 	}
-	if !strings.Contains(commands, "copy vaultfleet:repo/source/data/mount /opt/app/mount") {
+	if !strings.Contains(commands, "copy vaultfleet:repo/source/data/opt/app/mount /opt/app/mount") {
 		t.Fatalf("RestoreSnapshot() copy command = %s", commands)
 	}
 	if strings.Contains(commands, "data/other") {
@@ -47,6 +48,7 @@ func TestPlainRestoreRejectsMissingSelectedPath(t *testing.T) {
 	script := `#!/bin/sh
 case " $* " in
   *" cat "*) printf '%s' '{"timestamp":"2026-07-12T00:00:00Z","dirs":["/srv/data"]}' ;;
+  *" lsjson "*) printf '%s' '{"IsDir":true}' ;;
 esac
 `
 	requireWriteExecutable(t, filepath.Join(binDir, "rclone"), script)
@@ -56,6 +58,38 @@ esac
 	err := runner.RestoreSnapshot(context.Background(), "snapshot-1", "/", []string{"/opt/missing"})
 	if err == nil || !strings.Contains(err.Error(), "none of the requested restore paths") {
 		t.Fatalf("RestoreSnapshot() error = %v", err)
+	}
+}
+
+func TestPlainRestoreDoesNotMatchUnselectedFileWithSameBaseName(t *testing.T) {
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "rclone.log")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$RCLONE_TEST_LOG"
+case " $* " in
+  *" cat "*) printf '%s' '{"timestamp":"2026-07-12T00:00:00Z","dirs":["/opt/1panel/apps/caddy/docker-compose.yml","/opt/1panel/apps/gitea/docker-compose.yml"]}' ;;
+  *" lsjson "*) printf '%s' '{"IsDir":false}' ;;
+esac
+`
+	requireWriteExecutable(t, filepath.Join(binDir, "rclone"), script)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("RCLONE_TEST_LOG", logPath)
+
+	runner := PlainRunner{RcloneConfPath: "/tmp/rclone.conf", RepoPath: "repo/source"}
+	if err := runner.RestoreSnapshot(context.Background(), "snapshot-1", "/", []string{"/opt/1panel/apps/gitea/docker-compose.yml"}); err != nil {
+		t.Fatalf("RestoreSnapshot() error = %v", err)
+	}
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := string(raw)
+	if strings.Contains(commands, "/opt/1panel/apps/caddy/docker-compose.yml") {
+		t.Fatalf("RestoreSnapshot() restored unselected Caddy file: %s", commands)
+	}
+	if !strings.Contains(commands, "copyto vaultfleet:repo/source/data/opt/1panel/apps/gitea/docker-compose.yml /opt/1panel/apps/gitea/docker-compose.yml") {
+		t.Fatalf("RestoreSnapshot() file command = %s", commands)
 	}
 }
 

@@ -148,8 +148,14 @@ func (r PlainRunner) RunBackupWithProgress(ctx context.Context, dirs []string, e
 }
 
 func (r PlainRunner) syncDir(ctx context.Context, dir string, excludes []string) error {
+	cleaned := filepath.Clean(dir)
+	remotePath := "data/" + strings.TrimLeft(filepath.ToSlash(cleaned), "/")
 	args := r.rcloneBaseArgs()
-	args = append(args, "sync", dir, r.remoteArg("data/"+filepath.Base(dir)))
+	operation := "sync"
+	if info, err := os.Stat(cleaned); err == nil && !info.IsDir() {
+		operation = "copyto"
+	}
+	args = append(args, operation, cleaned, r.remoteArg(remotePath))
 	for _, exclude := range excludes {
 		args = append(args, "--exclude", exclude)
 	}
@@ -304,14 +310,28 @@ func (r PlainRunner) RestoreSnapshot(ctx context.Context, snapshotID, targetPath
 		}
 
 		dirName := filepath.Base(sourceDir)
-		srcRemote := r.remoteArg("data/" + dirName)
+		remotePath := "data/" + strings.TrimLeft(filepath.ToSlash(sourceDir), "/")
+		srcRemote := r.remoteArg(remotePath)
 		destPath := filepath.Join(targetPath, dirName)
 		if filepath.Clean(targetPath) == string(filepath.Separator) && filepath.IsAbs(sourceDir) {
 			destPath = sourceDir
 		}
 
+		isDir, err := r.remotePathIsDir(ctx, srcRemote)
+		if err != nil {
+			// Backups created before path-preserving storage used only the basename.
+			srcRemote = r.remoteArg("data/" + dirName)
+			isDir, err = r.remotePathIsDir(ctx, srcRemote)
+			if err != nil {
+				return err
+			}
+		}
 		copyArgs := r.rcloneBaseArgs()
-		copyArgs = append(copyArgs, "copy", srcRemote, destPath)
+		operation := "copy"
+		if !isDir {
+			operation = "copyto"
+		}
+		copyArgs = append(copyArgs, operation, srcRemote, destPath)
 		cpCmd := r.command(ctx, copyArgs...)
 		var cpStderr bytes.Buffer
 		cpCmd.Stderr = &cpStderr
@@ -324,6 +344,25 @@ func (r PlainRunner) RestoreSnapshot(ctx context.Context, snapshotID, targetPath
 		return fmt.Errorf("none of the requested restore paths exist in plain backup metadata: %s", strings.Join(includePaths, ", "))
 	}
 	return nil
+}
+
+func (r PlainRunner) remotePathIsDir(ctx context.Context, remote string) (bool, error) {
+	args := r.rcloneBaseArgs()
+	args = append(args, "lsjson", remote, "--stat")
+	cmd := r.command(ctx, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return false, commandError("stat plain backup path", stderr.String(), err)
+	}
+	var info struct {
+		IsDir bool `json:"IsDir"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &info); err != nil {
+		return false, fmt.Errorf("parse plain backup path metadata: %w", err)
+	}
+	return info.IsDir, nil
 }
 
 func (r PlainRunner) readBackupMetadata(ctx context.Context) (plainBackupMetadata, error) {
@@ -349,7 +388,7 @@ func (r PlainRunner) matchesIncludePaths(sourceDir string, includePaths []string
 	for _, p := range includePaths {
 		cleanPath := filepath.Clean(p)
 		base := filepath.Base(cleanPath)
-		if base == dirName {
+		if !filepath.IsAbs(cleanPath) && base == dirName {
 			return true
 		}
 		if cleanPath == cleanSource || strings.HasPrefix(cleanPath, cleanSource+string(filepath.Separator)) {

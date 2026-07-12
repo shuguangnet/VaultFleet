@@ -753,6 +753,27 @@ button {
   white-space: pre-wrap;
 }
 
+.vf-task-log-viewport {
+  height: calc(100vh - 190px);
+  overflow: auto;
+  padding: 12px;
+  color: #e5e7eb;
+  background: #101820;
+  border: 1px solid #263746;
+  border-radius: 6px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.vf-task-log-line { white-space: pre-wrap; word-break: break-word; }
+.vf-task-log-time { color: #94a3b8; }
+.vf-task-log-level { color: #93c5fd; }
+.vf-task-log-level-error { color: #f87171; }
+.vf-task-log-phase { color: #facc15; }
+.vf-task-log-stream { color: #a7f3d0; }
+.vf-task-log-truncated { color: #fbbf24; }
+
 .vf-warning-panel {
   display: flex;
   align-items: center;

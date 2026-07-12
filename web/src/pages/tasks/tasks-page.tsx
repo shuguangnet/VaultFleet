@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   App,
@@ -31,7 +31,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { backupNow, listAgents } from "@/services/agents";
 import { cancelTask, deleteTask, getTaskLogs, listTasks, taskArtifactDownloadUrl } from "@/services/tasks";
-import type { BackupProgress, TaskHistory, TaskLogLine, TaskLogResponse, TaskLogStatus } from "@/types/task";
+import type { BackupProgress, TaskHistory, TaskLogLine, TaskLogStatus } from "@/types/task";
 import { safeFormatDate } from "@/lib/date";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -248,13 +248,6 @@ export function TasksPage() {
   const [cancelTaskId, setCancelTaskId] = useState<string | null>(null);
   const [deleteTaskId, setDeleteTaskId] = useState<string | null>(null);
   const [logTask, setLogTask] = useState<TaskHistory | null>(null);
-  const [logLines, setLogLines] = useState<TaskLogLine[]>([]);
-  const [logStatus, setLogStatus] = useState<TaskLogStatus>("empty");
-  const [logMeta, setLogMeta] = useState({ latest: 0, truncated: false, dropped: 0 });
-  const [followLogs, setFollowLogs] = useState(true);
-  const [logsLoading, setLogsLoading] = useState(false);
-  const latestLogRef = useRef(0);
-  const logViewportRef = useRef<HTMLDivElement | null>(null);
 
   const filters = useMemo(
     () => ({
@@ -312,60 +305,6 @@ export function TasksPage() {
     },
     onError: (error: any) => message.error("删除任务历史失败: " + error.message),
   });
-
-  const loadTaskLogs = useCallback(
-    async (after = latestLogRef.current) => {
-      if (!logTask) return;
-      setLogsLoading(true);
-      try {
-        const response = await getTaskLogs(logTask.id, { after, limit: 300 });
-        setLogStatus(response.status);
-        setLogMeta({
-          latest: response.latest_sequence,
-          truncated: response.truncated,
-          dropped: response.dropped_lines,
-        });
-        latestLogRef.current = Math.max(latestLogRef.current, response.latest_sequence || 0);
-        setLogLines((current) => mergeTaskLogLines(after > 0 ? current : [], response));
-      } catch (error: any) {
-        message.error(error.message);
-      } finally {
-        setLogsLoading(false);
-      }
-    },
-    [logTask, message]
-  );
-
-  useEffect(() => {
-    latestLogRef.current = 0;
-    setLogLines([]);
-    setLogStatus("empty");
-    setLogMeta({ latest: 0, truncated: false, dropped: 0 });
-    if (logTask) {
-      void loadTaskLogs(0);
-    }
-  }, [logTask?.id, loadTaskLogs]);
-
-  useEffect(() => {
-    if (!logTask || !followLogs) return;
-    const active = logTask.status === "pending" || logTask.status === "running";
-    if (!active) return;
-    const id = window.setInterval(() => {
-      void loadTaskLogs();
-    }, 2000);
-    return () => window.clearInterval(id);
-  }, [followLogs, loadTaskLogs, logTask]);
-
-  useEffect(() => {
-    if (!followLogs || !logViewportRef.current) return;
-    logViewportRef.current.scrollTop = logViewportRef.current.scrollHeight;
-  }, [followLogs, logLines]);
-
-  const copyVisibleLogs = async () => {
-    const text = logLines.map(formatTaskLogLine).join("\n");
-    await navigator.clipboard.writeText(text);
-    message.success("日志已复制");
-  };
 
   const handleFilterChange = (key: string, value: string) => {
     const newParams = new URLSearchParams(searchParams);
@@ -447,7 +386,6 @@ export function TasksPage() {
               icon={<FileTextOutlined />}
               onClick={(e) => {
                 e.stopPropagation();
-                setFollowLogs(true);
                 setLogTask(record);
               }}
             >
@@ -824,90 +762,102 @@ export function TasksPage() {
         loading={deleteMutation.isPending}
       />
 
-      <Drawer
-        className="vf-task-log-drawer"
-        title={logTask ? `任务日志 · ${taskTypeLabel(logTask.type)}` : "任务日志"}
-        open={!!logTask}
-        onClose={() => setLogTask(null)}
-        size={760}
-        extra={
-          <Space className="vf-task-log-toolbar">
-            <Tooltip title={followLogs ? "暂停日志跟随" : "继续日志跟随"}>
-              <Button
-                aria-label={followLogs ? "暂停日志跟随" : "继续日志跟随"}
-                size="small"
-                icon={followLogs ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
-                onClick={() => setFollowLogs((v) => !v)}
-              >
-                <span className="vf-task-log-button-label">{followLogs ? "暂停" : "跟随"}</span>
-              </Button>
-            </Tooltip>
-            <Tooltip title="刷新日志">
-              <Button
-                aria-label="刷新日志"
-                size="small"
-                icon={<ReloadOutlined spin={logsLoading} />}
-                onClick={() => loadTaskLogs(0)}
-                disabled={logsLoading}
-              >
-                <span className="vf-task-log-button-label">刷新</span>
-              </Button>
-            </Tooltip>
-            <Tooltip title="复制可见日志">
-              <Button
-                aria-label="复制可见日志"
-                size="small"
-                icon={<CopyOutlined />}
-                onClick={copyVisibleLogs}
-                disabled={logLines.length === 0}
-              >
-                <span className="vf-task-log-button-label">复制</span>
-              </Button>
-            </Tooltip>
-          </Space>
-        }
-      >
-        {logMeta.truncated && (
-          <div style={{ marginBottom: 12 }}>
-            <Tag color="orange">已丢弃 {logMeta.dropped} 行旧日志</Tag>
-          </div>
-        )}
-        {logLines.length === 0 ? (
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={taskLogStatusText(logStatus)}
-          />
-        ) : (
-          <div
-            ref={logViewportRef}
-            style={{
-              height: "calc(100vh - 190px)",
-              overflow: "auto",
-              background: "#0f172a",
-              color: "#e5e7eb",
-              borderRadius: 6,
-              padding: 12,
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-              fontSize: 12,
-              lineHeight: 1.65,
-            }}
-          >
-            {logLines.map((line) => (
-              <div key={`${line.sequence}-${line.timestamp}`} style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                <span style={{ color: "#94a3b8" }}>{formatLogTime(line.timestamp)}</span>{" "}
-                <span style={{ color: line.level === "error" ? "#f87171" : "#93c5fd" }}>
-                  {line.level}
-                </span>{" "}
-                <span style={{ color: "#facc15" }}>{line.phase || "-"}</span>{" "}
-                <span style={{ color: "#a7f3d0" }}>{line.stream || "system"}</span>{" "}
-                <span>{line.line}</span>
-                {line.truncated ? <span style={{ color: "#fbbf24" }}> [truncated]</span> : null}
-              </div>
-            ))}
-          </div>
-        )}
-      </Drawer>
+      <TaskLogDrawer task={logTask} onClose={() => setLogTask(null)} />
     </div>
+  );
+}
+
+function TaskLogDrawer({ task, onClose }: { task: TaskHistory | null; onClose: () => void }) {
+  const { message } = App.useApp();
+  const [follow, setFollow] = useState(true);
+  const active = task?.status === "pending" || task?.status === "running";
+  const { data, isFetching, refetch, error } = useQuery({
+    queryKey: ["task-logs", task?.id],
+    queryFn: () => getTaskLogs(task!.id, { limit: 1000 }),
+    enabled: !!task,
+    refetchInterval: follow && active ? 2000 : false,
+    retry: 1,
+  });
+  const lines = Array.isArray(data?.lines) ? data.lines : [];
+  const status = data?.status ?? "empty";
+
+  const copyLogs = async () => {
+    try {
+      await navigator.clipboard.writeText(lines.map(formatTaskLogLine).join("\n"));
+      message.success("日志已复制");
+    } catch (copyError: any) {
+      message.error(copyError?.message || "复制日志失败");
+    }
+  };
+
+  return (
+    <Drawer
+      className="vf-task-log-drawer"
+      title={task ? `任务日志 · ${taskTypeLabel(task.type)}` : "任务日志"}
+      open={!!task}
+      onClose={onClose}
+      size={760}
+      destroyOnHidden
+      extra={
+        <Space className="vf-task-log-toolbar">
+          <Tooltip title={follow ? "暂停日志跟随" : "继续日志跟随"}>
+            <Button
+              aria-label={follow ? "暂停日志跟随" : "继续日志跟随"}
+              size="small"
+              icon={follow ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
+              onClick={() => setFollow((value) => !value)}
+            >
+              <span className="vf-task-log-button-label">{follow ? "暂停" : "跟随"}</span>
+            </Button>
+          </Tooltip>
+          <Tooltip title="刷新日志">
+            <Button
+              aria-label="刷新日志"
+              size="small"
+              icon={<ReloadOutlined spin={isFetching} />}
+              onClick={() => void refetch()}
+              disabled={isFetching}
+            >
+              <span className="vf-task-log-button-label">刷新</span>
+            </Button>
+          </Tooltip>
+          <Tooltip title="复制可见日志">
+            <Button
+              aria-label="复制可见日志"
+              size="small"
+              icon={<CopyOutlined />}
+              onClick={() => void copyLogs()}
+              disabled={lines.length === 0}
+            >
+              <span className="vf-task-log-button-label">复制</span>
+            </Button>
+          </Tooltip>
+        </Space>
+      }
+    >
+      <ErrorPanel error={error} title="无法加载任务日志" onRetry={() => void refetch()} retrying={isFetching} />
+      {data?.truncated && (
+        <div style={{ margin: "12px 0" }}>
+          <Tag color="orange">已丢弃 {data.dropped_lines} 行旧日志</Tag>
+        </div>
+      )}
+      {!error && lines.length === 0 ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={taskLogStatusText(status)} />
+      ) : lines.length > 0 ? (
+        <div className="vf-task-log-viewport">
+          {lines.map((line) => (
+            <div key={`${line.sequence}-${line.timestamp}`} className="vf-task-log-line">
+              <span className="vf-task-log-time">{formatLogTime(line.timestamp)}</span>{" "}
+              <span className={line.level === "error" ? "vf-task-log-level-error" : "vf-task-log-level"}>{line.level}</span>{" "}
+              <span className="vf-task-log-phase">{line.phase || "-"}</span>{" "}
+              <span className="vf-task-log-stream">{line.stream || "system"}</span>{" "}
+              <span>{String(line.line ?? "")}</span>
+              {line.truncated ? <span className="vf-task-log-truncated"> [truncated]</span> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </Drawer>
   );
 }
 
@@ -1033,19 +983,6 @@ export function formatTaskLogLine(line: TaskLogLine): string {
 function formatLogTime(value: string): string {
   if (!value) return "--:--:--";
   return safeFormatDate(value, "HH:mm:ss");
-}
-
-function mergeTaskLogLines(current: TaskLogLine[], response: TaskLogResponse): TaskLogLine[] {
-  if (!response.lines.length) return current;
-  const seen = new Set(current.map((line) => line.sequence));
-  const next = [...current];
-  for (const line of response.lines) {
-    if (!seen.has(line.sequence)) {
-      next.push(line);
-      seen.add(line.sequence);
-    }
-  }
-  return next.sort((a, b) => a.sequence - b.sequence);
 }
 
 function ProgressText({
