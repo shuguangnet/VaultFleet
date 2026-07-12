@@ -135,6 +135,18 @@ func TestBuildDownloadURLLatest(t *testing.T) {
 	assert.Equal(t, "https://github.com/shuguangnet/VaultFleet/releases/latest/download/vaultfleet-agent-linux-amd64", url)
 }
 
+func TestBuildDownloadURLCommitUsesAgentLatestRelease(t *testing.T) {
+	u := NewUpdater(Config{GitHubRepo: "shuguangnet/VaultFleet", Arch: "amd64"})
+	url := u.buildDownloadURL("shuguangnet/VaultFleet", "c7694e9bd0c4110825e2a050dc78a7c5caf76c81")
+	assert.Equal(t, "https://github.com/shuguangnet/VaultFleet/releases/download/agent-latest/vaultfleet-agent-linux-amd64", url)
+}
+
+func TestBuildDownloadURLAgentLatestTag(t *testing.T) {
+	u := NewUpdater(Config{GitHubRepo: "shuguangnet/VaultFleet", Arch: "amd64"})
+	url := u.buildDownloadURL("shuguangnet/VaultFleet", "agent-latest")
+	assert.Equal(t, "https://github.com/shuguangnet/VaultFleet/releases/download/agent-latest/vaultfleet-agent-linux-amd64", url)
+}
+
 func TestConcurrentUpdateCallsAreSafe(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("#!/bin/sh\nexit 0\n"))

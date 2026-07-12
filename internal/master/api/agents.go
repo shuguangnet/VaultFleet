@@ -350,7 +350,7 @@ func defaultAgentUpdateVersion(masterVersion string) string {
 	if isAgentReleaseVersion(masterVersion) {
 		return masterVersion
 	}
-	return "latest"
+	return "agent-latest"
 }
 
 func (h *AgentHandler) findAgentByID(c *gin.Context, id string) (db.Agent, bool) {

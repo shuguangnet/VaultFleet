@@ -67,7 +67,7 @@ func newAgentDownloadSource(version string, githubRepo string) agentDownloadSour
 		}
 	}
 	return agentDownloadSource{
-		baseURL:  fmt.Sprintf("https://github.com/%s/releases/latest/download", repo),
+		baseURL:  fmt.Sprintf("https://github.com/%s/releases/download/agent-latest", repo),
 		cacheKey: "latest",
 	}
 }

@@ -137,12 +137,27 @@ func (u *Updater) buildDownloadURL(repo, version string) string {
 	releasePath := fmt.Sprintf("releases/download/%s", version)
 	if strings.TrimSpace(version) == "latest" {
 		releasePath = "releases/latest/download"
+	} else if isGitCommitVersion(version) {
+		releasePath = "releases/download/agent-latest"
 	}
 	rawURL := fmt.Sprintf("https://github.com/%s/%s/%s", repo, releasePath, assetName)
 	if u.config.GitHubProxy != "" {
 		return fmt.Sprintf("%s/%s", u.config.GitHubProxy, rawURL)
 	}
 	return rawURL
+}
+
+func isGitCommitVersion(version string) bool {
+	version = strings.TrimSpace(version)
+	if len(version) != 40 {
+		return false
+	}
+	for _, char := range version {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func (u *Updater) download(url string) (string, error) {

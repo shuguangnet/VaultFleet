@@ -585,7 +585,7 @@ func TestUpdateAgentDefaultsToLatestWhenMasterVersionIsNotReleaseTag(t *testing.
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	payload, err := protocol.ParsePayload[protocol.UpdateAgentPayload](&hub.messages[0])
 	require.NoError(t, err)
-	assert.Equal(t, "latest", payload.Version)
+	assert.Equal(t, "agent-latest", payload.Version)
 }
 
 func TestUpdateAgentRejectsOfflineAgent(t *testing.T) {

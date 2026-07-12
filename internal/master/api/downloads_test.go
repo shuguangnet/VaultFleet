@@ -105,6 +105,12 @@ func TestDownloadRoutesRefreshesLatestCacheWhenVersionIsNotReleaseTag(t *testing
 	assert.Equal(t, 1, requests)
 }
 
+func TestDevelopmentBuildDownloadsAgentLatestRelease(t *testing.T) {
+	source := newAgentDownloadSource("c7694e9bd0c4110825e2a050dc78a7c5caf76c81", "shuguangnet/VaultFleet")
+	assert.Equal(t, "https://github.com/shuguangnet/VaultFleet/releases/download/agent-latest", source.baseURL)
+	assert.Equal(t, "latest", source.cacheKey)
+}
+
 func TestDownloadRoutesRejectMissingOrUnsafeAgentPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
