@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NotificationsPage } from "./notifications-page";
 import { listNotifications } from "@/services/notifications";
+import { AuthProvider } from "@/contexts/auth-context";
 
 vi.mock("@/services/notifications", () => ({
   createNotification: vi.fn(),
@@ -29,7 +30,9 @@ describe("NotificationsPage", () => {
     render(
       <QueryClientProvider client={newTestQueryClient()}>
         <AntdApp>
-          <NotificationsPage />
+          <AuthProvider user={{ username: "admin", role: "admin", permissions: ["read:operational", "write:notifications"] }}>
+            <NotificationsPage />
+          </AuthProvider>
         </AntdApp>
       </QueryClientProvider>,
     );

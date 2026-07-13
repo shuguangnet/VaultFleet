@@ -27,27 +27,7 @@ export function AuthProvider({ user, children }: { user: AuthUser; children: Rea
 export function useAuth() {
   const value = useContext(AuthContext);
   if (!value) {
-    const permissions = [
-      "read:operational",
-      "write:nodes",
-      "write:storage",
-      "write:policies",
-      "run:backup",
-      "run:restore",
-      "write:notifications",
-      "read:system",
-      "admin:system",
-      "admin:users",
-      "admin:tokens",
-      "read:audit",
-    ];
-    return {
-      user: { username: "", role: "admin", permissions },
-      hasPermission: (permission: string) => permissions.includes(permission),
-      isAdmin: true,
-      isOperator: false,
-      isViewer: false,
-    } satisfies AuthContextValue;
+    throw new Error("useAuth must be used within an AuthProvider");
   }
   return value;
 }

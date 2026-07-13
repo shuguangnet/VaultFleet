@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StoragePage } from "./storage-page";
 import { listProviders, listStorage, updateStorage } from "@/services/storage";
+import { AuthProvider } from "@/contexts/auth-context";
 
 vi.mock("@/services/storage", () => ({
   createStorage: vi.fn(),
@@ -45,7 +46,9 @@ describe("StoragePage", () => {
     render(
       <QueryClientProvider client={newTestQueryClient()}>
         <AntdApp>
-          <StoragePage />
+          <AuthProvider user={{ username: "admin", role: "admin", permissions: ["read:operational", "write:storage"] }}>
+            <StoragePage />
+          </AuthProvider>
         </AntdApp>
       </QueryClientProvider>,
     );

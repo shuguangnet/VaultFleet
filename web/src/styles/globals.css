@@ -2,30 +2,6 @@
 
 :root {
   --radius: 0.5rem; /* 8px */
-  --background: 210 40% 98%;        /* #f8fafc */
-  --foreground: 222 47% 11%;        /* #0f172a */
-  --card: 0 0% 100%;                /* #ffffff */
-  --card-foreground: 222 47% 11%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 222 47% 11%;
-  --primary: 175 77% 26%;           /* #0f766e */
-  --primary-foreground: 0 0% 100%;
-  --secondary: 210 40% 96%;
-  --secondary-foreground: 222 47% 11%;
-  --muted: 210 40% 96%;
-  --muted-foreground: 215 16% 47%;  /* #64748b */
-  --accent: 210 40% 96%;
-  --accent-foreground: 222 47% 11%;
-  --destructive: 0 84% 60%;         /* #ef4444 */
-  --destructive-foreground: 0 0% 100%;
-  --border: 214 32% 91%;            /* #e2e8f0 */
-  --input: 214 32% 91%;
-  --ring: 175 77% 26%;
-  --chart-1: 175 77% 26%;
-  --chart-2: 160 84% 39%;
-  --chart-3: 38 92% 50%;
-  --chart-4: 217 91% 60%;
-  --chart-5: 270 50% 50%;
   --vf-bg: #f3f6f7;
   --vf-surface: #ffffff;
   --vf-surface-subtle: #f8fafb;
@@ -48,6 +24,9 @@
   --vf-warning-bg: #fffbe6;
   --vf-warning-border: #ffe58f;
   --vf-warning-text: #ad6800;
+  --vf-success: #10b981;
+  --vf-warning: #f59e0b;
+  --vf-error: #ef4444;
 }
 
 :root[data-theme="dark"] {
@@ -73,6 +52,9 @@
   --vf-warning-bg: #332b16;
   --vf-warning-border: #6d581d;
   --vf-warning-text: #f3c969;
+  --vf-success: #34d399;
+  --vf-warning: #fbbf24;
+  --vf-error: #f87171;
 }
 
 html,

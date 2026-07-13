@@ -9,7 +9,7 @@ import {
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import type { EChartsOption } from "echarts";
-import { colors } from "@/styles/theme-tokens";
+import { colors, darkColors } from "@/styles/theme-tokens";
 import { useColorMode } from "@/contexts/theme-context";
 
 use([
@@ -71,14 +71,14 @@ export function EChart({
     const chart = chartRef.current;
     if (!chart) return;
 
-    if (loading) {
-      chart.showLoading("default", {
-        text: "加载中",
-        color: colors.primary,
-        textColor: mode === "dark" ? "#a8b5c1" : colors.textSecondary,
-        maskColor:
-          mode === "dark" ? "rgba(24, 33, 43, 0.72)" : "rgba(255, 255, 255, 0.72)",
-      });
+if (loading) {
+        chart.showLoading("default", {
+          text: "加载中",
+          color: mode === "dark" ? darkColors.primary : colors.primary,
+          textColor: mode === "dark" ? darkColors.textSecondary : colors.textSecondary,
+          maskColor:
+            mode === "dark" ? "rgba(24, 33, 43, 0.72)" : "rgba(255, 255, 255, 0.72)",
+        });
     } else {
       chart.hideLoading();
     }

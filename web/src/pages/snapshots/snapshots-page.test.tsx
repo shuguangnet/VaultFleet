@@ -10,6 +10,7 @@ import { listPolicies } from "@/services/policies";
 import { listSnapshots, preflightRestore, restoreSnapshot } from "@/services/snapshots";
 import { listStorage } from "@/services/storage";
 import { SnapshotsPage } from "./snapshots-page";
+import { AuthProvider } from "@/contexts/auth-context";
 
 vi.mock("@/services/agents", () => ({
   listAgents: vi.fn(),
@@ -346,7 +347,9 @@ function renderPage(initialEntry = "/snapshots?agent_id=agent-1") {
     <QueryClientProvider client={queryClient}>
       <AntdApp>
         <MemoryRouter initialEntries={[initialEntry]}>
-          <SnapshotsPage />
+          <AuthProvider user={{ username: "admin", role: "admin", permissions: ["read:operational", "run:restore"] }}>
+            <SnapshotsPage />
+          </AuthProvider>
         </MemoryRouter>
       </AntdApp>
     </QueryClientProvider>,

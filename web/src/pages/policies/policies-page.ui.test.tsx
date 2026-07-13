@@ -21,6 +21,9 @@ import {
 } from "@/services/policies";
 import { listStorage } from "@/services/storage";
 import { PoliciesPage } from "./policies-page";
+import { AuthProvider } from "@/contexts/auth-context";
+
+const ADMIN_USER = { username: "admin", role: "admin" as const, permissions: ["read:operational", "write:policies", "run:backup"] };
 
 vi.mock("@/services/agents", () => ({
   backupNow: vi.fn(),
@@ -110,7 +113,7 @@ describe("PoliciesPage rclone form state", () => {
 
     render(
       <QueryClientProvider client={newTestQueryClient()}>
-        <AntdApp><PoliciesPage /></AntdApp>
+        <AntdApp><AuthProvider user={ADMIN_USER}><PoliciesPage /></AuthProvider></AntdApp>
       </QueryClientProvider>,
     );
 
@@ -171,7 +174,9 @@ describe("PoliciesPage rclone form state", () => {
     render(
       <QueryClientProvider client={newTestQueryClient()}>
         <AntdApp>
-          <PoliciesPage />
+          <AuthProvider user={ADMIN_USER}>
+            <PoliciesPage />
+          </AuthProvider>
         </AntdApp>
       </QueryClientProvider>,
     );
@@ -245,7 +250,9 @@ describe("PoliciesPage rclone form state", () => {
     render(
       <QueryClientProvider client={newTestQueryClient()}>
         <AntdApp>
-          <PoliciesPage />
+          <AuthProvider user={ADMIN_USER}>
+            <PoliciesPage />
+          </AuthProvider>
         </AntdApp>
       </QueryClientProvider>,
     );
@@ -325,7 +332,9 @@ describe("PoliciesPage rclone form state", () => {
     render(
       <QueryClientProvider client={newTestQueryClient()}>
         <AntdApp>
-          <PoliciesPage />
+          <AuthProvider user={ADMIN_USER}>
+            <PoliciesPage />
+          </AuthProvider>
         </AntdApp>
       </QueryClientProvider>,
     );
@@ -436,7 +445,9 @@ describe("PoliciesPage rclone form state", () => {
     render(
       <QueryClientProvider client={newTestQueryClient()}>
         <AntdApp>
-          <PoliciesPage />
+          <AuthProvider user={ADMIN_USER}>
+            <PoliciesPage />
+          </AuthProvider>
         </AntdApp>
       </QueryClientProvider>,
     );
@@ -516,7 +527,9 @@ describe("PoliciesPage rclone form state", () => {
     render(
       <QueryClientProvider client={newTestQueryClient()}>
         <AntdApp>
-          <PoliciesPage />
+          <AuthProvider user={ADMIN_USER}>
+            <PoliciesPage />
+          </AuthProvider>
         </AntdApp>
       </QueryClientProvider>,
     );
@@ -604,7 +617,9 @@ describe("PoliciesPage rclone form state", () => {
     render(
       <QueryClientProvider client={newTestQueryClient()}>
         <AntdApp>
-          <PoliciesPage />
+          <AuthProvider user={ADMIN_USER}>
+            <PoliciesPage />
+          </AuthProvider>
         </AntdApp>
       </QueryClientProvider>,
     );
@@ -675,7 +690,9 @@ describe("PoliciesPage rclone form state", () => {
     render(
       <QueryClientProvider client={newTestQueryClient()}>
         <AntdApp>
-          <PoliciesPage />
+          <AuthProvider user={ADMIN_USER}>
+            <PoliciesPage />
+          </AuthProvider>
         </AntdApp>
       </QueryClientProvider>,
     );

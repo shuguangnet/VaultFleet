@@ -35,15 +35,7 @@ describe("NodesPage", () => {
     const fetchMock = vi.fn().mockResolvedValue(apiResponse([onlineAgent]));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(
-      <QueryClientProvider client={newTestQueryClient()}>
-        <AntdApp>
-          <MemoryRouter>
-            <NodesPage />
-          </MemoryRouter>
-        </AntdApp>
-      </QueryClientProvider>,
-    );
+    renderNodesWithUser({ username: "admin", role: "admin", permissions: ["read:operational", "write:nodes"] });
 
     const row = await screen.findByRole("row", { name: /ARM64-Node/ });
     expect(within(row).getByText("在线")).toBeInTheDocument();

@@ -34,7 +34,6 @@ import {
 import type { MenuProps } from "antd";
 import { listAgents } from "@/services/agents";
 import { logout } from "@/services/auth";
-import { colors } from "@/styles/theme-tokens";
 import type { AuthUser } from "@/types/api";
 import { AuthProvider } from "@/contexts/auth-context";
 import { useColorMode } from "@/contexts/theme-context";
@@ -206,7 +205,7 @@ export function AppLayout({ user }: AppLayoutProps) {
           width={320}
           className="vf-mobile-nav-drawer"
           styles={{
-            body: { padding: 0, background: colors.siderBg },
+            body: { padding: 0, background: "var(--vf-sider)" },
             header: { display: "none" },
           }}
         >
@@ -292,7 +291,7 @@ export function AppLayout({ user }: AppLayoutProps) {
                   <Avatar
                     size={32}
                     icon={<UserOutlined />}
-                    style={{ background: colors.primary }}
+                    style={{ background: "var(--vf-primary)" }}
                   />
                   <Typography.Text className="vf-header-username" style={{ fontSize: 13 }}>
                     {user.username}

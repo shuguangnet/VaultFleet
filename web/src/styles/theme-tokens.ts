@@ -1,6 +1,10 @@
 /**
  * VaultFleet 设计 token 集中定义。
- * 所有页面与组件应优先引用此处常量，避免直接硬编码 hex 颜色。
+ * 所有页面与组件应优先引用此处常量或对应的 --vf-* CSS 变量，避免直接硬编码 hex 颜色。
+ *
+ * `colors` 为浅色参考色板，用作 antd 主题基线与图表（ECharts 需要具体 hex）。
+ * `darkColors` 为深色色板，由 app.tsx 在深色模式下覆盖 antd token 时引用。
+ * 组件内联样式优先使用 `var(--vf-*)` CSS 变量以自动响应主题切换。
  */
 
 export const colors = {
@@ -40,6 +44,21 @@ export const colors = {
   inputHoverBorder: "#94a3b8",
   /** 输入框聚焦 outline */
   inputFocusOutline: "rgba(15, 118, 110, 0.14)",
+} as const;
+
+export const darkColors = {
+  primary: "#2dd4bf",
+  primaryHover: "#5eead4",
+  background: "#111820",
+  card: "#18212b",
+  elevated: "#1d2833",
+  border: "#31404f",
+  borderSecondary: "#253240",
+  text: "#edf3f7",
+  textSecondary: "#a8b5c1",
+  textTertiary: "#7f8d9a",
+  textQuaternary: "#647280",
+  siderBg: "#10181c",
 } as const;
 
 export const chartColors = {

@@ -35,7 +35,7 @@ import { listAgents } from "@/services/agents";
 import { listPolicies } from "@/services/policies";
 import { listStorage } from "@/services/storage";
 import { listTasks } from "@/services/tasks";
-import { chartColors, colors } from "@/styles/theme-tokens";
+import { chartColors, colors, darkColors } from "@/styles/theme-tokens";
 import type { TaskHistory } from "@/types/task";
 import { useColorMode } from "@/contexts/theme-context";
 import { ErrorPanel } from "@/components/error-panel";
@@ -70,11 +70,11 @@ export function DashboardPage() {
     () =>
       mode === "dark"
         ? {
-            text: "#edf3f7",
-            textSecondary: "#a8b5c1",
-            textTertiary: "#7f8d9a",
-            border: "#31404f",
-            borderSecondary: "#253240",
+            text: darkColors.text,
+            textSecondary: darkColors.textSecondary,
+            textTertiary: darkColors.textTertiary,
+            border: darkColors.border,
+            borderSecondary: darkColors.borderSecondary,
           }
         : colors,
     [mode]

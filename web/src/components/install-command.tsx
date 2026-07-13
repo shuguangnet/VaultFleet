@@ -6,7 +6,6 @@ import {
 } from "antd";
 import { CheckOutlined, CopyOutlined } from "@ant-design/icons";
 import { copyToClipboard } from "@/lib/utils";
-import { colors } from "@/styles/theme-tokens";
 
 type ScriptSource = "github" | "github-proxy" | "master";
 
@@ -81,7 +80,7 @@ export function InstallCommand({ enrollToken }: InstallCommandProps) {
                 padding: "10px 12px",
                 borderRadius: 6,
                 border: `1px solid ${
-                  scriptSource === option.value ? colors.primary : colors.border
+                  scriptSource === option.value ? "var(--vf-primary)" : "var(--vf-border)"
                 }`,
                 background:
                   scriptSource === option.value ? "var(--vf-primary-soft)" : "transparent",
@@ -94,7 +93,7 @@ export function InstallCommand({ enrollToken }: InstallCommandProps) {
                 value={option.value}
                 checked={scriptSource === option.value}
                 onChange={() => setScriptSource(option.value)}
-                style={{ marginTop: 2, accentColor: colors.primary }}
+                style={{ marginTop: 2, accentColor: "var(--vf-primary)" }}
               />
               <span>
                 <div style={{ fontSize: 13, fontWeight: 500 }}>{option.label}</div>
@@ -137,25 +136,25 @@ export function InstallCommand({ enrollToken }: InstallCommandProps) {
         <div style={{ position: "relative", marginTop: 6 }}>
           <pre
             style={{
-              background: colors.background,
-              padding: 16,
-              paddingRight: 48,
-              borderRadius: 6,
-              fontSize: 12,
-              lineHeight: 1.6,
-              margin: 0,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-all",
-              fontFamily:
-                'JetBrains Mono, Fira Code, SFMono-Regular, Menlo, Consolas, monospace',
-              border: `1px solid ${colors.border}`,
+background: "var(--vf-surface-subtle)",
+            padding: 16,
+            paddingRight: 48,
+            borderRadius: 6,
+            fontSize: 12,
+            lineHeight: 1.6,
+            margin: 0,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-all",
+            fontFamily:
+              'JetBrains Mono, Fira Code, SFMono-Regular, Menlo, Consolas, monospace',
+            border: `1px solid var(--vf-border)`,
             }}
           >
             {command}
           </pre>
           <Button
             type="text"
-            icon={copied ? <CheckOutlined style={{ color: colors.success }} /> : <CopyOutlined />}
+            icon={copied ? <CheckOutlined style={{ color: "var(--vf-success)" }} /> : <CopyOutlined />}
             onClick={handleCopy}
             className="vf-icon-button"
             style={{ position: "absolute", top: 8, right: 8 }}

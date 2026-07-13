@@ -7,6 +7,7 @@ import dayjs from "dayjs";
 import "dayjs/locale/zh-cn";
 import { router } from "./router";
 import { antdTheme } from "./styles/antd-theme";
+import { darkColors } from "./styles/theme-tokens";
 import { ThemeContext, type ColorMode } from "./contexts/theme-context";
 
 dayjs.locale("zh-cn");
@@ -39,17 +40,17 @@ export function App() {
       algorithm: mode === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm,
       token: {
         ...antdTheme.token,
-        colorPrimary: mode === "dark" ? "#2dd4bf" : "#0f766e",
-        colorLink: mode === "dark" ? "#5eead4" : "#0f766e",
-        colorBgLayout: mode === "dark" ? "#111820" : "#f3f6f7",
-        colorBgContainer: mode === "dark" ? "#18212b" : "#ffffff",
-        colorBorder: mode === "dark" ? "#31404f" : "#d9e1e3",
-        colorBorderSecondary: mode === "dark" ? "#253240" : "#eaf0f1",
-        colorTextBase: mode === "dark" ? "#edf3f7" : "#182329",
-        colorText: mode === "dark" ? "#edf3f7" : "#182329",
-        colorTextSecondary: mode === "dark" ? "#a8b5c1" : "#607077",
-        colorTextTertiary: mode === "dark" ? "#7f8d9a" : "#88979d",
-        colorTextQuaternary: mode === "dark" ? "#647280" : "#a4afb9",
+        colorPrimary: mode === "dark" ? darkColors.primary : "#0f766e",
+        colorLink: mode === "dark" ? darkColors.primaryHover : "#0f766e",
+        colorBgLayout: mode === "dark" ? darkColors.background : "#f3f6f7",
+        colorBgContainer: mode === "dark" ? darkColors.card : "#ffffff",
+        colorBorder: mode === "dark" ? darkColors.border : "#d9e1e3",
+        colorBorderSecondary: mode === "dark" ? darkColors.borderSecondary : "#eaf0f1",
+        colorTextBase: mode === "dark" ? darkColors.text : "#182329",
+        colorText: mode === "dark" ? darkColors.text : "#182329",
+        colorTextSecondary: mode === "dark" ? darkColors.textSecondary : "#607077",
+        colorTextTertiary: mode === "dark" ? darkColors.textTertiary : "#88979d",
+        colorTextQuaternary: mode === "dark" ? darkColors.textQuaternary : "#a4afb9",
       },
     }),
     [mode]
