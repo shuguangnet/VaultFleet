@@ -116,7 +116,7 @@ func buildRuntimeWithOptions(ctx context.Context, database *db.Database, options
 	hub := ws.NewHub()
 	bus := events.NewBus()
 	progressCache := ws.NewBackupProgressCache()
-	taskLogBuffer := tasklogs.NewBuffer()
+	taskLogBuffer := tasklogs.NewPersistentBuffer(database)
 	commandService := commands.NewService(database, hub)
 	rolloutService := agentrollout.NewService(database, hub)
 	api.SubscribeAgentStateEvents(database, bus)

@@ -272,10 +272,11 @@ func TestNewHandlerRestoresSavedPolicySchedule(t *testing.T) {
 		ConfigDir:   t.TempDir(),
 		Scheduler:   scheduler,
 		SendFunc:    sent.send,
-		BackupRunnerWithProgress: func(_ context.Context, cfg executor.ExecutorConfig, _ executor.ProgressCallback) executor.TaskResult {
+		BackupRunnerWithProgress: func(_ context.Context, cfg executor.ExecutorConfig, progress executor.ProgressCallback) executor.TaskResult {
 			runnerCalls.Add(1)
 			assert.Equal(t, []string{"/srv"}, filterManifestBackupDirs(cfg.BackupDirs))
 			assert.Equal(t, "bucket/agent-1", cfg.RepoPath)
+			progress("backup", &executor.BackupProgress{PercentDone: 1, TotalFiles: 1, FilesDone: 1})
 			return executor.TaskResult{Type: "backup", Status: "success", DurationMs: 10, SnapshotID: "snap-1"}
 		},
 	})
@@ -285,8 +286,19 @@ func TestNewHandlerRestoresSavedPolicySchedule(t *testing.T) {
 	assert.Equal(t, "0 2 * * *", scheduler.updates[0].schedule)
 
 	scheduler.updates[0].fn()
-	waitForMessageType(t, sent, protocol.TypeTaskResult, time.Second)
+	resultMessage := waitForMessageType(t, sent, protocol.TypeTaskResult, time.Second)
 	assert.Equal(t, int32(1), runnerCalls.Load())
+	assert.NotEmpty(t, resultMessage.ID)
+	for _, logMessage := range sent.messagesOfType(protocol.TypeTaskLog) {
+		assert.Equal(t, resultMessage.ID, logMessage.ID)
+		payload, err := protocol.ParsePayload[protocol.TaskLogPayload](&logMessage)
+		require.NoError(t, err)
+		assert.Equal(t, resultMessage.ID, payload.MessageID)
+	}
+	require.NotEmpty(t, sent.messagesOfType(protocol.TypeTaskLog))
+	progressMessages := sent.messagesOfType(protocol.TypeBackupProgress)
+	require.NotEmpty(t, progressMessages)
+	assert.Equal(t, resultMessage.ID, progressMessages[0].ID)
 }
 
 func TestNewHandlerRestoresAllSavedPolicySchedules(t *testing.T) {
@@ -311,6 +323,49 @@ func TestNewHandlerRestoresAllSavedPolicySchedules(t *testing.T) {
 	assert.Equal(t, "0 2 * * *", scheduler.updates[0].schedule)
 	assert.Equal(t, "policy:policy-b", scheduler.updates[1].agentID)
 	assert.Equal(t, "30 2 * * *", scheduler.updates[1].schedule)
+}
+
+func TestScheduledVerificationUsesOneMessageIDForLogsAndResult(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{
+		PolicyID: "policy-a",
+		AgentID:  "agent-1",
+		Schedule: "0 2 * * *",
+		Storage: protocol.StorageConfig{
+			RcloneType:   "s3",
+			RcloneConfig: map[string]string{"provider": "Other"},
+			RepoPath:     "bucket/policy-a",
+		},
+		Verification: &protocol.BackupVerificationSettings{Enabled: true, Schedule: "0 4 * * *"},
+	}))
+	scheduler := &recordingScheduler{}
+	sent := &sentMessages{}
+	NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   t.TempDir(),
+		Scheduler:   scheduler,
+		SendFunc:    sent.send,
+		BackupVerificationRunner: func(context.Context, executor.ExecutorConfig, protocol.BackupVerificationSettings) executor.TaskResult {
+			return executor.TaskResult{Type: "verify", Status: "success"}
+		},
+	})
+
+	require.Len(t, scheduler.updates, 2)
+	var verificationUpdate scheduledUpdate
+	for _, update := range scheduler.updates {
+		if update.agentID == "policy:policy-a:verify" {
+			verificationUpdate = update
+		}
+	}
+	require.NotNil(t, verificationUpdate.fn)
+	verificationUpdate.fn()
+	resultMessage := waitForMessageType(t, sent, protocol.TypeTaskResult, time.Second)
+	require.NotEmpty(t, resultMessage.ID)
+	logMessages := sent.messagesOfType(protocol.TypeTaskLog)
+	require.NotEmpty(t, logMessages)
+	for _, logMessage := range logMessages {
+		assert.Equal(t, resultMessage.ID, logMessage.ID)
+	}
 }
 
 func TestScheduledBackupsRunSeriallyWithoutDroppingPolicies(t *testing.T) {

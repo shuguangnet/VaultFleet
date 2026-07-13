@@ -262,6 +262,32 @@ func (th *TaskHistory) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
+type TaskLog struct {
+	ID             string     `gorm:"type:text;primaryKey" json:"id"`
+	AgentID        string     `gorm:"type:text;uniqueIndex:idx_task_logs_agent_message_sequence,priority:1;index;not null" json:"agent_id"`
+	MessageID      string     `gorm:"type:text;uniqueIndex:idx_task_logs_agent_message_sequence,priority:2;index;not null" json:"message_id"`
+	Sequence       int64      `gorm:"uniqueIndex:idx_task_logs_agent_message_sequence,priority:3;not null" json:"sequence"`
+	TaskType       string     `gorm:"type:text" json:"task_type"`
+	Timestamp      time.Time  `gorm:"index" json:"timestamp"`
+	Level          string     `gorm:"type:text" json:"level"`
+	Phase          string     `gorm:"type:text" json:"phase"`
+	Stream         string     `gorm:"type:text" json:"stream"`
+	Line           string     `gorm:"type:text;not null" json:"line"`
+	Truncated      bool       `json:"truncated"`
+	LatestSequence int64      `json:"latest_sequence"`
+	DroppedLines   int64      `json:"dropped_lines"`
+	LogUpdatedAt   time.Time  `gorm:"index" json:"log_updated_at"`
+	CompletedAt    *time.Time `gorm:"index" json:"completed_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+}
+
+func (l *TaskLog) BeforeCreate(tx *gorm.DB) error {
+	if l.ID == "" {
+		l.ID = uuid.NewString()
+	}
+	return nil
+}
+
 type Snapshot struct {
 	ID         string    `gorm:"type:text;primaryKey" json:"id"`
 	AgentID    string    `gorm:"type:text;uniqueIndex:idx_snapshots_agent_snapshot;not null" json:"agent_id"`

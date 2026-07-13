@@ -55,6 +55,17 @@ func TestNewMessage_GeneratesUniqueHexIDs(t *testing.T) {
 	}
 }
 
+func TestNewMessageIDGeneratesUniqueHexIDs(t *testing.T) {
+	first, err := NewMessageID()
+	require.NoError(t, err)
+	second, err := NewMessageID()
+	require.NoError(t, err)
+
+	assertHexMessageID(t, first)
+	assertHexMessageID(t, second)
+	assert.NotEqual(t, first, second)
+}
+
 func TestDefaultAgentCapabilitiesIncludesCurrentFeatureSet(t *testing.T) {
 	capabilities := DefaultAgentCapabilities()
 

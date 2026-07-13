@@ -113,16 +113,25 @@ func NewMessage(msgType string, payload interface{}) (*Message, error) {
 		return nil, err
 	}
 
-	idBytes := make([]byte, 16)
-	if _, err := rand.Read(idBytes); err != nil {
-		return nil, fmt.Errorf("generate message id: %w", err)
+	id, err := NewMessageID()
+	if err != nil {
+		return nil, err
 	}
 
 	return &Message{
 		Type:    msgType,
-		ID:      hex.EncodeToString(idBytes),
+		ID:      id,
 		Payload: json.RawMessage(data),
 	}, nil
+}
+
+// NewMessageID returns a cryptographically random identifier for one task or protocol message.
+func NewMessageID() (string, error) {
+	idBytes := make([]byte, 16)
+	if _, err := rand.Read(idBytes); err != nil {
+		return "", fmt.Errorf("generate message id: %w", err)
+	}
+	return hex.EncodeToString(idBytes), nil
 }
 
 // ParsePayload unmarshals a message payload into the requested payload type.

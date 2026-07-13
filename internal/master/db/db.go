@@ -45,6 +45,7 @@ func New(dataDir string) (*Database, error) {
 		&AgentUpgradeRollout{},
 		&AgentUpgradeRolloutItem{},
 		&TaskHistory{},
+		&TaskLog{},
 		&Snapshot{},
 		&NotificationConfig{},
 	); err != nil {

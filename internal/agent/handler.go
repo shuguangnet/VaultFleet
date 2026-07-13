@@ -275,8 +275,13 @@ func (h *Handler) updateVerificationSchedule(policyPayload *protocol.PolicyPushP
 	}
 	settings := *policyPayload.Verification
 	return h.scheduler.UpdateSchedule(jobID, settings.Schedule, func() {
-		startErr := h.tasks.Start("", taskTypeVerify, func(ctx context.Context) {
-			h.runBackupVerificationForPolicy(ctx, "", policyPayload.AgentID, policyPayload, settings)
+		messageID, err := protocol.NewMessageID()
+		if err != nil {
+			log.Printf("create scheduled backup verification id failed: %v", err)
+			return
+		}
+		startErr := h.tasks.Start(messageID, taskTypeVerify, func(ctx context.Context) {
+			h.runBackupVerificationForPolicy(ctx, messageID, policyPayload.AgentID, policyPayload, settings)
 		})
 		if startErr != nil {
 			log.Printf("scheduled backup verification skipped: %v", startErr)
@@ -415,12 +420,19 @@ func (h *Handler) runScheduledBackupQueue() {
 		h.scheduledMu.Unlock()
 
 		queueKey := policyScheduleJobID(policyPayload)
-		internalTaskID := queueKey + ":" + time.Now().UTC().Format("20060102T150405.000000000")
+		messageID, err := protocol.NewMessageID()
+		if err != nil {
+			log.Printf("create scheduled backup id for policy %s failed: %v", policyPayload.PolicyID, err)
+			h.scheduledMu.Lock()
+			delete(h.scheduledPending, queueKey)
+			h.scheduledMu.Unlock()
+			continue
+		}
 		done := make(chan struct{})
 		for {
-			startErr := h.tasks.Start(internalTaskID, taskTypeBackup, func(ctx context.Context) {
+			startErr := h.tasks.Start(messageID, taskTypeBackup, func(ctx context.Context) {
 				defer close(done)
-				h.runBackupForPolicy(ctx, "", policyPayload.AgentID, policyPayload)
+				h.runBackupForPolicy(ctx, messageID, policyPayload.AgentID, policyPayload)
 			})
 			if startErr == nil {
 				<-done

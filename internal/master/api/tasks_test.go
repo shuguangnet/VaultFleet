@@ -959,6 +959,28 @@ func TestGetTaskLogsReturnsIncrementalLines(t *testing.T) {
 	assert.Equal(t, "upload", line["line"])
 }
 
+func TestGetTaskLogsRestoresPersistentLinesAfterMasterRestart(t *testing.T) {
+	setup := setupTasksAPI(t)
+	agent := createTasksTestAgent(t, setup.database, "Persistent Logs Agent")
+	markTasksAgentCapabilities(t, setup.database, agent.ID, []string{protocol.CapabilityLiveTaskLogs})
+	history := seedTaskHistoryWithMessageID(t, setup.database, agent.ID, "backup", commands.TaskStatusSuccess, "snap-persistent-logs", time.Now(), "msg-persistent-logs")
+	persistent := tasklogs.NewPersistentBuffer(setup.database)
+	persistent.Add(agent.ID, history.MessageID, protocol.TaskLogPayload{Sequence: 1, Phase: "backup", Stream: "stdout", Line: "persisted upload"})
+	persistent.MarkComplete(agent.ID, history.MessageID)
+
+	setup.handler.TaskLogs = tasklogs.NewPersistentBuffer(setup.database)
+	w := getJSON(t, setup.router, "/api/tasks/"+history.ID+"/logs")
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var envelope map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &envelope))
+	data := envelope["data"].(map[string]any)
+	assert.Equal(t, "available", data["status"])
+	lines := data["lines"].([]any)
+	require.Len(t, lines, 1)
+	assert.Equal(t, "persisted upload", lines[0].(map[string]any)["line"])
+}
+
 func TestGetTaskLogsReturnsUnavailableStates(t *testing.T) {
 	setup := setupTasksAPI(t)
 	agent := createTasksTestAgent(t, setup.database, "online")
