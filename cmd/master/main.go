@@ -153,6 +153,17 @@ func buildRuntimeWithOptions(ctx context.Context, database *db.Database, options
 	wsHandler.GitHubRepo = githubRepo
 	go commandService.RunTimeoutScanner(ctx, options.commandTimeoutScanInterval)
 	bus.Subscribe(events.PolicyChanged, policyPusher.Handle)
+	bus.Subscribe(events.AgentOnline, func(event events.Event) {
+		agentID, ok := event.Payload.(string)
+		if !ok || agentID == "" {
+			return
+		}
+		if err := database.DB.Model(&db.BackupPolicy{}).Where("agent_id = ?", agentID).UpdateColumn("synced", false).Error; err != nil {
+			log.Printf("mark policies unsynced for agent %s failed: %v", agentID, err)
+			return
+		}
+		policyPusher.Handle(events.Event{Type: events.PolicyChanged, Payload: map[string]any{"agent_id": agentID, "action": "agent_online"}})
+	})
 	router := api.NewRouter(api.RouterConfig{
 		Database:           database,
 		Hub:                hub,

@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -41,6 +42,41 @@ func TestStore_SaveAndLoadPolicy(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
+}
+
+func TestStore_SaveAndLoadMultiplePolicies(t *testing.T) {
+	store := NewStore(t.TempDir())
+	first := &protocol.PolicyPushPayload{PolicyID: "policy-a", AgentID: "agent-001", Schedule: "0 2 * * *"}
+	second := &protocol.PolicyPushPayload{PolicyID: "policy-b", AgentID: "agent-001", Schedule: "30 2 * * *"}
+
+	require.NoError(t, store.SavePolicy(first))
+	require.NoError(t, store.SavePolicy(second))
+
+	policies, err := store.LoadPolicies()
+	require.NoError(t, err)
+	require.Len(t, policies, 2)
+	assert.Equal(t, first, policies[0])
+	assert.Equal(t, second, policies[1])
+
+	loaded, err := store.LoadPolicyByID("policy-a")
+	require.NoError(t, err)
+	assert.Equal(t, first, loaded)
+}
+
+func TestStore_LoadPoliciesDeduplicatesLegacyPolicy(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	legacy := &protocol.PolicyPushPayload{PolicyID: "policy-a", AgentID: "agent-001", Schedule: "0 1 * * *"}
+	legacyData, err := json.Marshal(legacy)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, PolicyFileName), legacyData, 0o600))
+	updated := &protocol.PolicyPushPayload{PolicyID: "policy-a", AgentID: "agent-001", Schedule: "0 2 * * *"}
+	require.NoError(t, store.SavePolicy(updated))
+
+	policies, err := store.LoadPolicies()
+	require.NoError(t, err)
+	require.Len(t, policies, 1)
+	assert.Equal(t, updated, policies[0])
 }
 
 func TestStore_LoadPolicyMissingReturnsError(t *testing.T) {

@@ -102,6 +102,10 @@ type Handler struct {
 	dockerAPI                agentdocker.API
 	tasks                    *taskManager
 	pendingResultsMu         sync.Mutex
+	scheduledMu              sync.Mutex
+	scheduledQueue           []*protocol.PolicyPushPayload
+	scheduledPending         map[string]struct{}
+	scheduledWorkerRunning   bool
 }
 
 func NewHandler(config HandlerConfig) *Handler {
@@ -190,6 +194,7 @@ func NewHandler(config HandlerConfig) *Handler {
 		updater:                  config.Updater,
 		dockerAPI:                config.DockerAPI,
 		tasks:                    newTaskManager(),
+		scheduledPending:         make(map[string]struct{}),
 	}
 	handler.restoreSavedPolicySchedule()
 	return handler
@@ -199,6 +204,8 @@ func (h *Handler) Handle(msg protocol.Message) {
 	switch msg.Type {
 	case protocol.TypePolicyPush:
 		h.handlePolicyPush(msg)
+	case protocol.TypePolicyReconcile:
+		h.handlePolicyReconcile(msg)
 	case protocol.TypeBackupNow:
 		h.handleBackupNow(msg)
 	case protocol.TypeBackupVerifyReq:
@@ -234,33 +241,34 @@ func (h *Handler) restoreSavedPolicySchedule() {
 	if h.policyStore == nil || h.scheduler == nil {
 		return
 	}
-	savedPolicy, err := h.policyStore.LoadPolicy()
+	savedPolicies, err := h.policyStore.LoadPolicies()
 	if err != nil {
 		if !os.IsNotExist(err) {
 			log.Printf("load saved policy schedule failed: %v", err)
 		}
 		return
 	}
-	if savedPolicy.Schedule == "" {
-		h.scheduler.RemoveJob(savedPolicy.AgentID)
-	} else if err := h.scheduler.UpdateSchedule(savedPolicy.AgentID, savedPolicy.Schedule, func() {
-		startErr := h.tasks.Start("", taskTypeBackup, func(ctx context.Context) {
-			h.runBackupForPolicy(ctx, "", savedPolicy.AgentID, savedPolicy)
-		})
-		if startErr != nil {
-			log.Printf("scheduled backup skipped: %v", startErr)
+	for _, savedPolicy := range savedPolicies {
+		savedPolicy := savedPolicy
+		jobID := policyScheduleJobID(savedPolicy)
+		if savedPolicy.Schedule == "" {
+			h.scheduler.RemoveJob(jobID)
+			continue
 		}
-	}); err != nil {
-		log.Printf("restore saved policy schedule failed: %v", err)
+		if err := h.scheduler.UpdateSchedule(jobID, savedPolicy.Schedule, func() {
+			h.startScheduledBackup(savedPolicy)
+		}); err != nil {
+			log.Printf("restore saved policy %s schedule failed: %v", savedPolicy.PolicyID, err)
+		}
+		h.updateVerificationSchedule(savedPolicy)
 	}
-	h.updateVerificationSchedule(savedPolicy)
 }
 
 func (h *Handler) updateVerificationSchedule(policyPayload *protocol.PolicyPushPayload) error {
 	if h.scheduler == nil || policyPayload == nil {
 		return nil
 	}
-	jobID := verificationScheduleJobID(policyPayload.AgentID)
+	jobID := verificationScheduleJobID(policyPayload)
 	if policyPayload.Verification == nil || !policyPayload.Verification.Enabled || strings.TrimSpace(policyPayload.Verification.Schedule) == "" {
 		h.scheduler.RemoveJob(jobID)
 		return nil
@@ -276,8 +284,18 @@ func (h *Handler) updateVerificationSchedule(policyPayload *protocol.PolicyPushP
 	})
 }
 
-func verificationScheduleJobID(agentID string) string {
-	return agentID + ":verify"
+func policyScheduleJobID(policyPayload *protocol.PolicyPushPayload) string {
+	if policyPayload != nil && strings.TrimSpace(policyPayload.PolicyID) != "" {
+		return "policy:" + policyPayload.PolicyID
+	}
+	if policyPayload == nil {
+		return "policy:legacy"
+	}
+	return policyPayload.AgentID
+}
+
+func verificationScheduleJobID(policyPayload *protocol.PolicyPushPayload) string {
+	return policyScheduleJobID(policyPayload) + ":verify"
 }
 
 func (h *Handler) handlePolicyPush(msg protocol.Message) {
@@ -307,7 +325,7 @@ func (h *Handler) handlePolicyPush(msg protocol.Message) {
 		}
 	}
 
-	rollbackState, err := h.snapshotPolicyState()
+	rollbackState, err := h.snapshotPolicyState(pushedPolicy.PolicyID)
 	if err != nil {
 		log.Printf("snapshot policy state failed: %v", err)
 		h.sendPolicyAck(msg.ID, pushedPolicy.AgentID, false, err.Error())
@@ -339,15 +357,11 @@ func (h *Handler) handlePolicyPush(msg protocol.Message) {
 	}
 
 	if h.scheduler != nil {
+		jobID := policyScheduleJobID(pushedPolicy)
 		if pushedPolicy.Schedule == "" {
-			h.scheduler.RemoveJob(pushedPolicy.AgentID)
-		} else if err := h.scheduler.UpdateSchedule(pushedPolicy.AgentID, pushedPolicy.Schedule, func() {
-			startErr := h.tasks.Start("", taskTypeBackup, func(ctx context.Context) {
-				h.runBackupForPolicy(ctx, "", pushedPolicy.AgentID, pushedPolicy)
-			})
-			if startErr != nil {
-				log.Printf("scheduled backup skipped: %v", startErr)
-			}
+			h.scheduler.RemoveJob(jobID)
+		} else if err := h.scheduler.UpdateSchedule(jobID, pushedPolicy.Schedule, func() {
+			h.startScheduledBackup(pushedPolicy)
 		}); err != nil {
 			log.Printf("update backup schedule failed: %v", err)
 			rollbackState.restore()
@@ -364,6 +378,107 @@ func (h *Handler) handlePolicyPush(msg protocol.Message) {
 	h.sendPolicyAck(msg.ID, pushedPolicy.AgentID, true, "")
 }
 
+func (h *Handler) startScheduledBackup(policyPayload *protocol.PolicyPushPayload) {
+	if policyPayload == nil {
+		return
+	}
+	policyCopy := *policyPayload
+	queueKey := policyScheduleJobID(&policyCopy)
+
+	h.scheduledMu.Lock()
+	if _, exists := h.scheduledPending[queueKey]; exists {
+		h.scheduledMu.Unlock()
+		return
+	}
+	h.scheduledPending[queueKey] = struct{}{}
+	h.scheduledQueue = append(h.scheduledQueue, &policyCopy)
+	if h.scheduledWorkerRunning {
+		h.scheduledMu.Unlock()
+		return
+	}
+	h.scheduledWorkerRunning = true
+	h.scheduledMu.Unlock()
+
+	go h.runScheduledBackupQueue()
+}
+
+func (h *Handler) runScheduledBackupQueue() {
+	for {
+		h.scheduledMu.Lock()
+		if len(h.scheduledQueue) == 0 {
+			h.scheduledWorkerRunning = false
+			h.scheduledMu.Unlock()
+			return
+		}
+		policyPayload := h.scheduledQueue[0]
+		h.scheduledQueue = h.scheduledQueue[1:]
+		h.scheduledMu.Unlock()
+
+		queueKey := policyScheduleJobID(policyPayload)
+		internalTaskID := queueKey + ":" + time.Now().UTC().Format("20060102T150405.000000000")
+		done := make(chan struct{})
+		for {
+			startErr := h.tasks.Start(internalTaskID, taskTypeBackup, func(ctx context.Context) {
+				defer close(done)
+				h.runBackupForPolicy(ctx, "", policyPayload.AgentID, policyPayload)
+			})
+			if startErr == nil {
+				<-done
+				break
+			}
+			if !errors.Is(startErr, errBackupAlreadyRunning) {
+				log.Printf("scheduled backup %s failed to start: %v", policyPayload.PolicyID, startErr)
+				break
+			}
+			time.Sleep(time.Second)
+		}
+
+		h.scheduledMu.Lock()
+		delete(h.scheduledPending, queueKey)
+		h.scheduledMu.Unlock()
+	}
+}
+
+func (h *Handler) handlePolicyReconcile(msg protocol.Message) {
+	if h.policyStore == nil {
+		return
+	}
+	payload, err := protocol.ParsePayload[protocol.PolicyReconcilePayload](&msg)
+	if err != nil {
+		log.Printf("parse policy reconciliation failed: %v", err)
+		return
+	}
+	if h.agentID != "" && payload.AgentID != "" && payload.AgentID != h.agentID {
+		return
+	}
+	active := make(map[string]struct{}, len(payload.PolicyIDs))
+	for _, policyID := range payload.PolicyIDs {
+		if policyID = strings.TrimSpace(policyID); policyID != "" {
+			active[policyID] = struct{}{}
+		}
+	}
+	storedPolicies, err := h.policyStore.LoadPolicies()
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("load policies for reconciliation failed: %v", err)
+		}
+		return
+	}
+	for _, storedPolicy := range storedPolicies {
+		if storedPolicy == nil {
+			continue
+		}
+		if _, keep := active[strings.TrimSpace(storedPolicy.PolicyID)]; keep && strings.TrimSpace(storedPolicy.PolicyID) != "" {
+			continue
+		}
+		h.scheduler.RemoveJob(policyScheduleJobID(storedPolicy))
+		h.scheduler.RemoveJob(verificationScheduleJobID(storedPolicy))
+		if err := h.policyStore.DeletePolicy(storedPolicy.PolicyID); err != nil {
+			log.Printf("delete stale policy %s failed: %v", storedPolicy.PolicyID, err)
+		}
+	}
+}
+
 type stagedPolicyFiles struct {
 	rclonePath   string
 	passwordPath string
@@ -371,6 +486,7 @@ type stagedPolicyFiles struct {
 
 type policyRollbackState struct {
 	policyStore *policy.Store
+	policyID    string
 	oldPolicy   *protocol.PolicyPushPayload
 	rclone      fileSnapshot
 	password    fileSnapshot
@@ -382,9 +498,9 @@ type fileSnapshot struct {
 	existed bool
 }
 
-func (h *Handler) snapshotPolicyState() (*policyRollbackState, error) {
-	state := &policyRollbackState{policyStore: h.policyStore}
-	oldPolicy, err := h.policyStore.LoadPolicy()
+func (h *Handler) snapshotPolicyState(policyID string) (*policyRollbackState, error) {
+	state := &policyRollbackState{policyStore: h.policyStore, policyID: policyID}
+	oldPolicy, err := h.policyStore.LoadPolicyByID(policyID)
 	if err == nil {
 		state.oldPolicy = oldPolicy
 	} else if !os.IsNotExist(err) {
@@ -520,7 +636,7 @@ func (s *policyRollbackState) restoreConfig() {
 
 func (s *policyRollbackState) restorePolicy() {
 	if s.oldPolicy == nil {
-		if err := s.policyStore.DeletePolicy(); err != nil {
+		if err := s.policyStore.DeletePolicy(s.policyID); err != nil {
 			log.Printf("remove new policy failed: %v", err)
 		}
 		return

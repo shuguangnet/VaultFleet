@@ -42,11 +42,17 @@ func (p *PolicyChangedPusher) Handle(event events.Event) {
 	if p == nil || p.Hub == nil {
 		return
 	}
-	if action := eventAction(event.Payload); action == "ack" {
-		return
-	}
 	agentID := eventAgentID(event.Payload)
 	if agentID == "" || !p.Hub.IsOnline(agentID) {
+		return
+	}
+	action := eventAction(event.Payload)
+	if action == "deleted" || action == "agent_online" {
+		if err := p.sendPolicyReconcile(agentID); err != nil {
+			log.Printf("reconcile policies for agent %s failed: %v", agentID, err)
+		}
+	}
+	if action == "agent_online" {
 		return
 	}
 	if p.Commands == nil {
@@ -66,6 +72,27 @@ func (p *PolicyChangedPusher) Handle(event events.Event) {
 	if err := p.Commands.DispatchNewPendingForAgent(context.Background(), agentID, 10); err != nil {
 		log.Printf("dispatch policy command for agent %s failed: %v", agentID, err)
 	}
+}
+
+func (p *PolicyChangedPusher) sendPolicyReconcile(agentID string) error {
+	if p == nil || p.DB == nil || p.DB.DB == nil || p.Hub == nil || agentID == "" {
+		return nil
+	}
+	var policyIDs []string
+	if err := p.DB.DB.Model(&db.BackupPolicy{}).
+		Where("agent_id = ?", agentID).
+		Order("id ASC").
+		Pluck("id", &policyIDs).Error; err != nil {
+		return err
+	}
+	msg, err := protocol.NewMessage(protocol.TypePolicyReconcile, protocol.PolicyReconcilePayload{
+		AgentID:   agentID,
+		PolicyIDs: policyIDs,
+	})
+	if err != nil {
+		return err
+	}
+	return p.Hub.Send(agentID, *msg)
 }
 
 func (p *PolicyChangedPusher) EnsureDurableCommand(ctx context.Context, agentID string) bool {
@@ -133,7 +160,7 @@ func (p *PolicyChangedPusher) retireSupersededPolicyPushCommands(agentID string,
 			activePolicyPushCommandStatuses(),
 		).
 		Where(
-			"(policy_id IS NULL OR policy_id <> ? OR storage_id IS NULL OR storage_id <> ? OR policy_updated_at IS NULL OR policy_updated_at <> ?)",
+			"policy_id = ? AND (storage_id IS NULL OR storage_id <> ? OR policy_updated_at IS NULL OR policy_updated_at <> ?)",
 			policyID,
 			storageID,
 			policyUpdatedAt,

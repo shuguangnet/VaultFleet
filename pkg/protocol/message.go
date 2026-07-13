@@ -18,6 +18,7 @@ const (
 	TypeDatabaseDiscoveryReq  = "database_discovery_req"
 	TypeDatabaseDiscoveryResp = "database_discovery_resp"
 	TypePolicyPush            = "policy_push"
+	TypePolicyReconcile       = "policy_reconcile"
 	TypePolicyAck             = "policy_ack"
 	TypeBackupNow             = "backup_now"
 	TypeBackupVerifyReq       = "backup_verify_req"
@@ -164,6 +165,12 @@ type PolicyAckPayload struct {
 	AgentID string `json:"agent_id"`
 	Success bool   `json:"success"`
 	Error   string `json:"error,omitempty"`
+}
+
+// PolicyReconcilePayload identifies the policies that should remain active on an agent.
+type PolicyReconcilePayload struct {
+	AgentID   string   `json:"agent_id"`
+	PolicyIDs []string `json:"policy_ids"`
 }
 
 // TaskResultPayload reports completion metadata for backup, restore, or maintenance work.

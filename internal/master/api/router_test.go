@@ -517,6 +517,62 @@ func TestPolicyChangedPusherSendsCurrentPolicyToOnlineAgent(t *testing.T) {
 	assert.Equal(t, sent.ID, command.MessageID)
 }
 
+func TestPolicyChangedPusherPushesMultiplePoliciesSequentiallyAfterAck(t *testing.T) {
+	database := newRouterAssemblyDatabase(t)
+	agent, storage := createRouterAssemblyPolicyFixtures(t, database)
+	older := createStorageTestPolicy(t, database, agent.ID, storage.ID, false)
+	newer := createStorageTestPolicy(t, database, agent.ID, storage.ID, false)
+	require.NoError(t, database.DB.Model(&older).Update("updated_at", time.Now().Add(-time.Hour)).Error)
+	require.NoError(t, database.DB.Model(&newer).Update("updated_at", time.Now()).Error)
+	hub := &fakeCommandHub{online: map[string]bool{agent.ID: true}}
+	tracker := NewPolicyPushTracker()
+	commandService := commands.NewService(database, hub)
+	pusher := NewPolicyChangedPusher(database, hub, nil)
+	pusher.CommandLookup = CurrentPolicyCommandLookupWithTracker(database, tracker)
+	pusher.Commands = commandService
+
+	pusher.Handle(events.Event{Type: events.PolicyChanged, Payload: map[string]interface{}{"agent_id": agent.ID, "action": "updated"}})
+	require.Len(t, hub.sent, 1)
+	first := hub.sent[0].message
+	firstPayload, err := protocol.ParsePayload[protocol.PolicyPushPayload](&first)
+	require.NoError(t, err)
+	assert.Equal(t, newer.ID, firstPayload.PolicyID)
+	require.NoError(t, NewPolicyAckProcessorWithTracker(database, tracker, commandService)(agent.ID,
+		*policyAckMessageWithID(t, first.ID, protocol.PolicyAckPayload{AgentID: agent.ID, Success: true})))
+
+	pusher.Handle(events.Event{Type: events.PolicyChanged, Payload: map[string]interface{}{"agent_id": agent.ID, "action": "ack"}})
+	require.Len(t, hub.sent, 2)
+	second := hub.sent[1].message
+	secondPayload, err := protocol.ParsePayload[protocol.PolicyPushPayload](&second)
+	require.NoError(t, err)
+	assert.Equal(t, older.ID, secondPayload.PolicyID)
+	require.NoError(t, NewPolicyAckProcessorWithTracker(database, tracker, commandService)(agent.ID,
+		*policyAckMessageWithID(t, second.ID, protocol.PolicyAckPayload{AgentID: agent.ID, Success: true})))
+
+	var unsynced int64
+	require.NoError(t, database.DB.Model(&db.BackupPolicy{}).Where("agent_id = ? AND synced = ?", agent.ID, false).Count(&unsynced).Error)
+	assert.Zero(t, unsynced)
+}
+
+func TestPolicyChangedPusherReconcilesDeletedPolicy(t *testing.T) {
+	database := newRouterAssemblyDatabase(t)
+	agent, storage := createRouterAssemblyPolicyFixtures(t, database)
+	deleted := createStorageTestPolicy(t, database, agent.ID, storage.ID, true)
+	kept := createStorageTestPolicy(t, database, agent.ID, storage.ID, true)
+	require.NoError(t, database.DB.Delete(&deleted).Error)
+	hub := &fakeCommandHub{online: map[string]bool{agent.ID: true}}
+	pusher := NewPolicyChangedPusher(database, hub, nil)
+
+	pusher.Handle(events.Event{Type: events.PolicyChanged, Payload: map[string]interface{}{"agent_id": agent.ID, "action": "deleted"}})
+
+	require.Len(t, hub.sent, 1)
+	assert.Equal(t, protocol.TypePolicyReconcile, hub.sent[0].message.Type)
+	payload, err := protocol.ParsePayload[protocol.PolicyReconcilePayload](&hub.sent[0].message)
+	require.NoError(t, err)
+	assert.Equal(t, agent.ID, payload.AgentID)
+	assert.Equal(t, []string{kept.ID}, payload.PolicyIDs)
+}
+
 func TestPolicyChangedPusherDoesNotDuplicateActivePolicyPushCommand(t *testing.T) {
 	database := newRouterAssemblyDatabase(t)
 	agent, storage := createRouterAssemblyPolicyFixtures(t, database)
@@ -728,7 +784,7 @@ func TestPolicyChangedPusherRetiresActivePolicyPushWhenPolicyDeleted(t *testing.
 	assert.True(t, retired.CompletedAt.Equal(now))
 }
 
-func TestPolicyChangedPusherRetiresPolicyPushForDifferentCurrentPolicy(t *testing.T) {
+func TestPolicyChangedPusherKeepsPolicyPushForDifferentCurrentPolicy(t *testing.T) {
 	database := newRouterAssemblyDatabase(t)
 	agent, storage := createRouterAssemblyPolicyFixtures(t, database)
 	policyA := createStorageTestPolicy(t, database, agent.ID, storage.ID, false)
@@ -755,9 +811,9 @@ func TestPolicyChangedPusherRetiresPolicyPushForDifferentCurrentPolicy(t *testin
 
 	var retiredA db.AgentCommand
 	require.NoError(t, database.DB.First(&retiredA, "id = ?", commandA.ID).Error)
-	assert.Equal(t, commands.CommandStatusFailed, retiredA.Status)
-	assert.Contains(t, retiredA.ErrorMessage, "stale policy push command retired")
-	require.NotNil(t, retiredA.CompletedAt)
+	assert.Equal(t, commands.CommandStatusPending, retiredA.Status)
+	assert.Empty(t, retiredA.ErrorMessage)
+	assert.Nil(t, retiredA.CompletedAt)
 
 	var commandB db.AgentCommand
 	require.NoError(t, database.DB.First(&commandB, "agent_id = ? AND type = ? AND policy_id = ?", agent.ID, protocol.TypePolicyPush, policyB.ID).Error)
@@ -770,8 +826,7 @@ func TestPolicyChangedPusherRetiresPolicyPushForDifferentCurrentPolicy(t *testin
 	require.NoError(t, database.DB.
 		Where("agent_id = ? AND type = ? AND status IN ?", agent.ID, protocol.TypePolicyPush, []string{commands.CommandStatusPending, commands.CommandStatusDispatched, commands.CommandStatusRunning}).
 		Find(&active).Error)
-	require.Len(t, active, 1)
-	assert.Equal(t, policyB.ID, active[0].PolicyID)
+	require.Len(t, active, 2)
 }
 
 func TestPolicyChangedPusherCommandRefsMatchPolicyPayloadAndTrackerMessage(t *testing.T) {

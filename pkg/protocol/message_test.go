@@ -367,6 +367,16 @@ func TestPolicyAckPayload(t *testing.T) {
 	assert.Equal(t, "invalid schedule", parsed.Error)
 }
 
+func TestPolicyReconcilePayload(t *testing.T) {
+	payload := PolicyReconcilePayload{
+		AgentID:   "agent-001",
+		PolicyIDs: []string{"policy-a", "policy-b"},
+	}
+
+	_, parsed := roundTripPayload[PolicyReconcilePayload](t, TypePolicyReconcile, payload)
+	assert.Equal(t, payload, *parsed)
+}
+
 func TestBackupNowPayload(t *testing.T) {
 	backupNow := BackupNowPayload{AgentID: "agent-002"}
 

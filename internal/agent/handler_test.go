@@ -289,6 +289,106 @@ func TestNewHandlerRestoresSavedPolicySchedule(t *testing.T) {
 	assert.Equal(t, int32(1), runnerCalls.Load())
 }
 
+func TestNewHandlerRestoresAllSavedPolicySchedules(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{
+		PolicyID: "policy-a", AgentID: "agent-1", Schedule: "0 2 * * *",
+	}))
+	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{
+		PolicyID: "policy-b", AgentID: "agent-1", Schedule: "30 2 * * *",
+	}))
+
+	scheduler := &recordingScheduler{}
+	NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   t.TempDir(),
+		Scheduler:   scheduler,
+		SendFunc:    (&sentMessages{}).send,
+	})
+
+	require.Len(t, scheduler.updates, 2)
+	assert.Equal(t, "policy:policy-a", scheduler.updates[0].agentID)
+	assert.Equal(t, "0 2 * * *", scheduler.updates[0].schedule)
+	assert.Equal(t, "policy:policy-b", scheduler.updates[1].agentID)
+	assert.Equal(t, "30 2 * * *", scheduler.updates[1].schedule)
+}
+
+func TestScheduledBackupsRunSeriallyWithoutDroppingPolicies(t *testing.T) {
+	started := make(chan string, 3)
+	releaseFirst := make(chan struct{})
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: policy.NewStore(t.TempDir()),
+		ConfigDir:   t.TempDir(),
+		Scheduler:   &recordingScheduler{},
+		SendFunc:    (&sentMessages{}).send,
+		BackupRunnerWithProgress: func(_ context.Context, cfg executor.ExecutorConfig, _ executor.ProgressCallback) executor.TaskResult {
+			started <- cfg.RepoPath
+			if cfg.RepoPath == "bucket/policy-a" {
+				<-releaseFirst
+			}
+			return executor.TaskResult{Type: "backup", Status: "success"}
+		},
+	})
+	policyA := &protocol.PolicyPushPayload{
+		PolicyID: "policy-a", AgentID: "agent-1",
+		Storage:    protocol.StorageConfig{RcloneType: "s3", RcloneConfig: map[string]string{"provider": "Other"}, RepoPath: "bucket/policy-a"},
+		BackupDirs: []string{t.TempDir()},
+	}
+	policyB := &protocol.PolicyPushPayload{
+		PolicyID: "policy-b", AgentID: "agent-1",
+		Storage:    protocol.StorageConfig{RcloneType: "s3", RcloneConfig: map[string]string{"provider": "Other"}, RepoPath: "bucket/policy-b"},
+		BackupDirs: []string{t.TempDir()},
+	}
+
+	handler.startScheduledBackup(policyA)
+	require.Equal(t, "bucket/policy-a", <-started)
+	handler.startScheduledBackup(policyB)
+	handler.startScheduledBackup(policyA)
+
+	select {
+	case next := <-started:
+		t.Fatalf("second policy started before the first completed: %s", next)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseFirst)
+	require.Equal(t, "bucket/policy-b", <-started)
+
+	select {
+	case duplicate := <-started:
+		t.Fatalf("duplicate policy was queued while already running: %s", duplicate)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestHandlePolicyReconcileRemovesStalePoliciesAndSchedules(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{PolicyID: "policy-a", AgentID: "agent-1", Schedule: "0 2 * * *"}))
+	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{PolicyID: "policy-b", AgentID: "agent-1", Schedule: "0 3 * * *"}))
+	scheduler := &recordingScheduler{}
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		AgentID:     "agent-1",
+		ConfigDir:   t.TempDir(),
+		Scheduler:   scheduler,
+		SendFunc:    (&sentMessages{}).send,
+	})
+	reconcile, err := protocol.NewMessage(protocol.TypePolicyReconcile, protocol.PolicyReconcilePayload{
+		AgentID:   "agent-1",
+		PolicyIDs: []string{"policy-b"},
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*reconcile)
+
+	_, err = store.LoadPolicyByID("policy-a")
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	kept, err := store.LoadPolicyByID("policy-b")
+	require.NoError(t, err)
+	assert.Equal(t, "policy-b", kept.PolicyID)
+	assert.Contains(t, scheduler.removed, "policy:policy-a")
+	assert.Contains(t, scheduler.removed, "policy:policy-a:verify")
+}
+
 func TestHandlePolicyPushPassesRcloneArgs(t *testing.T) {
 	store := policy.NewStore(t.TempDir())
 	configDir := t.TempDir()

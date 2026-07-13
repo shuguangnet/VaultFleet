@@ -46,8 +46,7 @@ func TestBuildRuntimeWiresDurableCommandService(t *testing.T) {
 	require.NoError(t, err)
 	defer conn.Close()
 
-	var queuedPush protocol.Message
-	require.NoError(t, conn.ReadJSON(&queuedPush))
+	queuedPush := readNextRuntimeCommand(t, conn)
 	assert.Equal(t, queued.MessageID, queuedPush.ID)
 
 	require.Eventually(t, func() bool {
@@ -111,8 +110,7 @@ func TestRuntimeReconnectPolicyPushIsDurableAndNotDuplicated(t *testing.T) {
 	require.NoError(t, err)
 	defer conn.Close()
 
-	var pushed protocol.Message
-	require.NoError(t, conn.ReadJSON(&pushed))
+	pushed := readNextRuntimeCommand(t, conn)
 	require.Equal(t, protocol.TypePolicyPush, pushed.Type)
 
 	var command db.AgentCommand
@@ -166,8 +164,7 @@ func TestRuntimePolicyAckAfterTrackerRestartMarksPolicySynced(t *testing.T) {
 	require.NoError(t, err)
 	defer conn.Close()
 
-	var pushed protocol.Message
-	require.NoError(t, conn.ReadJSON(&pushed))
+	pushed := readNextRuntimeCommand(t, conn)
 	require.Equal(t, pending.MessageID, pushed.ID)
 	require.NoError(t, conn.WriteJSON(masterPolicyAckMessage(t, pushed.ID, agent.ID)))
 
@@ -197,8 +194,7 @@ func TestRuntimeTaskResultCompletesDurableBackupCommand(t *testing.T) {
 	require.NoError(t, err)
 	defer conn.Close()
 
-	var dispatched protocol.Message
-	require.NoError(t, conn.ReadJSON(&dispatched))
+	dispatched := readNextRuntimeCommand(t, conn)
 	require.Equal(t, command.MessageID, dispatched.ID)
 	require.Equal(t, protocol.TypeBackupNow, dispatched.Type)
 
@@ -254,8 +250,7 @@ func TestRuntimeSnapshotListResponseCompletesDurableCommandWithoutWaiter(t *test
 	require.NoError(t, err)
 	defer conn.Close()
 
-	var dispatched protocol.Message
-	require.NoError(t, conn.ReadJSON(&dispatched))
+	dispatched := readNextRuntimeCommand(t, conn)
 	require.Equal(t, command.MessageID, dispatched.ID)
 	require.Equal(t, protocol.TypeSnapshotListReq, dispatched.Type)
 
@@ -383,6 +378,17 @@ func encryptMasterTestMap(t *testing.T, database *db.Database, plaintext string)
 	ciphertext, err := db.Encrypt(plaintext, database.MasterKey)
 	require.NoError(t, err)
 	return ciphertext
+}
+
+func readNextRuntimeCommand(t *testing.T, conn *websocket.Conn) protocol.Message {
+	t.Helper()
+	for {
+		var msg protocol.Message
+		require.NoError(t, conn.ReadJSON(&msg))
+		if msg.Type != protocol.TypePolicyReconcile {
+			return msg
+		}
+	}
 }
 
 func createMasterTestPolicy(t *testing.T, database *db.Database, agentID string, storageID string) db.BackupPolicy {
