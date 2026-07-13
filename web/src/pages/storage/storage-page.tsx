@@ -370,7 +370,7 @@ export function StoragePage() {
         title={editingId ? "编辑存储" : "添加新存储"}
         open={drawerOpen}
         onClose={closeDrawer}
-        size="min(100vw, 540px)"
+        width="min(100vw, 540px)"
         destroyOnHidden
         footer={
           <div className="vf-drawer-footer">

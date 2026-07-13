@@ -34,7 +34,7 @@ export function LoginPage({ onComplete }: LoginPageProps) {
       description="使用管理员凭据继续管理备份节点与任务。"
     >
       {error && (
-        <Alert type="error" showIcon title="登录失败" description={error} />
+        <Alert type="error" showIcon message="登录失败" description={error} />
       )}
 
       <Form<LoginFormValues>

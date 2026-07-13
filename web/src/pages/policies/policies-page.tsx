@@ -992,7 +992,7 @@ export function PoliciesPage() {
           createMutation.reset();
           updateMutation.reset();
         }}
-        size="min(100vw, 640px)"
+        width="min(100vw, 640px)"
         destroyOnHidden
         footer={
           <div className="vf-drawer-footer">
@@ -2303,7 +2303,7 @@ export function PoliciesPage() {
         title="批量下发策略"
         open={!!bulkSourcePolicy}
         onClose={closeBulkAssign}
-        size="min(100vw, 520px)"
+        width="min(100vw, 520px)"
         destroyOnHidden
         footer={
           <Button
@@ -2316,7 +2316,7 @@ export function PoliciesPage() {
           </Button>
         }
       >
-        <Space orientation="vertical" size={16} style={{ width: "100%" }}>
+        <Space direction="vertical" size={16} style={{ width: "100%" }}>
           {bulkSourcePolicy && (
             <Alert
               type="info"
@@ -2375,7 +2375,7 @@ export function PoliciesPage() {
                 title={`成功 ${bulkResult.created_count}，失败 ${bulkResult.failed_count}`}
                 style={{ marginBottom: 12 }}
               />
-              <Space orientation="vertical" size={8} style={{ width: "100%" }}>
+              <Space direction="vertical" size={8} style={{ width: "100%" }}>
                 {bulkResult.results.map((result, index) => (
                   <div
                     key={`${result.agent_id || index}-${result.policy_id || result.error}`}

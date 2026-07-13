@@ -26,7 +26,6 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   MoonOutlined,
-  ReloadOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
   SunOutlined,
@@ -204,7 +203,7 @@ export function AppLayout({ user }: AppLayoutProps) {
           placement="left"
           open={mobileNavOpen}
           onClose={() => setMobileNavOpen(false)}
-          size={320}
+          width={320}
           className="vf-mobile-nav-drawer"
           styles={{
             body: { padding: 0, background: colors.siderBg },
@@ -317,5 +316,4 @@ export function AppLayout({ user }: AppLayoutProps) {
   );
 }
 
-// 重新导出 ReloadOutlined 以便其他位置使用
-export { ReloadOutlined };
+

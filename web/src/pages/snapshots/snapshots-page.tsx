@@ -47,11 +47,6 @@ import { SnapshotTreeBrowser } from "@/components/snapshot-tree-browser";
 import { useAuth } from "@/contexts/auth-context";
 import { permissions } from "@/services/identity";
 
-const EVENT_OPTIONS = [
-  { id: "backup_failed", label: "备份失败" },
-  { id: "agent_offline", label: "节点离线" },
-];
-
 const dockerSourceKey = (source: DockerResolvedSource) => {
   if (source.container_id) return source.container_id;
   if (source.name) return source.name;
@@ -455,7 +450,7 @@ export function SnapshotsPage() {
         title="恢复数据"
         open={!!selectedSnapshot}
         onClose={() => setSelectedSnapshot(null)}
-        size="min(100vw, 480px)"
+        width="min(100vw, 480px)"
         destroyOnHidden
       >
         {restoreSuccessId ? (
@@ -598,7 +593,7 @@ export function SnapshotsPage() {
                 }
                 description={
                   preflightReport ? (
-                    <Space orientation="vertical" size={4} style={{ width: "100%" }}>
+                    <Space direction="vertical" size={4} style={{ width: "100%" }}>
                       {preflightReport.checks.map((check, index) => (
                         <Typography.Text
                           key={`${check.code}-${index}`}

@@ -388,9 +388,9 @@ function TreeNodeRow({
         >
           {isDir ? (
             isExpanded ? (
-              <FolderOpenOutlined style={{ color: "#1677ff", fontSize: 14 }} />
+              <FolderOpenOutlined style={{ color: "var(--vf-primary)", fontSize: 14 }} />
             ) : (
-              <FolderOutlined style={{ color: "#1677ff", fontSize: 14 }} />
+              <FolderOutlined style={{ color: "var(--vf-primary)", fontSize: 14 }} />
             )
           ) : (
             <FileOutlined style={{ color: "var(--vf-text-muted)", fontSize: 12 }} />

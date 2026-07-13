@@ -6,6 +6,9 @@ import tailwindcss from "@tailwindcss/vite";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const apiTarget = process.env.VF_API_TARGET || "http://127.0.0.1:8080";
+const wsTarget = process.env.VF_WS_TARGET || "ws://127.0.0.1:8080";
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
@@ -19,14 +22,14 @@ export default defineConfig({
     strictPort: true,
     allowedHosts: true,
     proxy: {
-      "/api": "https://vf.933999.xyz",
-      "/health": "https://vf.933999.xyz",
-      "/ready": "https://vf.933999.xyz",
+      "/api": apiTarget,
+      "/health": apiTarget,
+      "/ready": apiTarget,
       "/ws": {
-        target: "wss://vf.933999.xyz",
+        target: wsTarget,
         ws: true
       },
-      "/install.sh": "https://vf.933999.xyz"
+      "/install.sh": apiTarget
     }
   },
   build: {

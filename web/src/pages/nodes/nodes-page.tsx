@@ -480,14 +480,14 @@ export function NodesPage() {
         title={enrollToken ? "安装指令" : "添加新节点"}
         open={drawerOpen}
         onClose={closeDrawer}
-        size="min(100vw, 480px)"
+        width="min(100vw, 480px)"
         destroyOnHidden
       >
         {enrollToken ? (
           <InstallCommand enrollToken={enrollToken} />
         ) : (
           <form onSubmit={handleAddNode}>
-            <Space orientation="vertical" size={16} style={{ width: "100%" }}>
+            <Space direction="vertical" size={16} style={{ width: "100%" }}>
               <Typography.Paragraph type="secondary">
                 输入节点名称以生成安装 Token。
               </Typography.Paragraph>
@@ -514,7 +514,7 @@ export function NodesPage() {
         title="Agent 批量升级"
         open={rolloutDrawerOpen}
         onClose={closeRolloutDrawer}
-        size="min(100vw, 720px)"
+        width="min(100vw, 720px)"
         destroyOnHidden
         footer={
           <Button
@@ -528,7 +528,7 @@ export function NodesPage() {
           </Button>
         }
       >
-        <Space orientation="vertical" size={14} style={{ width: "100%" }}>
+        <Space direction="vertical" size={14} style={{ width: "100%" }}>
           <Alert
             type="info"
             showIcon
@@ -651,7 +651,7 @@ export function NodesPage() {
           setTagEditorAgent(null);
           setTagDraft([]);
         }}
-        size="min(100vw, 420px)"
+        width="min(100vw, 420px)"
         destroyOnHidden
         footer={
           <Button
@@ -670,7 +670,7 @@ export function NodesPage() {
           </Button>
         }
       >
-        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
           <Typography.Paragraph type="secondary">
             使用环境、区域、业务或 OpenStack 可用区等标签组织节点。
           </Typography.Paragraph>

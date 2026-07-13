@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -97,10 +97,9 @@ export function DirectoryBrowser({
     }
   }, [fetchChildren]);
 
-  // 模拟 useEffect
-  useState(() => {
+  useEffect(() => {
     loadRoot();
-  });
+  }, [loadRoot]);
 
   const updateNodeAtPath = useCallback(
     (
@@ -227,7 +226,7 @@ export function DirectoryBrowser({
             <Alert
               type="error"
               showIcon
-              title="无法浏览目录"
+              message="无法浏览目录"
               description={rootError}
             />
           </div>
@@ -340,9 +339,9 @@ function TreeNodeRow({
         >
           {isDir ? (
             node.expanded ? (
-              <FolderOpenOutlined style={{ color: "#1677ff", fontSize: 14 }} />
+              <FolderOpenOutlined style={{ color: "var(--vf-primary)", fontSize: 14 }} />
             ) : (
-              <FolderOutlined style={{ color: "#1677ff", fontSize: 14 }} />
+              <FolderOutlined style={{ color: "var(--vf-primary)", fontSize: 14 }} />
             )
           ) : (
             <FileOutlined style={{ color: "var(--vf-text-muted)", fontSize: 14 }} />

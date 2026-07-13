@@ -57,7 +57,7 @@ import { ErrorPanel } from "@/components/error-panel";
 import { DirectoryBrowser } from "@/components/directory-browser";
 import { safeFormatDate } from "@/lib/date";
 import { copyToClipboard } from "@/lib/utils";
-import { formatBytes } from "@/pages/tasks/tasks-page";
+import { formatBytes } from "@/lib/format";
 import type { RestoreRequest, Snapshot } from "@/types/snapshot";
 import type { DockerResolvedSource } from "@/types/task";
 import { useAuth } from "@/contexts/auth-context";
@@ -186,7 +186,7 @@ export function NodeDetailPage() {
           actions={<Link to="/nodes"><Button>返回节点列表</Button></Link>}
         />
         <Card>
-          <Space orientation="vertical" size={18} style={{ width: "100%" }}>
+          <Space direction="vertical" size={18} style={{ width: "100%" }}>
             <Space>
               <Spin size="small" />
               <Typography.Text type="secondary">正在获取节点状态与备份数据</Typography.Text>

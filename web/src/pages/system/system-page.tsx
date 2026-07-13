@@ -496,7 +496,7 @@ export function SystemPage() {
             <Typography.Text type="secondary" style={{ display: "block", marginBottom: 8 }}>
               选择需要收集日志的 Agent（可选）：
             </Typography.Text>
-            <Space orientation="vertical" style={{ width: "100%" }}>
+            <Space direction="vertical" style={{ width: "100%" }}>
               {agents.map((agent: Agent) => (
                 <Space key={agent.id}>
                   <input

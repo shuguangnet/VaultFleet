@@ -352,7 +352,7 @@ export function NotificationsPage() {
           setDrawerOpen(false);
           resetForm();
         }}
-        size="min(100vw, 520px)"
+        width="min(100vw, 520px)"
         destroyOnHidden
         footer={
           <div className="vf-drawer-footer">
@@ -625,7 +625,7 @@ export function NotificationsPage() {
 
           <div>
             <Typography.Text strong>触发事件</Typography.Text>
-            <Space orientation="vertical" style={{ marginTop: 8 }}>
+            <Space direction="vertical" style={{ marginTop: 8 }}>
               {EVENT_OPTIONS.map((opt) => (
                 <Switch
                   key={opt.id}
