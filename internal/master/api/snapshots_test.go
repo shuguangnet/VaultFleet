@@ -268,6 +268,61 @@ func TestTaskResultProcessorFailsArchiveResultWhenArtifactMissing(t *testing.T) 
 	assert.Equal(t, int64(0), historyCount)
 }
 
+func TestTaskResultProcessorAcceptsRemoteArchiveArtifactPath(t *testing.T) {
+	database, err := db.New(t.TempDir())
+	require.NoError(t, err)
+	agent := createSnapshotTestAgent(t, database, "online")
+	finishedAt := time.Date(2026, 7, 14, 2, 0, 25, 0, time.Local)
+	remotePath := "archives/" + agent.ID + "/hostdzire/2026-07-13/hostdzire_20260713-180003.tar.gz"
+
+	msg, err := protocol.NewMessage(protocol.TypeTaskResult, protocol.TaskResultPayload{
+		AgentID:             agent.ID,
+		TaskType:            "backup",
+		Status:              "success",
+		BackupMode:          protocol.BackupModeArchive,
+		ArchiveFormat:       protocol.ArchiveFormatTarGz,
+		ArtifactPath:        remotePath,
+		ArtifactName:        "hostdzire_20260713-180003.tar.gz",
+		ArtifactContentType: "application/gzip",
+		ArtifactSize:        67535713,
+		DurationMs:          25000,
+		StartedAt:           finishedAt.Add(-25 * time.Second),
+		FinishedAt:          finishedAt,
+	})
+	require.NoError(t, err)
+
+	processor := NewTaskResultProcessor(database)
+	require.NoError(t, processor(agent.ID, *msg))
+
+	var history db.TaskHistory
+	require.NoError(t, database.DB.First(&history, "agent_id = ? AND artifact_name = ?", agent.ID, "hostdzire_20260713-180003.tar.gz").Error)
+	assert.Equal(t, remotePath, history.ArtifactPath)
+	assert.Equal(t, int64(67535713), history.ArtifactSize)
+}
+
+func TestTaskResultProcessorRejectsEscapingRemoteArchiveArtifactPath(t *testing.T) {
+	database, err := db.New(t.TempDir())
+	require.NoError(t, err)
+	agent := createSnapshotTestAgent(t, database, "online")
+	msg, err := protocol.NewMessage(protocol.TypeTaskResult, protocol.TaskResultPayload{
+		AgentID:       agent.ID,
+		TaskType:      "backup",
+		Status:        "success",
+		BackupMode:    protocol.BackupModeArchive,
+		ArchiveFormat: protocol.ArchiveFormatTarGz,
+		ArtifactPath:  "../escape.tar.gz",
+		ArtifactName:  "escape.tar.gz",
+	})
+	require.NoError(t, err)
+
+	processor := NewTaskResultProcessor(database)
+	require.Error(t, processor(agent.ID, *msg))
+
+	var historyCount int64
+	require.NoError(t, database.DB.Model(&db.TaskHistory{}).Where("agent_id = ?", agent.ID).Count(&historyCount).Error)
+	assert.Zero(t, historyCount)
+}
+
 func TestTaskResultProcessorRollsBackBackupHistoryWhenSnapshotPersistenceFails(t *testing.T) {
 	database, err := db.New(t.TempDir())
 	require.NoError(t, err)

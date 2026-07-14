@@ -449,7 +449,20 @@ func localizeTaskResultArtifact(database *db.Database, agentID string, result pr
 	if result.ArtifactPath == "" {
 		return result, nil
 	}
+	if filepath.IsAbs(result.ArtifactPath) {
+		return localizeLocalTaskResultArtifact(database, agentID, result)
+	}
+	cleanPath := filepath.Clean(filepath.FromSlash(result.ArtifactPath))
+	if cleanPath == "." || cleanPath == string(filepath.Separator) {
+		return result, fmt.Errorf("artifact path is invalid: %s", result.ArtifactPath)
+	}
+	if strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) || cleanPath == ".." {
+		return result, fmt.Errorf("artifact path escapes artifact root: %s", result.ArtifactPath)
+	}
+	return result, nil
+}
 
+func localizeLocalTaskResultArtifact(database *db.Database, agentID string, result protocol.TaskResultPayload) (protocol.TaskResultPayload, error) {
 	sourcePath := filepath.Clean(result.ArtifactPath)
 	info, err := os.Stat(sourcePath)
 	if err != nil {
