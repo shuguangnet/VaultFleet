@@ -56,6 +56,72 @@ func TestNewTaskResponseIncludesManifestAndToleratesMissingManifest(t *testing.T
 	assert.Nil(t, legacy.Manifest)
 }
 
+func TestNewTaskResponseIncludesRestoreItemsAndProgressAndToleratesLegacyRows(t *testing.T) {
+	items, err := json.Marshal([]protocol.RestoreItemResult{{SourceID: "db-id", SourceName: "db", Status: protocol.RestoreItemStatusFailed, Retryable: true}})
+	require.NoError(t, err)
+	progress, err := json.Marshal(protocol.RestoreProgressPayload{AgentID: "agent-1", SnapshotID: "snap-1", ItemsTotal: 2, ItemsCompleted: 1, CurrentSourceID: "api-id"})
+	require.NoError(t, err)
+
+	response := newTaskResponse(db.TaskHistory{Type: "restore", Status: commands.TaskStatusPartialSuccess, RestoreItems: string(items), RestoreProgress: string(progress)})
+	require.Len(t, response.RestoreItems, 1)
+	assert.Equal(t, "db-id", response.RestoreItems[0].SourceID)
+	require.NotNil(t, response.RestoreProgress)
+	assert.Equal(t, 2, response.RestoreProgress.ItemsTotal)
+
+	legacy := newTaskResponse(db.TaskHistory{Type: "restore", Status: commands.TaskStatusSuccess})
+	assert.Nil(t, legacy.RestoreItems)
+	assert.Nil(t, legacy.RestoreProgress)
+}
+
+func TestRetryFailedRestoreReturnsNewPreflightPlanWithoutMutatingTask(t *testing.T) {
+	setup := setupTasksAPI(t)
+	target := createTasksTestAgent(t, setup.database, "online")
+	restorePayload := protocol.RestoreReqPayload{
+		SnapshotID: "snap-1", SourceAgentID: "source-agent", Target: "/", RestoreMode: protocol.RestoreModeDockerContainer,
+		Docker: &protocol.DockerRestoreRequest{Sources: []protocol.DockerResolvedSource{{ContainerID: "db-id", Name: "db"}, {ContainerID: "api-id", Name: "api"}}},
+	}
+	msg, err := protocol.NewMessage(protocol.TypeSelectiveRestoreReq, restorePayload)
+	require.NoError(t, err)
+	rawMessage, err := json.Marshal(msg)
+	require.NoError(t, err)
+	encrypted, err := db.Encrypt(string(rawMessage), setup.database.MasterKey)
+	require.NoError(t, err)
+	command := db.AgentCommand{AgentID: target.ID, Type: protocol.TypeSelectiveRestoreReq, Status: commands.CommandStatusFailed, MessageID: msg.ID, Payload: encrypted}
+	require.NoError(t, setup.database.DB.Create(&command).Error)
+	items := []protocol.RestoreItemResult{
+		{SourceID: "db-id", SourceName: "db", Status: protocol.RestoreItemStatusFailed, Retryable: true},
+		{SourceID: "api-id", SourceName: "api", Status: protocol.RestoreItemStatusSuccess},
+	}
+	rawItems, err := json.Marshal(items)
+	require.NoError(t, err)
+	history := db.TaskHistory{AgentID: target.ID, Type: "restore", Status: commands.TaskStatusPartialSuccess, SnapshotID: "snap-1", MessageID: msg.ID, CommandID: command.ID, RestoreItems: string(rawItems)}
+	require.NoError(t, setup.database.DB.Create(&history).Error)
+
+	w := postAnyJSON(t, setup.router, "/api/tasks/"+history.ID+"/retry-failed", map[string]any{})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	data := requireMap(t, parseJSON(t, w)["data"])
+	assert.Equal(t, target.ID, data["agent_id"])
+	assert.Equal(t, "source-agent", data["source_agent_id"])
+	assert.Equal(t, "snap-1", data["snapshot_id"])
+	assert.Equal(t, []any{"db-id"}, data["docker_source_ids"])
+	var unchanged db.TaskHistory
+	require.NoError(t, setup.database.DB.First(&unchanged, "id = ?", history.ID).Error)
+	assert.Equal(t, commands.TaskStatusPartialSuccess, unchanged.Status)
+	assert.Equal(t, string(rawItems), unchanged.RestoreItems)
+}
+
+func TestRetryFailedRestoreRejectsLegacyOrNonRetryableTask(t *testing.T) {
+	setup := setupTasksAPI(t)
+	agent := createTasksTestAgent(t, setup.database, "online")
+	history := db.TaskHistory{AgentID: agent.ID, Type: "restore", Status: commands.TaskStatusFailed, SnapshotID: "snap-legacy"}
+	require.NoError(t, setup.database.DB.Create(&history).Error)
+
+	w := postAnyJSON(t, setup.router, "/api/tasks/"+history.ID+"/retry-failed", map[string]any{})
+
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+}
+
 func TestBackupNowSendsAgentCommand(t *testing.T) {
 	setup := setupTasksAPI(t)
 	agent := createTasksTestAgent(t, setup.database, "online")

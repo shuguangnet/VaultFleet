@@ -645,6 +645,39 @@ func TestCompleteTaskResultUpdatesOnlyMatchingCommandHistory(t *testing.T) {
 	assert.Empty(t, otherAfter.SnapshotID)
 }
 
+func TestCompleteRestorePartialSuccessPersistsItemResults(t *testing.T) {
+	database := setupCommandTestDB(t)
+	service := NewService(database, nil)
+	msg, err := protocol.NewMessage(protocol.TypeSelectiveRestoreReq, protocol.RestoreReqPayload{
+		SnapshotID: "snap-restore", RestoreMode: protocol.RestoreModeDockerContainer,
+		Docker: &protocol.DockerRestoreRequest{Sources: []protocol.DockerResolvedSource{{ContainerID: "db-id"}, {ContainerID: "api-id"}}},
+	})
+	require.NoError(t, err)
+	command, err := service.CreateCommand(context.Background(), CreateCommandInput{
+		AgentID: "agent-1", Type: protocol.TypeSelectiveRestoreReq, Message: *msg, TaskType: "restore", TaskState: TaskStatusRunning, SnapshotID: "snap-restore",
+	})
+	require.NoError(t, err)
+	require.NoError(t, database.DB.Model(&db.AgentCommand{}).Where("id = ?", command.ID).Update("status", CommandStatusRunning).Error)
+	items := []protocol.RestoreItemResult{
+		{SourceID: "db-id", Status: protocol.RestoreItemStatusFailed, Error: "conflict", Retryable: true},
+		{SourceID: "api-id", Status: protocol.RestoreItemStatusSuccess},
+	}
+
+	require.NoError(t, service.CompleteTaskResult(context.Background(), "agent-1", msg.ID, protocol.TaskResultPayload{
+		AgentID: "agent-1", TaskType: "restore", Status: TaskStatusPartialSuccess, SnapshotID: "snap-restore", ErrorLog: "db: conflict", RestoreItems: items,
+	}))
+
+	var history db.TaskHistory
+	require.NoError(t, database.DB.First(&history, "command_id = ?", command.ID).Error)
+	assert.Equal(t, TaskStatusPartialSuccess, history.Status)
+	var stored []protocol.RestoreItemResult
+	require.NoError(t, json.Unmarshal([]byte(history.RestoreItems), &stored))
+	assert.Equal(t, items, stored)
+	var storedCommand db.AgentCommand
+	require.NoError(t, database.DB.First(&storedCommand, "id = ?", command.ID).Error)
+	assert.Equal(t, CommandStatusFailed, storedCommand.Status)
+}
+
 func TestCompleteTaskResultPreservesExistingStartedAtWhenResultOmitsIt(t *testing.T) {
 	database := setupCommandTestDB(t)
 	now := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)

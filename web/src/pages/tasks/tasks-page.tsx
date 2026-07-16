@@ -26,11 +26,12 @@ import {
   PauseCircleOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
+  UndoOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { backupNow, listAgents } from "@/services/agents";
-import { cancelTask, deleteTask, getTaskLogs, listTasks, taskArtifactDownloadUrl } from "@/services/tasks";
+import { cancelTask, deleteTask, getTaskLogs, listTasks, retryFailedRestore, taskArtifactDownloadUrl } from "@/services/tasks";
 import type { BackupProgress, TaskHistory, TaskLogLine, TaskLogStatus } from "@/types/task";
 import { safeFormatDate } from "@/lib/date";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -218,6 +219,7 @@ export function TasksPage() {
   const canRunRestore = auth.hasPermission(permissions.runRestore);
   const canViewLogs = auth.hasPermission(permissions.readOperational);
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [backupAgentId, setBackupAgentId] = useState<string | null>(null);
@@ -282,6 +284,20 @@ export function TasksPage() {
     onError: (error: any) => message.error("删除任务历史失败: " + error.message),
   });
 
+  const retryRestoreMutation = useMutation({
+    mutationFn: (taskId: string) => retryFailedRestore(taskId),
+    onSuccess: (plan) => {
+      const params = new URLSearchParams({
+        agent_id: plan.source_agent_id,
+        restore_snapshot: plan.snapshot_id,
+        target_agent_id: plan.agent_id,
+        docker_source_ids: plan.docker_source_ids.join(","),
+      });
+      navigate(`/snapshots?${params.toString()}`);
+    },
+    onError: (error: any) => message.error("生成失败项重试计划失败: " + error.message),
+  });
+
   const handleFilterChange = (key: string, value: string) => {
     const newParams = new URLSearchParams(searchParams);
     if (value && value !== "all") {
@@ -334,7 +350,10 @@ export function TasksPage() {
       title: "耗时 / 大小",
       key: "metric",
       render: (_: unknown, record: TaskHistory) =>
-        renderTaskMetricContent(record, canRunBackup ? (id) => setCancelTaskId(id) : undefined),
+        renderTaskMetricContent(
+          record,
+          (record.type === "restore" ? canRunRestore : canRunBackup) ? (id) => setCancelTaskId(id) : undefined,
+        ),
     },
     {
       title: "完成时间",
@@ -494,6 +513,42 @@ export function TasksPage() {
           </pre>
         </Tooltip>
       )}
+
+      {task.restore_items?.length ? (
+        <div style={{ marginTop: 12 }}>
+          <Space style={{ width: "100%", justifyContent: "space-between" }}>
+            <Typography.Text strong style={{ fontSize: 12 }}>容器恢复结果</Typography.Text>
+            {canRunRestore && task.restore_items.some((item) => item.retryable && item.status !== "success") ? (
+              <Button
+                size="small"
+                icon={<UndoOutlined />}
+                loading={retryRestoreMutation.isPending}
+                onClick={() => retryRestoreMutation.mutate(task.id)}
+              >
+                重试失败项
+              </Button>
+            ) : null}
+          </Space>
+          <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+            {task.restore_items.map((item) => (
+              <div key={item.source_id} className="vf-task-check-row">
+                <Space wrap>
+                  <Tag color={item.status === "success" ? "green" : item.status === "failed" ? "red" : "orange"}>
+                    {restoreItemStatusLabel(item.status)}
+                  </Tag>
+                  <Typography.Text style={{ fontSize: 12 }}>{item.source_name || item.source_id}</Typography.Text>
+                  <Typography.Text code style={{ fontSize: 11 }}>{item.source_id}</Typography.Text>
+                </Space>
+                {item.error ? (
+                  <div style={{ marginTop: 4 }}>
+                    <Typography.Text type="danger" style={{ fontSize: 12 }}>{item.error}</Typography.Text>
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {task.verification?.checks?.length ? (
         <div style={{ marginTop: 12 }}>
@@ -669,6 +724,7 @@ export function TasksPage() {
                 { value: "pending", label: "等待中" },
                 { value: "running", label: "运行中" },
                 { value: "success", label: "成功" },
+                { value: "partial_success", label: "部分成功" },
                 { value: "failed", label: "失败" },
                 { value: "timeout", label: "超时" },
                 { value: "cancelled", label: "已取消" },
@@ -879,6 +935,20 @@ function formatProgressPercent(percentDone: number): number {
 }
 
 function renderTaskProgress(task: TaskHistory) {
+  if (task.type === "restore") {
+    const progress = task.restore_progress;
+    if (!progress) return <ProgressText muted pulse text="准备恢复..." />;
+    const total = progress.items_total || 0;
+    const completed = progress.items_completed || 0;
+    const failed = progress.items_failed || 0;
+    const current = progress.current_source_name || progress.current_source_id;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", minHeight: 32, justifyContent: "center", maxWidth: 260 }}>
+        <span>{total > 0 ? `恢复容器: ${completed}/${total}${failed ? `，失败 ${failed}` : ""}` : "恢复数据中..."}</span>
+        {current ? <Typography.Text type="secondary" style={{ fontSize: 12 }} ellipsis>{current}</Typography.Text> : null}
+      </div>
+    );
+  }
   const progress = task.progress;
   if (!progress) {
     return <ProgressText muted pulse text="准备中..." />;
@@ -927,7 +997,14 @@ function renderMeasuredProgress(label: string, progress: BackupProgress) {
 }
 
 function taskSupportsLogs(task: TaskHistory): boolean {
-  return task.type === "backup" || task.type === "verify";
+  return task.type === "backup" || task.type === "verify" || task.type === "restore";
+}
+
+function restoreItemStatusLabel(status: NonNullable<TaskHistory["restore_items"]>[number]["status"]): string {
+  if (status === "success") return "成功";
+  if (status === "failed") return "失败";
+  if (status === "cancelled") return "已取消";
+  return "已跳过";
 }
 
 function taskTypeLabel(type: TaskHistory["type"]): string {

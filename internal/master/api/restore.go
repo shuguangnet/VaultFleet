@@ -34,14 +34,15 @@ type restorePreflightHub interface {
 }
 
 type restoreRequest struct {
-	SnapshotID     string                         `json:"snapshot_id" binding:"required"`
-	SourceAgentID  string                         `json:"source_agent_id"`
-	TargetPath     string                         `json:"target_path"`
-	Target         string                         `json:"target"`
-	IncludePaths   []string                       `json:"include_paths"`
-	RestoreMode    string                         `json:"restore_mode"`
-	Docker         *protocol.DockerRestoreRequest `json:"docker"`
-	DockerSourceID string                         `json:"docker_source_id"`
+	SnapshotID      string                         `json:"snapshot_id" binding:"required"`
+	SourceAgentID   string                         `json:"source_agent_id"`
+	TargetPath      string                         `json:"target_path"`
+	Target          string                         `json:"target"`
+	IncludePaths    []string                       `json:"include_paths"`
+	RestoreMode     string                         `json:"restore_mode"`
+	Docker          *protocol.DockerRestoreRequest `json:"docker"`
+	DockerSourceID  string                         `json:"docker_source_id"`
+	DockerSourceIDs []string                       `json:"docker_source_ids"`
 }
 
 func NewRestoreHandler(database *db.Database, hub RestoreHub) *RestoreHandler {
@@ -149,6 +150,8 @@ func (h *RestoreHandler) Preflight(c *gin.Context) {
 			checks = append(checks, restorePreflightCheck("docker_metadata", protocol.RestorePreflightSeverityError, err.Error(), snapshotID))
 		} else {
 			dockerRequest = &resolvedDocker
+			checks = append(checks, h.dockerBatchCapabilityChecks(targetAgentID, resolvedDocker)...)
+			checks = append(checks, dockerBatchConflictChecks(resolvedDocker)...)
 			dockerPaths := dockerRestoreIncludePaths(resolvedDocker)
 			if len(dockerPaths) == 0 {
 				checks = append(checks, restorePreflightCheck("docker_restore_paths", protocol.RestorePreflightSeverityError, "docker metadata has no restore paths", snapshotID))
@@ -251,6 +254,17 @@ func (h *RestoreHandler) Restore(c *gin.Context) {
 			return
 		}
 		dockerRequest = &resolvedDocker
+		if len(resolvedDocker.Sources) > 1 {
+			supported, err := agentHasCapability(h.DB, agentID, protocol.CapabilityDockerMultiContainerRestore)
+			if err != nil {
+				writeErrorResponse(c, http.StatusInternalServerError, "database error")
+				return
+			}
+			if !supported {
+				writeErrorResponse(c, http.StatusBadRequest, "agent does not support multi-container restore; upgrade the Agent")
+				return
+			}
+		}
 		dockerPaths := dockerRestoreIncludePaths(resolvedDocker)
 		if len(dockerPaths) == 0 {
 			writeErrorResponse(c, http.StatusBadRequest, "docker metadata has no restore paths")
@@ -275,12 +289,13 @@ func (h *RestoreHandler) Restore(c *gin.Context) {
 	}
 
 	msg, err := protocol.NewMessage(msgType, protocol.RestoreReqPayload{
-		SnapshotID:   snapshotID,
-		Target:       targetPath,
-		IncludePaths: includePaths,
-		RestoreMode:  restoreMode,
-		Docker:       dockerRequest,
-		Policy:       restorePolicy,
+		SnapshotID:    snapshotID,
+		SourceAgentID: sourceAgentID,
+		Target:        targetPath,
+		IncludePaths:  includePaths,
+		RestoreMode:   restoreMode,
+		Docker:        dockerRequest,
+		Policy:        restorePolicy,
 	})
 	if err != nil {
 		writeErrorResponse(c, http.StatusInternalServerError, "encode restore request")
@@ -417,7 +432,11 @@ func (h *RestoreHandler) resolveDockerRestoreRequest(c *gin.Context, agentID str
 	if err := json.Unmarshal([]byte(history.Docker), &metadata); err != nil {
 		return protocol.DockerRestoreRequest{}, errors.New("decode docker metadata")
 	}
-	return filterDockerRestoreRequest(protocol.DockerRestoreRequest{Sources: metadata.Sources}, request.DockerSourceID)
+	sourceIDs, err := normalizedDockerSourceIDs(request)
+	if err != nil {
+		return protocol.DockerRestoreRequest{}, err
+	}
+	return filterDockerRestoreRequest(protocol.DockerRestoreRequest{Sources: metadata.Sources}, sourceIDs)
 }
 
 func (h *RestoreHandler) runAgentRestorePreflight(c *gin.Context, agentID string, payload protocol.RestorePreflightReqPayload) []protocol.RestorePreflightCheck {
@@ -494,27 +513,150 @@ func restorePreflightCheck(code string, severity string, message string, detail 
 	}
 }
 
-func filterDockerRestoreRequest(request protocol.DockerRestoreRequest, sourceID string) (protocol.DockerRestoreRequest, error) {
-	if strings.TrimSpace(sourceID) == "" {
-		if len(request.Sources) == 0 {
-			return protocol.DockerRestoreRequest{}, errors.New("docker metadata has no sources")
-		}
-		return request, nil
+const maxDockerRestoreSources = 50
+
+func normalizedDockerSourceIDs(request restoreRequest) ([]string, error) {
+	values := request.DockerSourceIDs
+	if len(values) == 0 && strings.TrimSpace(request.DockerSourceID) != "" {
+		values = []string{request.DockerSourceID}
 	}
-	var filtered []protocol.DockerResolvedSource
+	if len(values) == 0 {
+		return nil, errors.New("docker source selection is required")
+	}
+	if len(values) > maxDockerRestoreSources {
+		return nil, errors.New("docker source selection exceeds limit")
+	}
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, errors.New("docker source selection contains an empty id")
+		}
+		if _, ok := seen[value]; ok {
+			return nil, errors.New("docker source selection contains duplicates")
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result, nil
+}
+
+func filterDockerRestoreRequest(request protocol.DockerRestoreRequest, sourceIDs []string) (protocol.DockerRestoreRequest, error) {
+	if len(request.Sources) == 0 {
+		return protocol.DockerRestoreRequest{}, errors.New("docker metadata has no sources")
+	}
+	if len(sourceIDs) == 0 {
+		return protocol.DockerRestoreRequest{}, errors.New("docker source selection is required")
+	}
+	if len(sourceIDs) > maxDockerRestoreSources {
+		return protocol.DockerRestoreRequest{}, errors.New("docker source selection exceeds limit")
+	}
+	selected := make(map[string]int, len(sourceIDs))
+	for index, sourceID := range sourceIDs {
+		selected[sourceID] = index
+	}
+	filtered := make([]protocol.DockerResolvedSource, 0, len(sourceIDs))
+	found := make([]bool, len(sourceIDs))
 	for _, source := range request.Sources {
-		if source.ContainerID == sourceID || source.Name == sourceID || source.Selection.ContainerID == sourceID || source.Selection.Name == sourceID {
-			filtered = append(filtered, source)
-			continue
+		matchedIndex := -1
+		for _, candidate := range dockerSourceIdentifiers(source) {
+			index, ok := selected[candidate]
+			if !ok {
+				continue
+			}
+			if found[index] || matchedIndex >= 0 {
+				return protocol.DockerRestoreRequest{}, errors.New("docker source selection resolves more than once")
+			}
+			matchedIndex = index
 		}
-		if source.Selection.ComposeProject != "" && source.Selection.ComposeService != "" && source.Selection.ComposeProject+"/"+source.Selection.ComposeService == sourceID {
+		if matchedIndex >= 0 {
 			filtered = append(filtered, source)
+			found[matchedIndex] = true
 		}
 	}
-	if len(filtered) == 0 {
-		return protocol.DockerRestoreRequest{}, errors.New("docker source not found for snapshot")
+	for _, ok := range found {
+		if !ok {
+			return protocol.DockerRestoreRequest{}, errors.New("docker source not found for snapshot")
+		}
 	}
 	return protocol.DockerRestoreRequest{Sources: filtered}, nil
+}
+
+func (h *RestoreHandler) dockerBatchCapabilityChecks(agentID string, request protocol.DockerRestoreRequest) []protocol.RestorePreflightCheck {
+	if len(request.Sources) <= 1 {
+		return nil
+	}
+	supported, err := agentHasCapability(h.DB, agentID, protocol.CapabilityDockerMultiContainerRestore)
+	if err != nil {
+		return []protocol.RestorePreflightCheck{restorePreflightCheck("docker_multi_restore_capability", protocol.RestorePreflightSeverityError, "check multi-container restore capability failed", err.Error())}
+	}
+	if !supported {
+		return []protocol.RestorePreflightCheck{restorePreflightCheck("docker_multi_restore_capability", protocol.RestorePreflightSeverityError, "target agent does not support multi-container restore; upgrade the Agent", agentID)}
+	}
+	return []protocol.RestorePreflightCheck{restorePreflightCheck("docker_multi_restore_capability", protocol.RestorePreflightSeverityInfo, "target agent supports multi-container restore", agentID)}
+}
+
+func dockerBatchConflictChecks(request protocol.DockerRestoreRequest) []protocol.RestorePreflightCheck {
+	type owner struct {
+		id   string
+		name string
+	}
+	seen := map[string]owner{}
+	var checks []protocol.RestorePreflightCheck
+	for _, source := range request.Sources {
+		current := owner{id: protocol.DockerSourceID(source), name: protocol.DockerSourceName(source)}
+		keys := []struct {
+			kind  string
+			value string
+		}{
+			{kind: "container name", value: strings.TrimSpace(source.Name)},
+		}
+		project := strings.TrimSpace(source.Compose.Project)
+		service := strings.TrimSpace(source.Compose.Service)
+		if project != "" && service != "" {
+			keys = append(keys, struct{ kind, value string }{kind: "Compose service", value: project + "/" + service})
+		}
+		for _, path := range source.ResolvedPaths {
+			keys = append(keys, struct{ kind, value string }{kind: "restore path", value: strings.TrimSpace(path)})
+		}
+		for _, port := range source.Ports {
+			if strings.TrimSpace(port.HostPort) != "" {
+				keys = append(keys, struct{ kind, value string }{kind: "host port", value: strings.TrimSpace(port.HostIP) + ":" + strings.TrimSpace(port.HostPort) + "/" + strings.TrimSpace(port.Protocol)})
+			}
+		}
+		for _, key := range keys {
+			if key.value == "" {
+				continue
+			}
+			lookup := key.kind + "\x00" + key.value
+			if previous, ok := seen[lookup]; ok && previous.id != current.id {
+				check := restorePreflightCheck("docker_batch_conflict", protocol.RestorePreflightSeverityWarning, "selected Docker sources share a "+key.kind, key.value+" is also used by "+previous.name)
+				check.SourceID = current.id
+				check.SourceName = current.name
+				checks = append(checks, check)
+				continue
+			}
+			seen[lookup] = current
+		}
+	}
+	return checks
+}
+
+func dockerSourceIdentifiers(source protocol.DockerResolvedSource) []string {
+	values := []string{source.ContainerID, source.Selection.ContainerID, source.Name, source.Selection.Name}
+	project := strings.TrimSpace(source.Compose.Project)
+	if project == "" {
+		project = strings.TrimSpace(source.Selection.ComposeProject)
+	}
+	service := strings.TrimSpace(source.Compose.Service)
+	if service == "" {
+		service = strings.TrimSpace(source.Selection.ComposeService)
+	}
+	if project != "" && service != "" {
+		values = append(values, project+"/"+service)
+	}
+	return appendUniqueRestoreStrings(nil, values...)
 }
 
 func dockerRestoreIncludePaths(request protocol.DockerRestoreRequest) []string {

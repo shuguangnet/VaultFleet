@@ -2,7 +2,9 @@ package docker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,6 +117,40 @@ func TestResolveDockerSources(t *testing.T) {
 	assert.Equal(t, "15432", metadata.Sources[0].Ports[0].HostPort)
 }
 
+func TestResolveDockerSourcesIncludesComposeEnvironmentFiles(t *testing.T) {
+	dir := t.TempDir()
+	composePath := filepath.Join(dir, "docker-compose.yml")
+	envPath := filepath.Join(dir, ".env")
+	require.NoError(t, os.WriteFile(composePath, []byte("services:\n  app:\n    container_name: ${CONTAINER_NAME}\n"), 0o644))
+	require.NoError(t, os.WriteFile(envPath, []byte("CONTAINER_NAME=test-app\nPRIVATE_TOKEN=must-not-enter-metadata\n"), 0o600))
+	inspect := composeInspectFixture("abc123", "/app", "example:latest", "running", nil)
+	inspect.Config.Labels["com.docker.compose.service"] = "app"
+	inspect.Config.Labels["com.docker.compose.project.working_dir"] = dir
+	inspect.Config.Labels["com.docker.compose.project.config_files"] = "docker-compose.yml"
+	inspect.Config.Labels["com.docker.compose.project.environment_file"] = ".env"
+
+	paths, metadata, err := Resolve(context.Background(), fakeDockerAPI{
+		containers: []ContainerSummary{{ID: "abc123", Labels: map[string]string{
+			"com.docker.compose.project": "app", "com.docker.compose.service": "app",
+		}}},
+		inspects: map[string]ContainerInspect{"abc123": inspect},
+	}, []protocol.BackupSource{{
+		Type: protocol.BackupSourceTypeDockerContainer,
+		DockerContainer: &protocol.DockerContainerBackupSource{
+			ComposeProject: "app", ComposeService: "app", IncludeComposeFiles: true,
+		},
+	}})
+
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{composePath, envPath}, paths)
+	require.NotNil(t, metadata)
+	require.Len(t, metadata.Sources, 1)
+	assert.Equal(t, []string{envPath}, metadata.Sources[0].Compose.EnvFiles)
+	encoded, err := json.Marshal(metadata)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "must-not-enter-metadata")
+}
+
 func TestResolveNonDockerSourcesDoesNotCallDockerAPI(t *testing.T) {
 	paths, metadata, err := Resolve(context.Background(), fakeDockerAPI{
 		listErr: errors.New("docker must not be called"),
@@ -154,7 +190,52 @@ func TestRestoreDockerSourceUsesComposeWhenMetadataAvailable(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, calls, 1)
-	assert.Equal(t, "docker compose -f "+composePath+" up -d db", calls[0])
+	assert.Equal(t, "docker compose --project-directory "+dir+" -f "+composePath+" up -d db", calls[0])
+}
+
+func TestRestoreDockerSourceUsesComposeEnvironmentFile(t *testing.T) {
+	dir := t.TempDir()
+	composePath := filepath.Join(dir, "docker-compose.yml")
+	envPath := filepath.Join(dir, ".env")
+	require.NoError(t, os.WriteFile(composePath, []byte("services:\n  uptime-kuma:\n    container_name: ${CONTAINER_NAME}\n"), 0o644))
+	require.NoError(t, os.WriteFile(envPath, []byte("CONTAINER_NAME=uptime-kuma\n"), 0o600))
+
+	var calls []string
+	err := Restore(context.Background(), protocol.DockerRestoreRequest{Sources: []protocol.DockerResolvedSource{{
+		Name: "uptime-kuma",
+		Compose: protocol.DockerComposeInfo{
+			Project: "uptime-kuma", Service: "uptime-kuma", WorkingDir: dir,
+			ConfigFiles: []string{"docker-compose.yml"}, EnvFiles: []string{envPath},
+		},
+	}}}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return nil, nil
+	})
+
+	require.NoError(t, err)
+	require.Len(t, calls, 1)
+	assert.Equal(t, "docker compose --project-directory "+dir+" --env-file "+envPath+" -f "+composePath+" up -d uptime-kuma", calls[0])
+}
+
+func TestRestoreDockerSourceRejectsMissingComposeEnvironmentFile(t *testing.T) {
+	dir := t.TempDir()
+	composePath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(composePath, []byte("services:\n  uptime-kuma:\n    container_name: ${CONTAINER_NAME}\n"), 0o644))
+
+	called := false
+	err := Restore(context.Background(), protocol.DockerRestoreRequest{Sources: []protocol.DockerResolvedSource{{
+		Name: "uptime-kuma",
+		Compose: protocol.DockerComposeInfo{
+			Project: "uptime-kuma", Service: "uptime-kuma", WorkingDir: dir, ConfigFiles: []string{"docker-compose.yml"},
+		},
+	}}}, func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+		called = true
+		return nil, nil
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no readable environment file")
+	assert.False(t, called)
 }
 
 func TestRestoreDockerSourceFallsBackWhenComposeFileMissing(t *testing.T) {
@@ -294,6 +375,85 @@ func TestRestoreDockerSourceRunsContainerWithRecordedMounts(t *testing.T) {
 	assert.Equal(t, "docker run -d --name db -v /srv/db:/var/lib/postgresql/data -v /srv/config:/config:ro -e POSTGRES_DB=app --label app=vaultfleet -p 15432:5432 --restart unless-stopped -w /var/lib/postgresql -u 999:999 postgres:16 postgres -c config_file=/config/postgresql.conf", calls[2])
 }
 
+func TestRestoreBatchContinuesAfterSourceFailure(t *testing.T) {
+	var starts []string
+	results := RestoreBatch(context.Background(), protocol.DockerRestoreRequest{Sources: []protocol.DockerResolvedSource{
+		{ContainerID: "first-id", Name: "first"},
+		{ContainerID: "second-id", Name: "second", Image: "second:latest"},
+	}}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		if strings.HasPrefix(call, "docker start ") {
+			starts = append(starts, strings.TrimPrefix(call, "docker start "))
+			if strings.HasSuffix(call, "first") {
+				return nil, errors.New("not found")
+			}
+			return nil, nil
+		}
+		return nil, errors.New("not found")
+	}, nil)
+
+	require.Len(t, results, 2)
+	assert.Equal(t, protocol.RestoreItemStatusFailed, results[0].Status)
+	assert.True(t, results[0].Retryable)
+	assert.Equal(t, protocol.RestoreItemStatusSuccess, results[1].Status)
+	assert.Equal(t, []string{"first", "second"}, starts)
+}
+
+func TestRestoreBatchStopsBeforeNextSourceWhenCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var starts []string
+	results := RestoreBatch(ctx, protocol.DockerRestoreRequest{Sources: []protocol.DockerResolvedSource{
+		{ContainerID: "first-id", Name: "first", Image: "first:latest"},
+		{ContainerID: "second-id", Name: "second", Image: "second:latest"},
+	}}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		if call == "docker start first" {
+			starts = append(starts, "first")
+			cancel()
+			return nil, nil
+		}
+		if strings.HasPrefix(call, "docker start ") {
+			starts = append(starts, strings.TrimPrefix(call, "docker start "))
+		}
+		return nil, nil
+	}, nil)
+
+	require.Len(t, results, 2)
+	assert.Equal(t, protocol.RestoreItemStatusSuccess, results[0].Status)
+	assert.Equal(t, protocol.RestoreItemStatusSkipped, results[1].Status)
+	assert.Equal(t, []string{"first"}, starts)
+}
+
+func TestRestoreBatchReportsStableProgress(t *testing.T) {
+	var events []string
+	results := RestoreBatch(context.Background(), protocol.DockerRestoreRequest{Sources: []protocol.DockerResolvedSource{
+		{ContainerID: "first-id", Name: "first", Image: "first:latest"},
+		{ContainerID: "second-id", Name: "second", Image: "second:latest"},
+	}}, func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+		return nil, nil
+	}, func(source protocol.DockerResolvedSource, completed int, failed int) {
+		events = append(events, fmt.Sprintf("%s:%d:%d", protocol.DockerSourceID(source), completed, failed))
+	})
+
+	require.Len(t, results, 2)
+	assert.Equal(t, []string{"first-id:0:0", "first-id:1:0", "second-id:1:0", "second-id:2:0"}, events)
+}
+
+func TestPreflightRestoreAttributesChecksToSource(t *testing.T) {
+	path := t.TempDir()
+	checks := PreflightRestore(context.Background(), fakeDockerAPI{}, protocol.DockerRestoreRequest{Sources: []protocol.DockerResolvedSource{{
+		ContainerID: "db-id", Name: "db", Image: "postgres:16", ResolvedPaths: []string{path},
+	}}})
+
+	var attributed bool
+	for _, check := range checks {
+		if check.Code == "docker_restore_path_exists" {
+			attributed = check.SourceID == "db-id" && check.SourceName == "db"
+		}
+	}
+	assert.True(t, attributed, "expected source-attributed restore path check: %#v", checks)
+}
+
 func TestPreflightRestoreReportsMissingSources(t *testing.T) {
 	checks := PreflightRestore(context.Background(), fakeDockerAPI{}, protocol.DockerRestoreRequest{})
 
@@ -329,6 +489,44 @@ func TestPreflightRestoreReportsConflictAndPathWarnings(t *testing.T) {
 	assertDockerPreflightCheck(t, checks, "docker_container_conflict", protocol.RestorePreflightSeverityWarning)
 	assertDockerPreflightCheck(t, checks, "docker_restore_path_exists", protocol.RestorePreflightSeverityWarning)
 	assertDockerPreflightCheck(t, checks, "docker_restore_path_missing", protocol.RestorePreflightSeverityWarning)
+}
+
+func TestPreflightRestoreBlocksComposeVariablesWithoutEnvironmentFile(t *testing.T) {
+	dir := t.TempDir()
+	composePath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(composePath, []byte("services:\n  uptime-kuma:\n    container_name: ${CONTAINER_NAME}\n"), 0o644))
+
+	checks := PreflightRestore(context.Background(), fakeDockerAPI{}, protocol.DockerRestoreRequest{
+		Sources: []protocol.DockerResolvedSource{{
+			ContainerID: "uptime-kuma-id", Name: "uptime-kuma", ResolvedPaths: []string{composePath},
+			Compose: protocol.DockerComposeInfo{
+				Project: "uptime-kuma", Service: "uptime-kuma", WorkingDir: dir, ConfigFiles: []string{"docker-compose.yml"},
+			},
+		}},
+	})
+
+	assertDockerPreflightCheck(t, checks, "docker_compose_environment", protocol.RestorePreflightSeverityError)
+}
+
+func TestPreflightRestoreAllowsEnvironmentFilePlannedForRestore(t *testing.T) {
+	dir := t.TempDir()
+	composePath := filepath.Join(dir, "docker-compose.yml")
+	envPath := filepath.Join(dir, ".env")
+	require.NoError(t, os.WriteFile(composePath, []byte("services:\n  uptime-kuma:\n    container_name: ${CONTAINER_NAME}\n"), 0o644))
+
+	checks := PreflightRestore(context.Background(), fakeDockerAPI{}, protocol.DockerRestoreRequest{
+		Sources: []protocol.DockerResolvedSource{{
+			ContainerID: "uptime-kuma-id", Name: "uptime-kuma", ResolvedPaths: []string{composePath, envPath},
+			Compose: protocol.DockerComposeInfo{
+				Project: "uptime-kuma", Service: "uptime-kuma", WorkingDir: dir,
+				ConfigFiles: []string{"docker-compose.yml"}, EnvFiles: []string{envPath},
+			},
+		}},
+	})
+
+	for _, check := range checks {
+		assert.NotEqual(t, "docker_compose_environment", check.Code, "unexpected environment error: %#v", check)
+	}
 }
 
 func TestResolveAmbiguousComposeSelection(t *testing.T) {

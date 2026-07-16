@@ -131,6 +131,7 @@ func buildRuntimeWithOptions(ctx context.Context, database *db.Database, options
 		api.NewTaskResultProcessor(database, commandService),
 	)
 	wsHandler.ProgressCache = progressCache
+	wsHandler.RestoreProgressProcessor = api.NewRestoreProgressProcessor(database)
 	wsHandler.TaskLogBuffer = taskLogBuffer
 	wsHandler.PolicyAckProcessor = api.NewPolicyAckProcessor(database, commandService)
 	wsHandler.SnapshotListResponseProcessor = api.NewSnapshotListResponseProcessor(database, commandService)

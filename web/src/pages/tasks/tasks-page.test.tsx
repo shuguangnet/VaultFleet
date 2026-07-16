@@ -149,6 +149,20 @@ describe("task progress helpers", () => {
     expect(screen.getByText("1:05")).toBeInTheDocument();
   });
 
+  it("renders active multi-container restore progress", () => {
+    render(<>{renderTaskMetricContent(task({
+      type: "restore",
+      status: "running",
+      restore_progress: {
+        agent_id: "agent-1", snapshot_id: "snap-1", files_restored: 0, bytes_restored: 0, percent: 50,
+        items_total: 2, items_completed: 1, items_failed: 1, current_source_id: "api-id", current_source_name: "api",
+      },
+    }))}</>);
+
+    expect(screen.getByText("恢复容器: 1/2，失败 1")).toBeInTheDocument();
+    expect(screen.getByText("api")).toBeInTheDocument();
+  });
+
   it("renders completed verification task metrics", () => {
     render(
       <>

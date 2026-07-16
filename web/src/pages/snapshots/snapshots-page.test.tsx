@@ -139,12 +139,20 @@ describe("SnapshotsPage", () => {
       hostname: "node-1",
       username: "root",
       docker: {
-        sources: [{
-          container_id: "container-1",
-          name: "postgres",
-          image: "postgres:16",
-          resolved_paths: ["/var/lib/docker/volumes/db/_data"],
-        }],
+        sources: [
+          {
+            container_id: "container-1",
+            name: "postgres",
+            image: "postgres:16",
+            resolved_paths: ["/var/lib/docker/volumes/db/_data"],
+          },
+          {
+            container_id: "container-2",
+            name: "api",
+            image: "api:latest",
+            resolved_paths: ["/srv/api"],
+          },
+        ],
       },
     }]);
     vi.mocked(preflightRestore).mockResolvedValue({
@@ -162,6 +170,7 @@ describe("SnapshotsPage", () => {
     await waitFor(() => {
       expect(screen.queryByText("选择测试路径")).not.toBeInTheDocument();
     });
+    expect(screen.getByText(/升级目标 Agent 后可在一次任务中恢复多个容器/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /执行恢复预检/ }));
     expect(await screen.findByText("Docker Engine is available")).toBeInTheDocument();
@@ -247,7 +256,7 @@ describe("SnapshotsPage", () => {
     }));
   }, 10000);
 
-  it("allows final restore without running preflight", async () => {
+  it("blocks final restore until preflight passes", async () => {
     vi.mocked(listAgents).mockResolvedValue([{
       id: "agent-1",
       name: "node-1",
@@ -275,18 +284,13 @@ describe("SnapshotsPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /恢复/ }));
     fireEvent.click(screen.getByRole("checkbox", { name: /确认恢复/ }));
-    fireEvent.click(screen.getByRole("button", { name: "恢复全部" }));
+    expect(screen.getByRole("button", { name: "恢复全部" })).toBeDisabled();
 
     expect(preflightRestore).not.toHaveBeenCalled();
-    await waitFor(() => expect(restoreSnapshot).toHaveBeenCalledWith("agent-1", {
-      snapshot_id: "snap-1",
-      source_agent_id: "agent-1",
-      restore_mode: "files",
-      target_path: "/data",
-    }));
+    expect(restoreSnapshot).not.toHaveBeenCalled();
   }, 10000);
 
-  it("allows final restore when preflight fails", async () => {
+  it("blocks final restore when preflight fails", async () => {
     vi.mocked(listAgents).mockResolvedValue([{
       id: "agent-1",
       name: "node-1",
@@ -324,13 +328,48 @@ describe("SnapshotsPage", () => {
     expect(screen.getByText(/target path is not writable/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("checkbox", { name: /确认恢复/ }));
-    fireEvent.click(screen.getByRole("button", { name: "恢复全部" }));
+    expect(screen.getByRole("button", { name: "恢复全部" })).toBeDisabled();
+    expect(restoreSnapshot).not.toHaveBeenCalled();
+  }, 10000);
+
+  it("selects and restores multiple Docker containers in snapshot order", async () => {
+    vi.mocked(listAgents).mockResolvedValue([{
+      id: "agent-1", name: "node-1", status: "online", last_seen: "2026-05-22T00:00:00Z",
+      version: "0.9.0", hostname: "node-1", os: "linux", arch: "amd64",
+      capabilities: ["restore_preflight", "docker_container_restore", "docker_multi_container_restore"],
+      created_at: "2026-05-22T00:00:00Z",
+    }]);
+    vi.mocked(listPolicies).mockResolvedValue([]);
+    vi.mocked(listStorage).mockResolvedValue([]);
+    vi.mocked(listSnapshots).mockResolvedValue([{
+      id: "snap-1", time: "2026-05-22T00:00:00Z", paths: ["/shared"], hostname: "node-1", username: "root",
+      docker: { sources: [
+        { container_id: "db-id", name: "db", image: "postgres:16", resolved_paths: ["/shared", "/db"] },
+        { container_id: "api-id", name: "api", image: "api:latest", resolved_paths: ["/shared", "/api"] },
+      ] },
+    }]);
+    vi.mocked(preflightRestore).mockResolvedValue({
+      snapshot_id: "snap-1", status: "passed",
+      checks: [{ code: "docker_available", severity: "info", message: "Docker Engine is available", source_id: "db-id", source_name: "db" }],
+    });
+    vi.mocked(restoreSnapshot).mockResolvedValue({ message_id: "msg-batch" });
+
+    renderPage();
+    fireEvent.click((await screen.findAllByRole("button", { name: /恢复容器/ }))[0]);
+    fireEvent.click(screen.getByRole("checkbox", { name: /选择 api/ }));
+    expect(screen.getByText(/已选 2/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /执行恢复预检/ }));
+    await waitFor(() => expect(preflightRestore).toHaveBeenCalledWith("agent-1", {
+      snapshot_id: "snap-1", source_agent_id: "agent-1", restore_mode: "docker_container", docker_source_ids: ["db-id", "api-id"],
+    }));
+    expect(await screen.findByText("Docker Engine is available")).toBeInTheDocument();
+    expect(screen.getAllByText("db").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("checkbox", { name: /确认恢复/ }));
+    fireEvent.click(screen.getByRole("button", { name: "恢复 2 个容器" }));
 
     await waitFor(() => expect(restoreSnapshot).toHaveBeenCalledWith("agent-1", {
-      snapshot_id: "snap-1",
-      source_agent_id: "agent-1",
-      restore_mode: "files",
-      target_path: "/data",
+      snapshot_id: "snap-1", source_agent_id: "agent-1", restore_mode: "docker_container", docker_source_ids: ["db-id", "api-id"],
     }));
   }, 10000);
 });

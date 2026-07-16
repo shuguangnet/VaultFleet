@@ -1,10 +1,12 @@
 import { TaskFilters, TaskHistory, TaskLogQuery, TaskLogResponse } from "@/types/task";
+import type { RestoreRetryPlan } from "@/types/snapshot";
 import { apiDelete, apiGet, apiPost } from "./http";
 
 export const listTasks = (filters: TaskFilters = {}) => apiGet<TaskHistory[]>(`/api/tasks${toQuery(filters)}`);
 
 export const cancelTask = (taskId: string) => apiPost(`/api/tasks/${taskId}/cancel`, {});
 export const deleteTask = (taskId: string) => apiDelete(`/api/tasks/${taskId}`);
+export const retryFailedRestore = (taskId: string) => apiPost<RestoreRetryPlan>(`/api/tasks/${taskId}/retry-failed`, {});
 
 export const taskArtifactDownloadUrl = (taskId: string) => `/api/tasks/${taskId}/download`;
 

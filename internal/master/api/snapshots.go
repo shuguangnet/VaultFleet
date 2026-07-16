@@ -554,6 +554,10 @@ func createTaskHistory(gormDB *gorm.DB, agentID string, messageID string, result
 	if err != nil {
 		return err
 	}
+	rawRestoreItems, err := marshalRestoreItems(result.RestoreItems)
+	if err != nil {
+		return err
+	}
 	history := db.TaskHistory{
 		AgentID:             agentID,
 		Type:                result.TaskType,
@@ -572,6 +576,7 @@ func createTaskHistory(gormDB *gorm.DB, agentID string, messageID string, result
 		Verification:        rawVerification,
 		Manifest:            rawManifest,
 		ArtifactNaming:      rawArtifactNaming,
+		RestoreItems:        rawRestoreItems,
 		StartedAt:           &startedAt,
 		FinishedAt:          &finishedAt,
 		DurationMs:          result.DurationMs,
@@ -655,6 +660,11 @@ func completeRestoreTaskResult(database *db.Database, agentID string, messageID 
 			history.DurationMs = result.DurationMs
 			history.RepoSize = result.RepoSize
 			history.ErrorLog = result.ErrorLog
+			rawRestoreItems, marshalErr := marshalRestoreItems(result.RestoreItems)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			history.RestoreItems = rawRestoreItems
 			if result.SnapshotID != "" {
 				history.SnapshotID = result.SnapshotID
 			}
@@ -690,6 +700,11 @@ func completeRestoreTaskResult(database *db.Database, agentID string, messageID 
 		RepoSize:            result.RepoSize,
 		ErrorLog:            result.ErrorLog,
 	}
+	rawRestoreItems, err := marshalRestoreItems(result.RestoreItems)
+	if err != nil {
+		return err
+	}
+	history.RestoreItems = rawRestoreItems
 	if result.StartedAt.IsZero() {
 		history.StartedAt = nil
 	}
@@ -697,6 +712,37 @@ func completeRestoreTaskResult(database *db.Database, agentID string, messageID 
 		history.FinishedAt = nil
 	}
 	return database.DB.Create(&history).Error
+}
+
+func marshalRestoreItems(items []protocol.RestoreItemResult) (string, error) {
+	if items == nil {
+		return "", nil
+	}
+	raw, err := json.Marshal(items)
+	if err != nil {
+		return "", fmt.Errorf("marshal restore item results: %w", err)
+	}
+	return string(raw), nil
+}
+
+func NewRestoreProgressProcessor(database *db.Database) func(agentID string, msg protocol.Message) error {
+	return func(agentID string, msg protocol.Message) error {
+		if database == nil || database.DB == nil || strings.TrimSpace(msg.ID) == "" {
+			return nil
+		}
+		payload, err := protocol.ParsePayload[protocol.RestoreProgressPayload](&msg)
+		if err != nil {
+			return err
+		}
+		payload.AgentID = agentID
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		return database.DB.Model(&db.TaskHistory{}).
+			Where("agent_id = ? AND message_id = ? AND type = ? AND status IN ?", agentID, msg.ID, "restore", []string{commands.TaskStatusPending, commands.TaskStatusRunning}).
+			Updates(map[string]any{"restore_progress": string(raw), "updated_at": time.Now()}).Error
+	}
 }
 
 func upsertSnapshots(database *db.Database, agentID string, snapshots []protocol.SnapshotInfo) error {

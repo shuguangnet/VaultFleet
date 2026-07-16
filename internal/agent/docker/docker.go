@@ -314,6 +314,7 @@ func matchContainer(containers []ContainerSummary, source protocol.DockerContain
 func resolveInspect(inspect ContainerInspect, source protocol.DockerContainerBackupSource) ([]string, protocol.DockerResolvedSource, error) {
 	labels := inspect.Config.Labels
 	compose := composeInfo(labels)
+	compose.EnvFiles = readableComposeEnvFiles(compose)
 	if source.ComposeWorkingDir == "" {
 		source.ComposeWorkingDir = compose.WorkingDir
 	}
@@ -352,6 +353,7 @@ func resolveInspect(inspect ContainerInspect, source protocol.DockerContainerBac
 			}
 			paths = append(paths, path)
 		}
+		paths = append(paths, compose.EnvFiles...)
 	}
 	paths = uniqueStrings(paths)
 	if len(paths) == 0 {
@@ -387,15 +389,65 @@ func Restore(ctx context.Context, request protocol.DockerRestoreRequest, runner 
 	if len(request.Sources) == 0 {
 		return errors.New("docker restore has no sources")
 	}
+	results := RestoreBatch(ctx, request, runner, nil)
+	var failures []string
+	for _, result := range results {
+		if result.Status == protocol.RestoreItemStatusFailed || result.Status == protocol.RestoreItemStatusCancelled {
+			failures = append(failures, result.SourceName+": "+result.Error)
+		}
+	}
+	if len(failures) > 0 {
+		return errors.New(strings.Join(failures, "; "))
+	}
+	return nil
+}
+
+type RestoreProgressFunc func(source protocol.DockerResolvedSource, completed int, failed int)
+
+func RestoreBatch(ctx context.Context, request protocol.DockerRestoreRequest, runner CommandRunner, progress RestoreProgressFunc) []protocol.RestoreItemResult {
+	if len(request.Sources) == 0 {
+		return nil
+	}
 	if runner == nil {
 		runner = runCommand
 	}
-	for _, source := range request.Sources {
+	results := make([]protocol.RestoreItemResult, 0, len(request.Sources))
+	failed := 0
+	for index, source := range request.Sources {
+		if ctx.Err() != nil {
+			for _, pending := range request.Sources[index:] {
+				results = append(results, protocol.RestoreItemResult{
+					SourceID: protocol.DockerSourceID(pending), SourceName: protocol.DockerSourceName(pending),
+					Status: protocol.RestoreItemStatusSkipped, Error: ctx.Err().Error(), Retryable: true,
+				})
+			}
+			break
+		}
+		if progress != nil {
+			progress(source, len(results), failed)
+		}
+		startedAt := time.Now()
+		result := protocol.RestoreItemResult{
+			SourceID: protocol.DockerSourceID(source), SourceName: protocol.DockerSourceName(source),
+			Status: protocol.RestoreItemStatusSuccess, StartedAt: startedAt,
+		}
 		if err := restoreSource(ctx, source, runner); err != nil {
-			return err
+			result.Status = protocol.RestoreItemStatusFailed
+			result.Error = err.Error()
+			result.Retryable = true
+			failed++
+			if ctx.Err() != nil {
+				result.Status = protocol.RestoreItemStatusCancelled
+				result.Error = ctx.Err().Error()
+			}
+		}
+		result.FinishedAt = time.Now()
+		results = append(results, result)
+		if progress != nil {
+			progress(source, len(results), failed)
 		}
 	}
-	return nil
+	return results
 }
 
 func PreflightRestore(ctx context.Context, client API, request protocol.DockerRestoreRequest) []protocol.RestorePreflightCheck {
@@ -421,6 +473,7 @@ func PreflightRestore(ctx context.Context, client API, request protocol.DockerRe
 	for _, source := range request.Sources {
 		checks = append(checks, preflightSource(containers, source)...)
 	}
+	checks = append(checks, preflightBatchConflicts(request.Sources)...)
 	return checks
 }
 
@@ -435,10 +488,60 @@ func preflightSource(containers []ContainerSummary, source protocol.DockerResolv
 	}
 	if len(source.ResolvedPaths) == 0 {
 		checks = append(checks, preflightCheck("docker_restore_paths", protocol.RestorePreflightSeverityError, "Docker source has no restore paths", sourceName))
-		return checks
+		return attributePreflightChecks(checks, source)
 	}
 	for _, restorePath := range source.ResolvedPaths {
 		checks = append(checks, preflightRestorePath(restorePath)...)
+	}
+	if detail := composeEnvironmentError(source, true); detail != "" {
+		checks = append(checks, preflightCheck("docker_compose_environment", protocol.RestorePreflightSeverityError, "Docker Compose environment file is required", detail))
+	}
+	return attributePreflightChecks(checks, source)
+}
+
+func attributePreflightChecks(checks []protocol.RestorePreflightCheck, source protocol.DockerResolvedSource) []protocol.RestorePreflightCheck {
+	for index := range checks {
+		checks[index].SourceID = protocol.DockerSourceID(source)
+		checks[index].SourceName = protocol.DockerSourceName(source)
+	}
+	return checks
+}
+
+func preflightBatchConflicts(sources []protocol.DockerResolvedSource) []protocol.RestorePreflightCheck {
+	seen := make(map[string]string)
+	var checks []protocol.RestorePreflightCheck
+	for _, source := range sources {
+		id := protocol.DockerSourceID(source)
+		name := protocol.DockerSourceName(source)
+		values := []struct{ kind, value string }{{"container name", strings.TrimSpace(source.Name)}}
+		project := strings.TrimSpace(source.Compose.Project)
+		service := strings.TrimSpace(source.Compose.Service)
+		if project != "" && service != "" {
+			values = append(values, struct{ kind, value string }{"Compose service", project + "/" + service})
+		}
+		for _, path := range source.ResolvedPaths {
+			values = append(values, struct{ kind, value string }{"restore path", strings.TrimSpace(path)})
+		}
+		for _, port := range source.Ports {
+			if strings.TrimSpace(port.HostPort) != "" {
+				values = append(values, struct{ kind, value string }{"host port", strings.TrimSpace(port.HostIP) + ":" + strings.TrimSpace(port.HostPort) + "/" + strings.TrimSpace(port.Protocol)})
+			}
+		}
+		for _, value := range values {
+			if value.value == "" {
+				continue
+			}
+			key := value.kind + "\x00" + value.value
+			if previous, ok := seen[key]; ok && previous != id {
+				checks = append(checks, protocol.RestorePreflightCheck{
+					Code: "docker_batch_conflict", Severity: protocol.RestorePreflightSeverityWarning,
+					Message: "selected Docker sources share a " + value.kind, Detail: value.value,
+					SourceID: id, SourceName: name,
+				})
+				continue
+			}
+			seen[key] = id
+		}
 	}
 	return checks
 }
@@ -561,8 +664,11 @@ func preflightCheck(code string, severity string, message string, detail string)
 }
 
 func restoreSource(ctx context.Context, source protocol.DockerResolvedSource, runner CommandRunner) error {
-	if args, configFiles, ok := composeRestoreArgs(source); ok {
+	if args, configFiles, _, ok := composeRestoreArgs(source); ok {
 		if len(unusableComposeConfigFiles(configFiles)) == 0 {
+			if detail := composeEnvironmentError(source, false); detail != "" {
+				return errors.New(detail)
+			}
 			if output, err := runner(ctx, "docker", args...); err != nil {
 				return commandError("restore docker compose service", output, err)
 			}
@@ -690,7 +796,7 @@ func creatableDockerNetworkMode(network string) bool {
 	return true
 }
 
-func composeRestoreArgs(source protocol.DockerResolvedSource) ([]string, []string, bool) {
+func composeRestoreArgs(source protocol.DockerResolvedSource) ([]string, []string, []string, bool) {
 	compose := source.Compose
 	if compose.WorkingDir == "" {
 		compose.WorkingDir = source.Selection.ComposeWorkingDir
@@ -703,10 +809,17 @@ func composeRestoreArgs(source protocol.DockerResolvedSource) ([]string, []strin
 		service = strings.TrimSpace(source.Selection.ComposeService)
 	}
 	if len(compose.ConfigFiles) == 0 || service == "" {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 
 	args := []string{"compose"}
+	if workingDir := strings.TrimSpace(compose.WorkingDir); workingDir != "" {
+		args = append(args, "--project-directory", workingDir)
+	}
+	envFiles := readableComposeEnvFiles(compose)
+	for _, envFile := range envFiles {
+		args = append(args, "--env-file", envFile)
+	}
 	configFiles := make([]string, 0, len(compose.ConfigFiles))
 	for _, configFile := range compose.ConfigFiles {
 		configFile = strings.TrimSpace(configFile)
@@ -719,11 +832,77 @@ func composeRestoreArgs(source protocol.DockerResolvedSource) ([]string, []strin
 		args = append(args, "-f", configFile)
 		configFiles = append(configFiles, configFile)
 	}
-	if len(args) == 1 {
-		return nil, nil, false
+	if len(configFiles) == 0 {
+		return nil, nil, nil, false
 	}
 	args = append(args, "up", "-d", service)
-	return args, configFiles, true
+	return args, configFiles, envFiles, true
+}
+
+func composeEnvironmentError(source protocol.DockerResolvedSource, allowPlannedEnvFiles bool) string {
+	_, configFiles, envFiles, ok := composeRestoreArgs(source)
+	if !ok || len(unusableComposeConfigFiles(configFiles)) > 0 || len(envFiles) > 0 {
+		return ""
+	}
+	if allowPlannedEnvFiles && hasPlannedComposeEnvFile(source) {
+		return ""
+	}
+	for _, configFile := range configFiles {
+		content, err := os.ReadFile(configFile)
+		if err != nil {
+			continue
+		}
+		if containsComposeVariableReference(content) {
+			workingDir := strings.TrimSpace(source.Compose.WorkingDir)
+			if workingDir == "" {
+				workingDir = strings.TrimSpace(source.Selection.ComposeWorkingDir)
+			}
+			return fmt.Sprintf("compose file %s references variables but no readable environment file was restored; expected env_files metadata or %s", configFile, filepath.Join(workingDir, ".env"))
+		}
+	}
+	return ""
+}
+
+func hasPlannedComposeEnvFile(source protocol.DockerResolvedSource) bool {
+	workingDir := strings.TrimSpace(source.Compose.WorkingDir)
+	if workingDir == "" {
+		workingDir = strings.TrimSpace(source.Selection.ComposeWorkingDir)
+	}
+	paths := make(map[string]struct{}, len(source.ResolvedPaths))
+	for _, path := range source.ResolvedPaths {
+		path = strings.TrimSpace(path)
+		if path != "" {
+			paths[filepath.Clean(path)] = struct{}{}
+		}
+	}
+	for _, envFile := range source.Compose.EnvFiles {
+		envFile = strings.TrimSpace(envFile)
+		if envFile == "" {
+			continue
+		}
+		if !filepath.IsAbs(envFile) && workingDir != "" {
+			envFile = filepath.Join(workingDir, envFile)
+		}
+		if _, ok := paths[filepath.Clean(envFile)]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func containsComposeVariableReference(content []byte) bool {
+	text := string(content)
+	for offset := 0; ; {
+		index := strings.Index(text[offset:], "${")
+		if index < 0 {
+			return false
+		}
+		index += offset
+		if index == 0 || text[index-1] != '$' {
+			return true
+		}
+		offset = index + 2
+	}
 }
 
 func unusableComposeConfigFiles(configFiles []string) []string {
@@ -887,7 +1066,33 @@ func composeInfo(labels map[string]string) protocol.DockerComposeInfo {
 		Service:     labels["com.docker.compose.service"],
 		WorkingDir:  labels["com.docker.compose.project.working_dir"],
 		ConfigFiles: configFiles,
+		EnvFiles:    splitComposeFiles(labels["com.docker.compose.project.environment_file"]),
 	}
+}
+
+func readableComposeEnvFiles(compose protocol.DockerComposeInfo) []string {
+	candidates := append([]string(nil), compose.EnvFiles...)
+	if workingDir := strings.TrimSpace(compose.WorkingDir); workingDir != "" {
+		candidates = append(candidates, filepath.Join(workingDir, ".env"))
+	}
+
+	var result []string
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if !filepath.IsAbs(candidate) && strings.TrimSpace(compose.WorkingDir) != "" {
+			candidate = filepath.Join(compose.WorkingDir, candidate)
+		}
+		candidate = filepath.Clean(candidate)
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() || assertReadablePath(candidate) != nil {
+			continue
+		}
+		result = append(result, candidate)
+	}
+	return uniqueStrings(result)
 }
 
 func splitComposeFiles(value string) []string {

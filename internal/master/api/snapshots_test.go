@@ -245,6 +245,39 @@ func TestTaskResultProcessorCopiesArchiveArtifactIntoMasterDataDir(t *testing.T)
 	assert.Equal(t, "archive-payload", string(storedBytes))
 }
 
+func TestRestoreProgressProcessorPersistsLatestProgress(t *testing.T) {
+	dataDir := t.TempDir()
+	database, err := db.New(dataDir)
+	require.NoError(t, err)
+	agent := createSnapshotTestAgent(t, database, "online")
+	history := db.TaskHistory{AgentID: agent.ID, Type: "restore", Status: commands.TaskStatusRunning, SnapshotID: "snap-1", MessageID: "restore-msg-1"}
+	require.NoError(t, database.DB.Create(&history).Error)
+	msg, err := protocol.NewMessage(protocol.TypeRestoreProgress, protocol.RestoreProgressPayload{
+		AgentID: "spoofed", SnapshotID: "snap-1", ItemsTotal: 2, ItemsCompleted: 1, ItemsFailed: 1, CurrentSourceID: "api-id", CurrentSourceName: "api", Percent: 50,
+	})
+	require.NoError(t, err)
+	msg.ID = history.MessageID
+
+	require.NoError(t, NewRestoreProgressProcessor(database)(agent.ID, *msg))
+
+	var stored db.TaskHistory
+	require.NoError(t, database.DB.First(&stored, "id = ?", history.ID).Error)
+	var progress protocol.RestoreProgressPayload
+	require.NoError(t, json.Unmarshal([]byte(stored.RestoreProgress), &progress))
+	assert.Equal(t, agent.ID, progress.AgentID)
+	assert.Equal(t, "restore-msg-1", stored.MessageID)
+	assert.Equal(t, 2, progress.ItemsTotal)
+	assert.Equal(t, "api-id", progress.CurrentSourceID)
+	sqlDB, err := database.DB.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+	reopened, err := db.New(dataDir)
+	require.NoError(t, err)
+	var afterRestart db.TaskHistory
+	require.NoError(t, reopened.DB.First(&afterRestart, "id = ?", history.ID).Error)
+	assert.Equal(t, stored.RestoreProgress, afterRestart.RestoreProgress)
+}
+
 func TestTaskResultProcessorFailsArchiveResultWhenArtifactMissing(t *testing.T) {
 	database, err := db.New(t.TempDir())
 	require.NoError(t, err)

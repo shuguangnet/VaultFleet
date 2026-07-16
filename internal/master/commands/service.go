@@ -23,12 +23,13 @@ const (
 	CommandStatusTimeout    = "timeout"
 	CommandStatusCancelled  = "cancelled"
 
-	TaskStatusPending   = "pending"
-	TaskStatusRunning   = "running"
-	TaskStatusSuccess   = "success"
-	TaskStatusFailed    = "failed"
-	TaskStatusTimeout   = "timeout"
-	TaskStatusCancelled = "cancelled"
+	TaskStatusPending        = "pending"
+	TaskStatusRunning        = "running"
+	TaskStatusSuccess        = "success"
+	TaskStatusPartialSuccess = "partial_success"
+	TaskStatusFailed         = "failed"
+	TaskStatusTimeout        = "timeout"
+	TaskStatusCancelled      = "cancelled"
 )
 
 type Hub interface {
@@ -369,6 +370,13 @@ func (s *Service) CompleteTaskResultWith(ctx context.Context, agentID string, me
 				return fmt.Errorf("marshal artifact naming metadata: %w", err)
 			}
 			taskUpdates["artifact_naming"] = string(rawArtifactNaming)
+		}
+		if result.RestoreItems != nil {
+			rawRestoreItems, err := json.Marshal(result.RestoreItems)
+			if err != nil {
+				return fmt.Errorf("marshal restore item results: %w", err)
+			}
+			taskUpdates["restore_items"] = string(rawRestoreItems)
 		}
 		if startedAt != nil {
 			taskUpdates["started_at"] = startedAt
@@ -967,7 +975,7 @@ func terminalStatuses() []string {
 }
 
 func isTaskTerminal(status string) bool {
-	return status == TaskStatusSuccess || status == TaskStatusFailed || status == TaskStatusTimeout || status == TaskStatusCancelled
+	return status == TaskStatusSuccess || status == TaskStatusPartialSuccess || status == TaskStatusFailed || status == TaskStatusTimeout || status == TaskStatusCancelled
 }
 
 func nullableTime(value time.Time) *time.Time {

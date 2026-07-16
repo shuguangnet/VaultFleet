@@ -23,6 +23,7 @@ export interface RestoreRequest {
   include_paths?: string[];
   restore_mode?: "files" | "docker_container";
   docker_source_id?: string;
+  docker_source_ids?: string[];
 }
 
 export type RestorePreflightSeverity = "info" | "warning" | "error";
@@ -33,6 +34,8 @@ export interface RestorePreflightCheck {
   severity: RestorePreflightSeverity;
   message: string;
   detail?: string;
+  source_id?: string;
+  source_name?: string;
 }
 
 export interface RestorePreflightReport {
@@ -47,6 +50,12 @@ export interface RestoreAccepted {
   message_id: string;
   command_id?: string;
   message?: string;
+}
+
+export interface RestoreRetryPlan extends RestoreRequest {
+  agent_id: string;
+  source_agent_id: string;
+  docker_source_ids: string[];
 }
 
 export interface SnapshotFileEntry {

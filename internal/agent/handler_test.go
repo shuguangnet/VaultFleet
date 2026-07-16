@@ -2066,6 +2066,104 @@ func TestHandleRestoreDockerContainerRestoresOriginalPathsAndStartsContainer(t *
 	assert.Equal(t, "success", result.Status)
 }
 
+func TestHandleRestoreDockerBatchContinuesAndReportsPartialSuccess(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{AgentID: "agent-1", Storage: protocol.StorageConfig{RepoPath: "repo/agent-1"}}))
+	sent := &sentMessages{}
+	var includePaths []string
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store,
+		ConfigDir:   t.TempDir(),
+		SendFunc:    sent.send,
+		RestoreRunner: func(_ context.Context, _ executor.ExecutorConfig, _ string, _ string, paths []string) error {
+			includePaths = append([]string(nil), paths...)
+			return nil
+		},
+		DockerRestoreBatchRunner: func(_ context.Context, request protocol.DockerRestoreRequest, progress agentdocker.RestoreProgressFunc) []protocol.RestoreItemResult {
+			first, second := request.Sources[0], request.Sources[1]
+			progress(first, 0, 0)
+			progress(first, 1, 1)
+			progress(second, 1, 1)
+			progress(second, 2, 1)
+			return []protocol.RestoreItemResult{
+				{SourceID: "db-id", SourceName: "db", Status: protocol.RestoreItemStatusFailed, Error: "db conflict", Retryable: true},
+				{SourceID: "api-id", SourceName: "api", Status: protocol.RestoreItemStatusSuccess},
+			}
+		},
+	})
+	msg, err := protocol.NewMessage(protocol.TypeSelectiveRestoreReq, protocol.RestoreReqPayload{
+		SnapshotID: "snap-batch", RestoreMode: protocol.RestoreModeDockerContainer,
+		Docker: &protocol.DockerRestoreRequest{Sources: []protocol.DockerResolvedSource{
+			{ContainerID: "db-id", Name: "db", ResolvedPaths: []string{"/shared", "/db"}},
+			{ContainerID: "api-id", Name: "api", ResolvedPaths: []string{"/shared", "/api"}},
+		}},
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+	resultMsg := waitForMessageType(t, sent, protocol.TypeTaskResult, time.Second)
+
+	assert.Equal(t, []string{"/shared", "/db", "/api"}, includePaths)
+	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&resultMsg)
+	require.NoError(t, err)
+	assert.Equal(t, "partial_success", result.Status)
+	require.Len(t, result.RestoreItems, 2)
+	assert.Equal(t, protocol.RestoreItemStatusFailed, result.RestoreItems[0].Status)
+	assert.Equal(t, protocol.RestoreItemStatusSuccess, result.RestoreItems[1].Status)
+	assert.Contains(t, result.ErrorLog, "db conflict")
+
+	var sawCurrentAPI bool
+	for _, sentMsg := range sent.snapshot() {
+		if sentMsg.Type != protocol.TypeRestoreProgress {
+			continue
+		}
+		assert.Equal(t, msg.ID, sentMsg.ID)
+		progress, err := protocol.ParsePayload[protocol.RestoreProgressPayload](&sentMsg)
+		require.NoError(t, err)
+		if progress.CurrentSourceID == "api-id" {
+			sawCurrentAPI = true
+			assert.Equal(t, 2, progress.ItemsTotal)
+		}
+	}
+	assert.True(t, sawCurrentAPI)
+}
+
+func TestHandleRestoreDockerBatchMarksItemsSkippedWhenDataRestoreFails(t *testing.T) {
+	store := policy.NewStore(t.TempDir())
+	require.NoError(t, store.SavePolicy(&protocol.PolicyPushPayload{AgentID: "agent-1", Storage: protocol.StorageConfig{RepoPath: "repo/agent-1"}}))
+	sent := &sentMessages{}
+	batchCalled := false
+	handler := NewHandler(HandlerConfig{
+		PolicyStore: store, ConfigDir: t.TempDir(), SendFunc: sent.send,
+		RestoreRunner: func(context.Context, executor.ExecutorConfig, string, string, []string) error {
+			return errors.New("data restore failed")
+		},
+		DockerRestoreBatchRunner: func(context.Context, protocol.DockerRestoreRequest, agentdocker.RestoreProgressFunc) []protocol.RestoreItemResult {
+			batchCalled = true
+			return nil
+		},
+	})
+	msg, err := protocol.NewMessage(protocol.TypeSelectiveRestoreReq, protocol.RestoreReqPayload{
+		SnapshotID: "snap-batch", RestoreMode: protocol.RestoreModeDockerContainer,
+		Docker: &protocol.DockerRestoreRequest{Sources: []protocol.DockerResolvedSource{
+			{ContainerID: "db-id", Name: "db", ResolvedPaths: []string{"/db"}},
+			{ContainerID: "api-id", Name: "api", ResolvedPaths: []string{"/api"}},
+		}},
+	})
+	require.NoError(t, err)
+
+	handler.Handle(*msg)
+	resultMsg := waitForMessageType(t, sent, protocol.TypeTaskResult, time.Second)
+
+	assert.False(t, batchCalled)
+	result, err := protocol.ParsePayload[protocol.TaskResultPayload](&resultMsg)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", result.Status)
+	require.Len(t, result.RestoreItems, 2)
+	assert.Equal(t, protocol.RestoreItemStatusSkipped, result.RestoreItems[0].Status)
+	assert.Equal(t, protocol.RestoreItemStatusSkipped, result.RestoreItems[1].Status)
+}
+
 func TestHandleRestorePreflightFileSuccess(t *testing.T) {
 	sent := &sentMessages{}
 	handler := NewHandler(HandlerConfig{

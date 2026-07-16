@@ -139,6 +139,7 @@ func collectCapabilities() []string {
 	if agentdocker.Available(context.Background()) {
 		capabilities = append(capabilities, protocol.CapabilityDockerWorkloadBackups)
 		capabilities = append(capabilities, protocol.CapabilityDockerContainerRestore)
+		capabilities = append(capabilities, protocol.CapabilityDockerMultiContainerRestore)
 	}
 	return capabilities
 }

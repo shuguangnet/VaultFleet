@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -45,17 +46,18 @@ const (
 )
 
 const (
-	CapabilitySnapshotBrowse            = "snapshot_browse"
-	CapabilityRestoreIncludePaths       = "restore_include_paths"
-	CapabilityRestorePreflight          = "restore_preflight"
-	CapabilityPolicyPlaintextRclonePass = "policy_plaintext_rclone_pass"
-	CapabilityArchiveBackup             = "archive_backup"
-	CapabilityDockerWorkloadBackups     = "docker_workload_backups"
-	CapabilityDockerContainerRestore    = "docker_container_restore"
-	CapabilityTypedBackupSources        = "typed_backup_sources"
-	CapabilityDatabaseBackups           = "database_backups"
-	CapabilityBackupVerification        = "backup_verification"
-	CapabilityLiveTaskLogs              = "live_task_logs"
+	CapabilitySnapshotBrowse              = "snapshot_browse"
+	CapabilityRestoreIncludePaths         = "restore_include_paths"
+	CapabilityRestorePreflight            = "restore_preflight"
+	CapabilityPolicyPlaintextRclonePass   = "policy_plaintext_rclone_pass"
+	CapabilityArchiveBackup               = "archive_backup"
+	CapabilityDockerWorkloadBackups       = "docker_workload_backups"
+	CapabilityDockerContainerRestore      = "docker_container_restore"
+	CapabilityDockerMultiContainerRestore = "docker_multi_container_restore"
+	CapabilityTypedBackupSources          = "typed_backup_sources"
+	CapabilityDatabaseBackups             = "database_backups"
+	CapabilityBackupVerification          = "backup_verification"
+	CapabilityLiveTaskLogs                = "live_task_logs"
 )
 
 // DefaultAgentCapabilities returns the feature set reported by current agents.
@@ -97,6 +99,10 @@ const (
 const (
 	RestoreModeFiles           = "files"
 	RestoreModeDockerContainer = "docker_container"
+	RestoreItemStatusSuccess   = "success"
+	RestoreItemStatusFailed    = "failed"
+	RestoreItemStatusCancelled = "cancelled"
+	RestoreItemStatusSkipped   = "skipped"
 )
 
 // Message is the shared WebSocket envelope used by master and agents.
@@ -206,6 +212,17 @@ type TaskResultPayload struct {
 	Verification        *BackupVerificationResult `json:"verification,omitempty"`
 	Manifest            *BackupContentManifest    `json:"manifest,omitempty"`
 	ArtifactNaming      *ArtifactNamingMetadata   `json:"artifact_naming,omitempty"`
+	RestoreItems        []RestoreItemResult       `json:"restore_items,omitempty"`
+}
+
+type RestoreItemResult struct {
+	SourceID   string    `json:"source_id"`
+	SourceName string    `json:"source_name,omitempty"`
+	Status     string    `json:"status"`
+	Error      string    `json:"error,omitempty"`
+	Retryable  bool      `json:"retryable,omitempty"`
+	StartedAt  time.Time `json:"started_at,omitempty"`
+	FinishedAt time.Time `json:"finished_at,omitempty"`
 }
 
 const (
@@ -412,11 +429,16 @@ type CancelTaskPayload struct {
 
 // RestoreProgressPayload reports incremental restore progress from an agent.
 type RestoreProgressPayload struct {
-	AgentID       string  `json:"agent_id"`
-	SnapshotID    string  `json:"snapshot_id"`
-	FilesRestored int64   `json:"files_restored"`
-	BytesRestored int64   `json:"bytes_restored"`
-	Percent       float64 `json:"percent"`
+	AgentID           string  `json:"agent_id"`
+	SnapshotID        string  `json:"snapshot_id"`
+	FilesRestored     int64   `json:"files_restored"`
+	BytesRestored     int64   `json:"bytes_restored"`
+	Percent           float64 `json:"percent"`
+	ItemsTotal        int     `json:"items_total,omitempty"`
+	ItemsCompleted    int     `json:"items_completed,omitempty"`
+	ItemsFailed       int     `json:"items_failed,omitempty"`
+	CurrentSourceID   string  `json:"current_source_id,omitempty"`
+	CurrentSourceName string  `json:"current_source_name,omitempty"`
 }
 
 // SnapshotListRespPayload returns snapshots known to an agent repository.
@@ -475,6 +497,7 @@ type DockerComposeInfo struct {
 	Service     string   `json:"service,omitempty"`
 	WorkingDir  string   `json:"working_dir,omitempty"`
 	ConfigFiles []string `json:"config_files,omitempty"`
+	EnvFiles    []string `json:"env_files,omitempty"`
 }
 
 type DockerMount struct {
@@ -633,12 +656,13 @@ type BackupNowPayload struct {
 
 // RestoreReqPayload requests a snapshot restore to a target path.
 type RestoreReqPayload struct {
-	SnapshotID   string                `json:"snapshot_id"`
-	Target       string                `json:"target"`
-	IncludePaths []string              `json:"include_paths,omitempty"`
-	RestoreMode  string                `json:"restore_mode,omitempty"`
-	Docker       *DockerRestoreRequest `json:"docker,omitempty"`
-	Policy       *PolicyPushPayload    `json:"policy,omitempty"`
+	SnapshotID    string                `json:"snapshot_id"`
+	SourceAgentID string                `json:"source_agent_id,omitempty"`
+	Target        string                `json:"target"`
+	IncludePaths  []string              `json:"include_paths,omitempty"`
+	RestoreMode   string                `json:"restore_mode,omitempty"`
+	Docker        *DockerRestoreRequest `json:"docker,omitempty"`
+	Policy        *PolicyPushPayload    `json:"policy,omitempty"`
 }
 
 type DockerRestoreRequest struct {
@@ -675,10 +699,42 @@ type RestorePreflightRespPayload struct {
 
 // RestorePreflightCheck is one preflight finding.
 type RestorePreflightCheck struct {
-	Code     string `json:"code"`
-	Severity string `json:"severity"`
-	Message  string `json:"message"`
-	Detail   string `json:"detail,omitempty"`
+	Code       string `json:"code"`
+	Severity   string `json:"severity"`
+	Message    string `json:"message"`
+	Detail     string `json:"detail,omitempty"`
+	SourceID   string `json:"source_id,omitempty"`
+	SourceName string `json:"source_name,omitempty"`
+}
+
+func DockerSourceID(source DockerResolvedSource) string {
+	for _, value := range []string{source.ContainerID, source.Selection.ContainerID, source.Name, source.Selection.Name} {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	project := strings.TrimSpace(source.Compose.Project)
+	if project == "" {
+		project = strings.TrimSpace(source.Selection.ComposeProject)
+	}
+	service := strings.TrimSpace(source.Compose.Service)
+	if service == "" {
+		service = strings.TrimSpace(source.Selection.ComposeService)
+	}
+	if project != "" && service != "" {
+		return project + "/" + service
+	}
+	return ""
+}
+
+func DockerSourceName(source DockerResolvedSource) string {
+	if name := strings.TrimSpace(source.Name); name != "" {
+		return name
+	}
+	if name := strings.TrimSpace(source.Selection.Name); name != "" {
+		return name
+	}
+	return DockerSourceID(source)
 }
 
 // SnapshotListReqPayload requests repository snapshots from an agent.

@@ -124,6 +124,7 @@ export interface DockerComposeInfo {
   service?: string;
   working_dir?: string;
   config_files?: string[];
+  env_files?: string[];
 }
 
 export interface DockerMount {

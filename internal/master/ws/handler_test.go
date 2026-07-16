@@ -493,6 +493,26 @@ func TestDispatchBackupProgressUpdatesCache(t *testing.T) {
 	assert.Equal(t, int64(1536), progress.BytesDone)
 }
 
+func TestDispatchRestoreProgressUsesPersistentProcessor(t *testing.T) {
+	setup := setupHandlerTest(t, validTestAuth, noPolicy)
+	handler := NewHandler(setup.hub, setup.bus, validTestAuth, noPolicy, nil)
+	var gotAgent string
+	var gotMessage protocol.Message
+	handler.RestoreProgressProcessor = func(agentID string, msg protocol.Message) error {
+		gotAgent = agentID
+		gotMessage = msg
+		return nil
+	}
+	msg, err := protocol.NewMessage(protocol.TypeRestoreProgress, protocol.RestoreProgressPayload{AgentID: "payload-agent", SnapshotID: "snap-1", ItemsTotal: 2})
+	require.NoError(t, err)
+	msg.ID = "restore-msg-1"
+
+	handler.dispatch("agent-1", *msg)
+
+	assert.Equal(t, "agent-1", gotAgent)
+	assert.Equal(t, "restore-msg-1", gotMessage.ID)
+}
+
 func TestDispatchBackupProgressIgnoresInvalidPayload(t *testing.T) {
 	setup := setupHandlerTest(t, validTestAuth, noPolicy)
 	handler := NewHandler(setup.hub, setup.bus, validTestAuth, noPolicy, nil)

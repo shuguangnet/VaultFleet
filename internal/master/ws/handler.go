@@ -24,6 +24,7 @@ const (
 type AgentAuthFunc func(token string) (agentID string, err error)
 type PolicyLookupFunc func(agentID string) (*protocol.Message, bool)
 type TaskResultProcessorFunc func(agentID string, msg protocol.Message) error
+type RestoreProgressProcessorFunc func(agentID string, msg protocol.Message) error
 type PolicyAckProcessorFunc func(agentID string, msg protocol.Message) error
 type SnapshotListResponseProcessorFunc func(agentID string, msg protocol.Message) error
 type PendingCommandDispatcherFunc func(agentID string) error
@@ -35,6 +36,7 @@ type Handler struct {
 	authAgent                     AgentAuthFunc
 	policyLookup                  PolicyLookupFunc
 	taskResultProcess             TaskResultProcessorFunc
+	RestoreProgressProcessor      RestoreProgressProcessorFunc
 	PolicyAckProcessor            PolicyAckProcessorFunc
 	SnapshotListResponseProcessor SnapshotListResponseProcessorFunc
 	PendingCommandDispatcher      PendingCommandDispatcherFunc
@@ -263,6 +265,12 @@ func (h *Handler) dispatch(agentID string, msg protocol.Message) {
 			if progress, err := protocol.ParsePayload[protocol.BackupProgressPayload](&msg); err == nil {
 				progress.AgentID = agentID
 				h.ProgressCache.Set(agentID, msg.ID, progress)
+			}
+		}
+	case protocol.TypeRestoreProgress:
+		if h.RestoreProgressProcessor != nil {
+			if err := h.RestoreProgressProcessor(agentID, msg); err != nil {
+				log.Printf("process restore progress failed for agent %s: %v", agentID, err)
 			}
 		}
 	case protocol.TypeTaskLog:

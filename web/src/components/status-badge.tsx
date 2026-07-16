@@ -4,6 +4,7 @@ export type StatusType =
   | "online"
   | "offline"
   | "success"
+  | "partial_success"
   | "failed"
   | "running"
   | "syncing"
@@ -27,6 +28,7 @@ const STATUS_CONFIG: Record<
   online: { label: "在线", color: "success" },
   offline: { label: "离线", color: "error" },
   success: { label: "已完成", color: "success" },
+  partial_success: { label: "部分成功", color: "warning" },
   failed: { label: "失败", color: "error" },
   running: { label: "运行中", color: "processing" },
   syncing: { label: "同步中", color: "processing" },

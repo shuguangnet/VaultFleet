@@ -59,6 +59,7 @@ const taskStatusMeta: Record<
   pending: { label: "等待中", color: chartColors.warning },
   running: { label: "运行中", color: chartColors.primary },
   success: { label: "成功", color: chartColors.success },
+  partial_success: { label: "部分成功", color: chartColors.warning },
   failed: { label: "失败", color: chartColors.error },
   timeout: { label: "超时", color: "#9a5b13" },
   cancelled: { label: "已取消", color: chartColors.slate },

@@ -10,12 +10,35 @@ export interface BackupProgress {
   current_file: string;
 }
 
+export interface RestoreProgress {
+  agent_id: string;
+  snapshot_id: string;
+  files_restored: number;
+  bytes_restored: number;
+  percent: number;
+  items_total?: number;
+  items_completed?: number;
+  items_failed?: number;
+  current_source_id?: string;
+  current_source_name?: string;
+}
+
+export interface RestoreItemResult {
+  source_id: string;
+  source_name?: string;
+  status: "success" | "failed" | "cancelled" | "skipped";
+  error?: string;
+  retryable?: boolean;
+  started_at?: string;
+  finished_at?: string;
+}
+
 export interface TaskHistory {
   id: string;
   message_id: string;
   agent_id: string;
   type: "backup" | "restore" | "verify";
-  status: "pending" | "running" | "success" | "failed" | "timeout" | "cancelled";
+  status: "pending" | "running" | "success" | "partial_success" | "failed" | "timeout" | "cancelled";
   snapshot_id?: string;
   command_id?: string;
   policy_id?: string;
@@ -33,6 +56,8 @@ export interface TaskHistory {
   duration_ms?: number;
   error_log?: string;
   progress?: BackupProgress;
+  restore_progress?: RestoreProgress;
+  restore_items?: RestoreItemResult[];
   docker?: DockerBackupMetadata;
   database?: DatabaseBackupMetadata;
   verification?: BackupVerificationResult;
@@ -202,6 +227,7 @@ export interface DockerResolvedSource {
     service?: string;
     working_dir?: string;
     config_files?: string[];
+    env_files?: string[];
   };
   mounts?: Array<{
     type: string;

@@ -606,6 +606,7 @@ func TestDockerDiscoveryRoundTrip(t *testing.T) {
 					Service:     "db",
 					WorkingDir:  "/srv/app",
 					ConfigFiles: []string{"compose.yml"},
+					EnvFiles:    []string{"/srv/app/.env"},
 				},
 				Mounts: []DockerMount{
 					{Type: "volume", Name: "db-data", Source: "/var/lib/docker/volumes/db-data/_data", Destination: "/var/lib/postgresql/data", RW: true},
@@ -622,6 +623,7 @@ func TestDockerDiscoveryRoundTrip(t *testing.T) {
 	require.Len(t, parsedResp.Containers, 1)
 	assert.Equal(t, "container-1", parsedResp.Containers[0].ID)
 	assert.Equal(t, "app", parsedResp.Containers[0].Compose.Project)
+	assert.Equal(t, []string{"/srv/app/.env"}, parsedResp.Containers[0].Compose.EnvFiles)
 	assert.Equal(t, "db-data", parsedResp.Containers[0].Mounts[0].Name)
 }
 
@@ -693,11 +695,16 @@ func TestRestorePayloads(t *testing.T) {
 	assert.Equal(t, reqPayload, *parsedSelectiveReq)
 
 	progress := RestoreProgressPayload{
-		AgentID:       "agent-001",
-		SnapshotID:    "abc123",
-		FilesRestored: 1500,
-		BytesRestored: 104857600,
-		Percent:       75.5,
+		AgentID:           "agent-001",
+		SnapshotID:        "abc123",
+		FilesRestored:     1500,
+		BytesRestored:     104857600,
+		Percent:           75.5,
+		ItemsTotal:        2,
+		ItemsCompleted:    1,
+		ItemsFailed:       1,
+		CurrentSourceID:   "container-2",
+		CurrentSourceName: "api",
 	}
 
 	_, parsedProgress := roundTripPayload[RestoreProgressPayload](t, TypeRestoreProgress, progress)
@@ -706,6 +713,50 @@ func TestRestorePayloads(t *testing.T) {
 	assert.Equal(t, int64(1500), parsedProgress.FilesRestored)
 	assert.Equal(t, int64(104857600), parsedProgress.BytesRestored)
 	assert.InDelta(t, 75.5, parsedProgress.Percent, 0.01)
+	assert.Equal(t, 2, parsedProgress.ItemsTotal)
+	assert.Equal(t, 1, parsedProgress.ItemsCompleted)
+	assert.Equal(t, 1, parsedProgress.ItemsFailed)
+	assert.Equal(t, "container-2", parsedProgress.CurrentSourceID)
+	assert.Equal(t, "api", parsedProgress.CurrentSourceName)
+}
+
+func TestRestoreTaskResultItemsRoundTrip(t *testing.T) {
+	finishedAt := time.Date(2026, 7, 16, 2, 0, 30, 0, time.UTC)
+	payload := TaskResultPayload{
+		AgentID:    "agent-001",
+		TaskType:   "restore",
+		Status:     "partial_success",
+		SnapshotID: "snap-1",
+		RestoreItems: []RestoreItemResult{
+			{SourceID: "container-1", SourceName: "db", Status: "success", StartedAt: finishedAt.Add(-20 * time.Second), FinishedAt: finishedAt.Add(-10 * time.Second)},
+			{SourceID: "container-2", SourceName: "api", Status: "failed", Error: "port conflict", Retryable: true, StartedAt: finishedAt.Add(-10 * time.Second), FinishedAt: finishedAt},
+		},
+	}
+
+	_, parsed := roundTripPayload[TaskResultPayload](t, TypeTaskResult, payload)
+	assert.Equal(t, "partial_success", parsed.Status)
+	require.Len(t, parsed.RestoreItems, 2)
+	assert.Equal(t, "container-2", parsed.RestoreItems[1].SourceID)
+	assert.True(t, parsed.RestoreItems[1].Retryable)
+}
+
+func TestLegacyRestorePayloadDefaultsBatchFields(t *testing.T) {
+	msg := Message{Type: TypeRestoreProgress, ID: "legacy", Payload: json.RawMessage(`{"agent_id":"agent-1","snapshot_id":"snap-1","percent":25}`)}
+	parsed, err := ParsePayload[RestoreProgressPayload](&msg)
+	require.NoError(t, err)
+	assert.Zero(t, parsed.ItemsTotal)
+	assert.Empty(t, parsed.CurrentSourceID)
+
+	resultMsg := Message{Type: TypeTaskResult, ID: "legacy-result", Payload: json.RawMessage(`{"agent_id":"agent-1","task_type":"restore","status":"success"}`)}
+	result, err := ParsePayload[TaskResultPayload](&resultMsg)
+	require.NoError(t, err)
+	assert.Nil(t, result.RestoreItems)
+}
+
+func TestDockerSourceIdentity(t *testing.T) {
+	assert.Equal(t, "container-1", DockerSourceID(DockerResolvedSource{ContainerID: "container-1", Name: "db"}))
+	assert.Equal(t, "app/web", DockerSourceID(DockerResolvedSource{Compose: DockerComposeInfo{Project: "app", Service: "web"}}))
+	assert.Equal(t, "db", DockerSourceName(DockerResolvedSource{Name: "db", ContainerID: "container-1"}))
 }
 
 func TestRestorePreflightPayloads(t *testing.T) {
@@ -728,7 +779,7 @@ func TestRestorePreflightPayloads(t *testing.T) {
 		SnapshotID: "abc123",
 		Status:     RestorePreflightStatusFailed,
 		Checks: []RestorePreflightCheck{
-			{Code: "target_path_writable", Severity: RestorePreflightSeverityError, Message: "target path is not writable", Detail: "permission denied"},
+			{Code: "target_path_writable", Severity: RestorePreflightSeverityError, Message: "target path is not writable", Detail: "permission denied", SourceID: "container-1", SourceName: "db"},
 			{Code: "docker_available", Severity: RestorePreflightSeverityInfo, Message: "Docker is available"},
 		},
 	}

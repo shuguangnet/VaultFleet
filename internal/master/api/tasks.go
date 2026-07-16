@@ -75,6 +75,8 @@ type taskResponse struct {
 	Verification        *protocol.BackupVerificationResult `json:"verification,omitempty"`
 	Manifest            *protocol.BackupContentManifest    `json:"manifest,omitempty"`
 	ArtifactNaming      *protocol.ArtifactNamingMetadata   `json:"artifact_naming,omitempty"`
+	RestoreItems        []protocol.RestoreItemResult       `json:"restore_items,omitempty"`
+	RestoreProgress     *protocol.RestoreProgressPayload   `json:"restore_progress,omitempty"`
 	CreatedAt           time.Time                          `json:"created_at"`
 	UpdatedAt           time.Time                          `json:"updated_at"`
 }
@@ -88,6 +90,7 @@ func RegisterTaskRoutes(rg *gin.RouterGroup, h *TaskHandler) {
 	rg.GET("/tasks/:id/logs", h.GetLogs)
 	rg.GET("/tasks/:id/download", h.DownloadArtifact)
 	rg.POST("/tasks/:id/cancel", h.CancelTask)
+	rg.POST("/tasks/:id/retry-failed", h.RetryFailedRestore)
 	rg.DELETE("/tasks/:id", h.DeleteTask)
 	rg.POST("/agents/:id/backup-now", h.BackupNow)
 	rg.POST("/policies/:id/verify-now", h.VerifyPolicyNow)
@@ -109,6 +112,85 @@ func (h *TaskHandler) DeleteTask(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+func (h *TaskHandler) RetryFailedRestore(c *gin.Context) {
+	var history db.TaskHistory
+	if err := h.DB.DB.First(&history, "id = ?", c.Param("id")).Error; err != nil {
+		writeErrorResponse(c, http.StatusNotFound, "task not found")
+		return
+	}
+	if history.Type != "restore" || (history.Status != commands.TaskStatusPartialSuccess && history.Status != commands.TaskStatusFailed) {
+		writeErrorResponse(c, http.StatusConflict, "task has no retryable restore failures")
+		return
+	}
+	var items []protocol.RestoreItemResult
+	if strings.TrimSpace(history.RestoreItems) == "" || json.Unmarshal([]byte(history.RestoreItems), &items) != nil {
+		writeErrorResponse(c, http.StatusConflict, "restore item results are unavailable")
+		return
+	}
+	failedIDs := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if !item.Retryable || item.Status == protocol.RestoreItemStatusSuccess || strings.TrimSpace(item.SourceID) == "" {
+			continue
+		}
+		if _, ok := seen[item.SourceID]; ok {
+			continue
+		}
+		seen[item.SourceID] = struct{}{}
+		failedIDs = append(failedIDs, item.SourceID)
+	}
+	if len(failedIDs) == 0 {
+		writeErrorResponse(c, http.StatusConflict, "task has no retryable restore failures")
+		return
+	}
+	if strings.TrimSpace(history.CommandID) == "" {
+		writeErrorResponse(c, http.StatusConflict, "original restore command is unavailable")
+		return
+	}
+	var command db.AgentCommand
+	if err := h.DB.DB.First(&command, "id = ?", history.CommandID).Error; err != nil {
+		writeErrorResponse(c, http.StatusConflict, "original restore command is unavailable")
+		return
+	}
+	plaintext, err := db.Decrypt(command.Payload, h.DB.MasterKey)
+	if err != nil {
+		writeErrorResponse(c, http.StatusInternalServerError, "decode original restore command")
+		return
+	}
+	var message protocol.Message
+	if err := json.Unmarshal([]byte(plaintext), &message); err != nil {
+		writeErrorResponse(c, http.StatusInternalServerError, "decode original restore command")
+		return
+	}
+	restorePayload, err := protocol.ParsePayload[protocol.RestoreReqPayload](&message)
+	if err != nil || restorePayload.Docker == nil {
+		writeErrorResponse(c, http.StatusConflict, "original task is not a Docker restore")
+		return
+	}
+	available := make(map[string]struct{}, len(restorePayload.Docker.Sources))
+	for _, source := range restorePayload.Docker.Sources {
+		available[protocol.DockerSourceID(source)] = struct{}{}
+	}
+	for _, sourceID := range failedIDs {
+		if _, ok := available[sourceID]; !ok {
+			writeErrorResponse(c, http.StatusConflict, "failed Docker source metadata is unavailable")
+			return
+		}
+	}
+	sourceAgentID := restorePayload.SourceAgentID
+	if sourceAgentID == "" {
+		sourceAgentID = history.AgentID
+	}
+	writeDataResponse(c, http.StatusOK, gin.H{
+		"agent_id":          history.AgentID,
+		"source_agent_id":   sourceAgentID,
+		"snapshot_id":       restorePayload.SnapshotID,
+		"target_path":       restorePayload.Target,
+		"restore_mode":      protocol.RestoreModeDockerContainer,
+		"docker_source_ids": failedIDs,
+	})
 }
 
 func (h *TaskHandler) VerifyPolicyNow(c *gin.Context) {
@@ -715,6 +797,15 @@ func newTaskResponse(history db.TaskHistory) taskResponse {
 		var naming protocol.ArtifactNamingMetadata
 		if err := json.Unmarshal([]byte(history.ArtifactNaming), &naming); err == nil {
 			response.ArtifactNaming = &naming
+		}
+	}
+	if history.RestoreItems != "" {
+		_ = json.Unmarshal([]byte(history.RestoreItems), &response.RestoreItems)
+	}
+	if history.RestoreProgress != "" {
+		var progress protocol.RestoreProgressPayload
+		if err := json.Unmarshal([]byte(history.RestoreProgress), &progress); err == nil {
+			response.RestoreProgress = &progress
 		}
 	}
 	return response

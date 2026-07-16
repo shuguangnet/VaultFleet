@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -420,6 +421,142 @@ func TestRestoreDockerContainerToDifferentAgentUsesSourceMetadata(t *testing.T) 
 	assert.Equal(t, "container-1", payload.Docker.Sources[0].ContainerID)
 }
 
+func TestRestoreDockerContainersUsesStableSnapshotOrder(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	agent := createRestoreTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+	markAgentCapabilities(t, setup.database, agent.ID, []string{
+		protocol.CapabilityRestoreIncludePaths,
+		protocol.CapabilityDockerContainerRestore,
+		protocol.CapabilityDockerMultiContainerRestore,
+	})
+	seedRestoreDockerMetadata(t, setup.database, agent.ID, "snap-batch", []protocol.DockerResolvedSource{
+		{ContainerID: "db-id", Name: "db", ResolvedPaths: []string{"/shared", "/db"}},
+		{ContainerID: "api-id", Name: "api", ResolvedPaths: []string{"/shared", "/api"}},
+	})
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore", map[string]any{
+		"snapshot_id":       "snap-batch",
+		"restore_mode":      protocol.RestoreModeDockerContainer,
+		"docker_source_id":  "ignored-legacy",
+		"docker_source_ids": []string{"api-id", "db-id"},
+	})
+
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	require.Len(t, setup.hub.sent, 1)
+	payload, err := protocol.ParsePayload[protocol.RestoreReqPayload](&setup.hub.sent[0].message)
+	require.NoError(t, err)
+	require.NotNil(t, payload.Docker)
+	require.Len(t, payload.Docker.Sources, 2)
+	assert.Equal(t, "db-id", payload.Docker.Sources[0].ContainerID)
+	assert.Equal(t, "api-id", payload.Docker.Sources[1].ContainerID)
+	assert.Equal(t, []string{"/shared", "/db", "/api"}, payload.IncludePaths)
+}
+
+func TestRestoreDockerContainersRejectsInvalidSelections(t *testing.T) {
+	tests := []struct {
+		name string
+		ids  []string
+	}{
+		{name: "empty", ids: nil},
+		{name: "duplicate", ids: []string{"db-id", "db-id"}},
+		{name: "unknown", ids: []string{"db-id", "missing"}},
+		{name: "too many", ids: func() []string {
+			ids := make([]string, maxDockerRestoreSources+1)
+			for index := range ids {
+				ids[index] = fmt.Sprintf("source-%d", index)
+			}
+			return ids
+		}()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setup := setupRestoreAPI(t)
+			agent := createRestoreTestAgent(t, setup.database, "online")
+			setup.hub.online[agent.ID] = true
+			markAgentCapabilities(t, setup.database, agent.ID, []string{
+				protocol.CapabilityRestoreIncludePaths,
+				protocol.CapabilityDockerContainerRestore,
+				protocol.CapabilityDockerMultiContainerRestore,
+			})
+			seedRestoreDockerMetadata(t, setup.database, agent.ID, "snap-batch", []protocol.DockerResolvedSource{{ContainerID: "db-id", Name: "db", ResolvedPaths: []string{"/db"}}})
+
+			w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore", map[string]any{
+				"snapshot_id":       "snap-batch",
+				"restore_mode":      protocol.RestoreModeDockerContainer,
+				"docker_source_ids": tt.ids,
+			})
+
+			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+			assert.Empty(t, setup.hub.sent)
+			var count int64
+			require.NoError(t, setup.database.DB.Model(&db.AgentCommand{}).Count(&count).Error)
+			assert.Zero(t, count)
+		})
+	}
+}
+
+func TestRestoreDockerContainersRequiresBatchCapability(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	agent := createRestoreTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+	markAgentCapabilities(t, setup.database, agent.ID, []string{
+		protocol.CapabilityRestoreIncludePaths,
+		protocol.CapabilityDockerContainerRestore,
+	})
+	seedRestoreDockerMetadata(t, setup.database, agent.ID, "snap-batch", []protocol.DockerResolvedSource{
+		{ContainerID: "db-id", ResolvedPaths: []string{"/db"}},
+		{ContainerID: "api-id", ResolvedPaths: []string{"/api"}},
+	})
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore", map[string]any{
+		"snapshot_id":       "snap-batch",
+		"restore_mode":      protocol.RestoreModeDockerContainer,
+		"docker_source_ids": []string{"db-id", "api-id"},
+	})
+
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "multi-container restore")
+	assert.Empty(t, setup.hub.sent)
+}
+
+func TestRestorePreflightDockerBatchUsesSamePlanAndReportsConflicts(t *testing.T) {
+	setup := setupRestoreAPI(t)
+	agent := createRestoreTestAgent(t, setup.database, "online")
+	setup.hub.online[agent.ID] = true
+	markAgentCapabilities(t, setup.database, agent.ID, []string{
+		protocol.CapabilityRestorePreflight,
+		protocol.CapabilityRestoreIncludePaths,
+		protocol.CapabilityDockerContainerRestore,
+		protocol.CapabilityDockerMultiContainerRestore,
+	})
+	seedRestoreDockerMetadata(t, setup.database, agent.ID, "snap-batch", []protocol.DockerResolvedSource{
+		{ContainerID: "db-id", Name: "db", ResolvedPaths: []string{"/shared", "/db"}},
+		{ContainerID: "api-id", Name: "api", ResolvedPaths: []string{"/shared", "/api"}},
+	})
+	resp, err := protocol.NewMessage(protocol.TypeRestorePreflightResp, protocol.RestorePreflightRespPayload{
+		AgentID: agent.ID, SnapshotID: "snap-batch", Status: protocol.RestorePreflightStatusPassed,
+		Checks: []protocol.RestorePreflightCheck{{Code: "docker_available", Severity: protocol.RestorePreflightSeverityInfo, Message: "Docker is available"}},
+	})
+	require.NoError(t, err)
+	setup.hub.waitResp = resp
+
+	w := postAnyJSON(t, setup.router, "/api/agents/"+agent.ID+"/restore/preflight", map[string]any{
+		"snapshot_id":       "snap-batch",
+		"restore_mode":      protocol.RestoreModeDockerContainer,
+		"docker_source_ids": []string{"api-id", "db-id"},
+	})
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assertPreflightData(t, w, protocol.RestorePreflightStatusPassed, "docker_batch_conflict", protocol.RestorePreflightSeverityWarning)
+	require.Len(t, setup.hub.sent, 1)
+	payload, err := protocol.ParsePayload[protocol.RestorePreflightReqPayload](&setup.hub.sent[0].message)
+	require.NoError(t, err)
+	require.Len(t, payload.Docker.Sources, 2)
+	assert.Equal(t, "db-id", payload.Docker.Sources[0].ContainerID)
+	assert.Equal(t, "api-id", payload.Docker.Sources[1].ContainerID)
+}
+
 func TestRestoreDockerContainerRejectsMissingMetadata(t *testing.T) {
 	setup := setupRestoreAPI(t)
 	agent := createRestoreTestAgent(t, setup.database, "online")
@@ -789,6 +926,19 @@ func createRestoreTestAgent(t *testing.T, database *db.Database, status string) 
 	agent := db.Agent{Name: "Restore Agent", Status: status}
 	require.NoError(t, database.DB.Create(&agent).Error)
 	return agent
+}
+
+func seedRestoreDockerMetadata(t *testing.T, database *db.Database, agentID string, snapshotID string, sources []protocol.DockerResolvedSource) {
+	t.Helper()
+	rawDocker, err := json.Marshal(protocol.DockerBackupMetadata{Sources: sources})
+	require.NoError(t, err)
+	finishedAt := time.Date(2026, 7, 16, 2, 0, 0, 0, time.UTC)
+	require.NoError(t, database.DB.Create(&db.TaskHistory{
+		AgentID: agentID, Type: "backup", Status: commands.TaskStatusSuccess, SnapshotID: snapshotID, Docker: string(rawDocker), FinishedAt: &finishedAt,
+	}).Error)
+	require.NoError(t, database.DB.Create(&db.Snapshot{
+		AgentID: agentID, SnapshotID: snapshotID, Timestamp: finishedAt, Paths: `["/shared"]`,
+	}).Error)
 }
 
 func assertPreflightData(t *testing.T, w *httptest.ResponseRecorder, status string, code string, severity string) {

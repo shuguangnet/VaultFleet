@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   App,
@@ -97,7 +97,7 @@ export function SnapshotsPage() {
   );
   const [includePaths, setIncludePaths] = useState<string[]>([]);
   const [restoreMode, setRestoreMode] = useState<"files" | "docker_container">("files");
-  const [selectedDockerSourceId, setSelectedDockerSourceId] = useState("");
+  const [selectedDockerSourceIds, setSelectedDockerSourceIds] = useState<string[]>([]);
   const [targetAgentId, setTargetAgentId] = useState("");
   const [preflightReport, setPreflightReport] = useState<RestorePreflightReport | null>(null);
   const [preflightPlanKey, setPreflightPlanKey] = useState("");
@@ -179,14 +179,17 @@ export function SnapshotsPage() {
   const targetSupportsDockerRestore = !!selectedTargetAgent?.capabilities?.some((capability) =>
     capability === "docker_container_restore" || capability === "docker_workload_backups"
   );
-  const canRestoreSelectedDocker = selectedDockerSources.length > 0 && !!targetAgentId;
+  const targetSupportsMultiDockerRestore = !!selectedTargetAgent?.capabilities?.includes("docker_multi_container_restore");
+  const canRestoreSelectedDocker = selectedDockerSources.length > 0 && !!targetAgentId && targetSupportsDockerRestore;
   const currentRestoreRequest: RestoreRequest | null = selectedSnapshot ? (
     restoreMode === "docker_container"
       ? {
         snapshot_id: selectedSnapshot.id,
         source_agent_id: agentId,
         restore_mode: "docker_container",
-        docker_source_id: selectedDockerSourceId,
+        ...(targetSupportsMultiDockerRestore
+          ? { docker_source_ids: selectedDockerSourceIds }
+          : { docker_source_id: selectedDockerSourceIds[0] || "" }),
       }
       : {
         snapshot_id: selectedSnapshot.id,
@@ -202,18 +205,27 @@ export function SnapshotsPage() {
   const preflightStale = !!preflightReport && preflightPlanKey !== currentPreflightPlanKey;
   const restoreReady = !!targetAgentId && (
     restoreMode === "docker_container"
-      ? canRestoreSelectedDocker && !!selectedDockerSourceId
+      ? canRestoreSelectedDocker && selectedDockerSourceIds.length > 0
       : !!targetPath
   );
-  const restoreConfirmed = confirmed && restoreReady;
+  const restoreConfirmed = confirmed && restoreReady && preflightReport?.status === "passed" && !preflightStale;
 
-  const handleOpenRestore = (s: Snapshot, mode: "files" | "docker_container" = "files") => {
+  const handleOpenRestore = (
+    s: Snapshot,
+    mode: "files" | "docker_container" = "files",
+    dockerSourceIds?: string[],
+    initialTargetAgentId?: string,
+  ) => {
     const sources = s.docker?.sources ?? [];
     setSelectedSnapshot(s);
     setRestoreMode(mode);
-    setTargetAgentId(agentId);
+    setTargetAgentId(initialTargetAgentId || agentId);
     setTargetPath(mode === "files" ? s.paths[0] || "" : "");
-    setSelectedDockerSourceId(mode === "docker_container" && sources[0] ? dockerSourceKey(sources[0]) : "");
+    setSelectedDockerSourceIds(
+      mode === "docker_container"
+        ? dockerSourceIds?.filter(Boolean) ?? (sources[0] ? [dockerSourceKey(sources[0])] : [])
+        : [],
+    );
     setConfirmed(false);
     setRestoreSuccessId(null);
     setIncludePaths([]);
@@ -221,6 +233,40 @@ export function SnapshotsPage() {
     setPreflightPlanKey("");
     restoreMutation.reset();
     preflightMutation.reset();
+  };
+
+  useEffect(() => {
+    const snapshotID = searchParams.get("restore_snapshot");
+    if (!snapshotID || !snapshots?.length) return;
+    const snapshot = snapshots.find((item) => item.id === snapshotID);
+    if (!snapshot) return;
+    const ids = (searchParams.get("docker_source_ids") || "").split(",").filter(Boolean);
+    handleOpenRestore(snapshot, "docker_container", ids, searchParams.get("target_agent_id") || agentId);
+    const next = new URLSearchParams(searchParams);
+    next.delete("restore_snapshot");
+    next.delete("docker_source_ids");
+    next.delete("target_agent_id");
+    setSearchParams(next, { replace: true });
+  // Retry parameters are consumed once after their snapshot is available.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshots, searchParams]);
+
+  const handleTargetAgentChange = (nextAgentID: string) => {
+    const nextAgent = agents?.find((agent) => agent.id === nextAgentID);
+    const supportsMulti = !!nextAgent?.capabilities?.includes("docker_multi_container_restore");
+    setTargetAgentId(nextAgentID);
+    setSelectedDockerSourceIds((current) => supportsMulti ? current : current.slice(0, 1));
+    setConfirmed(false);
+    setPreflightReport(null);
+    setPreflightPlanKey("");
+  };
+
+  const handleDockerSelectionChange = (values: Array<string | number>) => {
+    const selected = new Set(values.map(String));
+    setSelectedDockerSourceIds(
+      selectedDockerSources.map(dockerSourceKey).filter((sourceID) => sourceID && selected.has(sourceID)),
+    );
+    setConfirmed(false);
   };
 
   const handlePreflight = () => {
@@ -493,7 +539,7 @@ export function SnapshotsPage() {
             <Form.Item label="目标节点">
               <Select
                 value={targetAgentId || undefined}
-                onChange={setTargetAgentId}
+                onChange={handleTargetAgentChange}
                 placeholder="选择执行恢复的节点"
                 options={agents?.map((agent) => ({
                   value: agent.id,
@@ -508,13 +554,16 @@ export function SnapshotsPage() {
                 onChange={(value) => {
                   const mode = value as "files" | "docker_container";
                   setRestoreMode(mode);
+                  setConfirmed(false);
+                  setPreflightReport(null);
+                  setPreflightPlanKey("");
                   if (mode === "docker_container" && selectedDockerSources[0]) {
                     setTargetPath("");
                     setIncludePaths([]);
-                    setSelectedDockerSourceId(dockerSourceKey(selectedDockerSources[0]));
+                    setSelectedDockerSourceIds([dockerSourceKey(selectedDockerSources[0])]);
                   } else {
                     setTargetPath(selectedSnapshot?.paths[0] || "");
-                    setSelectedDockerSourceId("");
+                    setSelectedDockerSourceIds([]);
                   }
                 }}
                 options={[
@@ -538,16 +587,54 @@ export function SnapshotsPage() {
                     title="目标节点未上报容器恢复能力，提交后可能被后端拒绝。请确认 Agent 已升级并重新连接。"
                   />
                 )}
-                <Form.Item label="Docker 容器">
-                  <Select
-                    value={selectedDockerSourceId}
-                    onChange={setSelectedDockerSourceId}
-                    options={selectedDockerSources.map((source) => ({
-                      value: dockerSourceKey(source),
-                      label: dockerSourceLabel(source),
-                    }))}
+                {targetSupportsMultiDockerRestore ? (
+                  <Form.Item label={`Docker 容器（已选 ${selectedDockerSourceIds.length}）`}>
+                    <Space size={8} style={{ marginBottom: 10 }}>
+                      <Button
+                        size="small"
+                        onClick={() => handleDockerSelectionChange(selectedDockerSources.map(dockerSourceKey))}
+                      >
+                        全选
+                      </Button>
+                      <Button size="small" onClick={() => handleDockerSelectionChange([])}>
+                        清空
+                      </Button>
+                    </Space>
+                    <Checkbox.Group
+                      value={selectedDockerSourceIds}
+                      onChange={handleDockerSelectionChange}
+                      style={{ display: "grid", gap: 8 }}
+                    >
+                      {selectedDockerSources.map((source) => {
+                        const sourceID = dockerSourceKey(source);
+                        return (
+                          <Checkbox key={sourceID} value={sourceID} aria-label={`选择 ${dockerSourceLabel(source)}`}>
+                            {dockerSourceLabel(source)}
+                          </Checkbox>
+                        );
+                      })}
+                    </Checkbox.Group>
+                  </Form.Item>
+                ) : (
+                  <Form.Item label="Docker 容器">
+                    <Select
+                      value={selectedDockerSourceIds[0]}
+                      onChange={(value) => setSelectedDockerSourceIds(value ? [value] : [])}
+                      options={selectedDockerSources.map((source) => ({
+                        value: dockerSourceKey(source),
+                        label: dockerSourceLabel(source),
+                      }))}
+                    />
+                  </Form.Item>
+                )}
+                {targetSupportsDockerRestore && !targetSupportsMultiDockerRestore && selectedDockerSources.length > 1 && (
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                    title="升级目标 Agent 后可在一次任务中恢复多个容器"
                   />
-                </Form.Item>
+                )}
               </>
             ) : (
               <>
@@ -595,13 +682,16 @@ export function SnapshotsPage() {
                   preflightReport ? (
                     <Space direction="vertical" size={4} style={{ width: "100%" }}>
                       {preflightReport.checks.map((check, index) => (
-                        <Typography.Text
-                          key={`${check.code}-${index}`}
-                          style={{ fontSize: 12, color: preflightSeverityColor(check.severity) }}
-                        >
-                          {check.message}
-                          {check.detail ? `：${check.detail}` : ""}
-                        </Typography.Text>
+                        <div key={`${check.code}-${check.source_id || "batch"}-${index}`}>
+                          <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                            {check.source_name || check.source_id || "整批检查"}
+                          </Typography.Text>
+                          <div>
+                            <Typography.Text style={{ fontSize: 12, color: preflightSeverityColor(check.severity) }}>
+                              {check.message}{check.detail ? `：${check.detail}` : ""}
+                            </Typography.Text>
+                          </div>
+                        </div>
                       ))}
                     </Space>
                   ) : undefined
@@ -611,6 +701,20 @@ export function SnapshotsPage() {
 
             <Alert
               type="warning"
+              description={restoreMode === "docker_container" && selectedDockerSourceIds.length > 0 ? (
+                <Space direction="vertical" size={4} style={{ width: "100%", marginBottom: 8 }}>
+                  <Typography.Text style={{ fontSize: 12 }}>
+                    将按快照顺序恢复 {selectedDockerSourceIds.length} 个容器；单个容器失败后会继续处理剩余项。
+                  </Typography.Text>
+                  {selectedDockerSources
+                    .filter((source) => selectedDockerSourceIds.includes(dockerSourceKey(source)))
+                    .map((source, index) => (
+                      <Typography.Text key={dockerSourceKey(source)} type="secondary" style={{ fontSize: 12 }}>
+                        {index + 1}. {dockerSourceLabel(source)} · {(source.resolved_paths || []).join(", ") || "无恢复路径"}
+                      </Typography.Text>
+                    ))}
+                </Space>
+              ) : undefined}
               title={
                 <Checkbox
                   checked={confirmed}
@@ -634,7 +738,9 @@ export function SnapshotsPage() {
               loading={restoreMutation.isPending}
             >
               {restoreMode === "docker_container"
-                ? "恢复容器"
+                ? selectedDockerSourceIds.length > 1
+                  ? `恢复 ${selectedDockerSourceIds.length} 个容器`
+                  : "恢复容器"
                 : includePaths.length > 0
                 ? `恢复选中的 ${includePaths.length} 项`
                 : "恢复全部"}

@@ -170,13 +170,13 @@ Docker backups are configured from **Backup Policies**, not storage settings. A 
 
 When an Agent can access the local Docker Engine API, it reports Docker backup capability and the policy form can list local containers. The Agent process usually needs permission to read `/var/run/docker.sock`; if the Agent itself runs in a container, mount the Docker socket explicitly. Docker socket access is highly privileged, so enable it only on trusted Agent hosts.
 
-When a Docker container is selected, the Agent re-inspects it immediately before the backup runs and resolves bind mounts, named/anonymous volume mountpoints, and discoverable Compose config files into concrete backup paths. VaultFleet does not back up the whole `/var/lib/docker` tree, overlay/image layers, Docker networks, or image contents by default.
+When a Docker container is selected, the Agent re-inspects it immediately before the backup runs and resolves bind mounts, named/anonymous volume mountpoints, discoverable Compose config files, and environment files declared by Compose labels or found as `.env` in the project directory into concrete backup paths. Environment-file contents are never copied into task metadata or logs. VaultFleet does not back up the whole `/var/lib/docker` tree, overlay/image layers, Docker networks, or image contents by default.
 
 Running container files may not be application-consistent. For databases and similar services, use the application's own dump, snapshot, write-quiesce, or pre/post hook workflow to produce consistent files, then back up those paths. Restore by restoring Compose files and data directories first, then recreate containers using the application's normal process.
 
 ## Snapshot Restore And Preflight
 
-The Web UI **Snapshots** restore flow makes the restore plan explicit: source node, snapshot, target node, restore mode, target path, selected paths, and Docker source. A preflight check is required before the final restore button is enabled. Preflight validates the current plan only; it does not create an Agent command or task history entry.
+The Web UI **Snapshots** restore flow makes the restore plan explicit: source node, snapshot, target node, restore mode, target path, selected paths, and Docker sources. A preflight check is required before the final restore button is enabled. Preflight validates the current plan only; it does not create an Agent command or task history entry. Agents that advertise `docker_multi_container_restore` can restore up to 50 Docker sources in one plan; older Agents retain the compatible single-source workflow.
 
 Cross-node file restore workflow:
 
@@ -189,13 +189,16 @@ Cross-node file restore workflow:
 Docker container restore workflow:
 
 1. Open a snapshot with Docker backup metadata and choose **Restore container**.
-2. Select the target node and the Docker source from the snapshot.
-3. Run preflight to check Docker Engine access on the target Agent, Docker metadata availability, and obvious container or Compose conflicts.
-4. Submit the restore after preflight passes. VaultFleet restores the backed-up Compose files and mounted data and, when supported by the Agent, attempts to recreate the container.
+2. Select the target node and one or more Docker containers or Compose services. The confirmation view shows their snapshot order.
+3. Run preflight to check Docker Engine access, metadata availability, and conflicts involving container names, Compose identities, restore paths, and host ports.
+4. After preflight passes, VaultFleet deduplicates the selected restore paths, restores their data once, and then rebuilds Docker sources sequentially.
+5. A source-specific rebuild failure does not suppress remaining sources. Task history records each outcome and uses `partial_success` when success and failure coexist. Retrying failed items creates a reduced plan that must pass preflight again.
 
-Docker restore preflight is a readiness check, not a full topology guarantee. Operators must still verify image availability or registry access, external Docker networks, secrets, external volumes, port conflicts, runtime permissions, database migrations, and application-level consistency. If the target host changes after preflight, the restore task can still fail; task history remains the source of truth for final execution.
+When restoring a Compose service, the Agent explicitly uses the original project directory and backed-up environment files so variables such as `${CONTAINER_NAME}` and `${PANEL_APP_PORT_HTTP}` in 1Panel-style templates are not replaced with empty strings. If a Compose file references variables but neither the snapshot nor the target project directory provides a usable environment file, preflight blocks execution; restore the project `.env` and create a new backup instead of forcing an invalid Compose deployment.
 
-Preflight requires the target Agent to advertise the `restore_preflight` capability. If the UI reports that the capability is missing, upgrade the target Agent and wait for it to reconnect to the Master. Older Agents can still receive compatible direct restore API requests, but the guided Web UI blocks submission when runtime checks cannot be completed.
+Docker restore preflight is a readiness check, not a full topology guarantee. Image layers or image import, registry credentials, external Docker networks, secrets, external volumes, dependency ordering, application health checks, database migrations, and application-level consistency remain outside the restore guarantee. If the target host changes after preflight, the restore task can still fail; task history remains the source of truth for final execution.
+
+Preflight requires `restore_preflight`, and multi-container restore additionally requires `docker_multi_container_restore`. If a capability is missing, upgrade the target Agent and wait for it to reconnect. Rolling back to an older Agent automatically returns the UI and Master to single-source selection, while the legacy `docker_source_id` API field remains compatible.
 
 ## Architecture
 
